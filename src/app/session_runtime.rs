@@ -57,6 +57,25 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
     handle.set_resource_monitoring(monitoring_enabled);
     ctx.handles.borrow_mut().insert(tab_id.to_string(), handle);
 
+    // Delivery route for this tab. Both pump threads hold the Arc and
+    // re-read it on every batch, so a later detach/merge only rewrites the
+    // route — the pumps keep running and target the new window (#tab-detach).
+    let route = Arc::new(Mutex::new(TabRoute {
+        window: ctx.weak.clone(),
+        window_id: ctx.window_id,
+        bufs: ctx.bufs.clone(),
+        gates: ctx.render_gates.clone(),
+        statuses: ctx.tab_statuses.clone(),
+        local_snap: ctx.local_snap.clone(),
+        net_hist: ctx.local_net_hist.clone(),
+        sftp_handles: ctx.sftp_handles.clone(),
+        sftp_last_cwd: ctx.sftp_last_cwd.clone(),
+        follow_cd: ctx.sftp_follow_cd.clone(),
+    }));
+    if let Ok(mut routes) = ctx.tab_routes.lock() {
+        routes.insert(tab_id.to_string(), route.clone());
+    }
+
     // Separate SFTP connection for the same session (SSH only). It waits for
     // the interactive PTY to report Connected so a second SSH handshake cannot
     // contend with terminal startup on the same host/network path.
@@ -65,16 +84,31 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
         let sftp_runtime = ctx.runtime.clone();
         let sftp_task_runtime = sftp_runtime.clone();
-        let sftp_handles = ctx.sftp_handles.clone();
+        // Read the handle map through the route at insertion time: if the tab
+        // is dragged to another window while we connect, the route already
+        // points at the destination and the handle must land there.
+        let sftp_route = route.clone();
         let sftp_tab_id = tab_id.to_string();
         sftp_runtime.spawn(async move {
-            if ready_rx.await.is_err() {
+            // The interactive PTY may never report Connected (stalled
+            // handshake); bound the wait so this bootstrap task cannot
+            // outlive the tab forever.
+            if !matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await,
+                Ok(Ok(()))
+            ) {
                 return;
             }
             tokio::task::yield_now().await;
             let sftp_handle = spawn_sftp(sftp_task_runtime.handle(), session, jump, sftp_tx);
-            if let Ok(mut handles) = sftp_handles.lock() {
-                handles.insert(sftp_tab_id, sftp_handle);
+            let handles = sftp_route
+                .lock()
+                .ok()
+                .map(|r| r.sftp_handles.clone());
+            if let Some(handles) = handles {
+                if let Ok(mut handles) = handles.lock() {
+                    handles.insert(sftp_tab_id, sftp_handle);
+                }
             }
         });
         (Some(sftp_rx), Some(ready_tx))
@@ -84,17 +118,9 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
 
     // --- Shell event pump (dedicated thread) ---
     {
-        let weak_inner = ctx.weak.clone();
-        let bufs_thread = ctx.bufs.clone();
-        let sftp_handles_pump = ctx.sftp_handles.clone();
-        let sftp_last_cwd_pump = ctx.sftp_last_cwd.clone();
+        let route_pump = route.clone();
         let rt_pump = ctx.runtime.clone();
         let tab_id_pump = tab_id.to_string();
-        let statuses_pump = ctx.tab_statuses.clone();
-        let local_pump = ctx.local_snap.clone();
-        let net_pump = ctx.local_net_hist.clone();
-        let follow_cd_pump = ctx.sftp_follow_cd.clone();
-        let render_gates_pump = ctx.render_gates.clone();
         std::thread::spawn(move || {
             let mut shell_rx = rx;
             let mut sftp_ready_tx = sftp_ready_tx;
@@ -124,6 +150,13 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                     }
                 }
 
+                // Resolve the current delivery route once per batch: a tab that
+                // was detached/merged mid-stream simply delivers this batch
+                // to its new window (#tab-detach).
+                let Ok(rt) = route_pump.lock().map(|g| g.clone()) else {
+                    continue;
+                };
+
                 // Run CwdChanged side-effects here (off the UI thread), drop the
                 // swallowed ones, and concatenate runs of Output into a single chunk
                 // so the UI parses + renders the whole burst once.
@@ -142,7 +175,7 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                             // OSC 7, same directory or not, snaps the panel back to
                             // the shell's cwd. Unchanged repeats (every prompt
                             // re-emits OSC 7) are ignored (#59).
-                            let changed = match sftp_last_cwd_pump.lock() {
+                            let changed = match rt.sftp_last_cwd.lock() {
                                 Ok(mut m) => {
                                     m.insert(tab_id_pump.clone(), cwd.clone()).as_deref()
                                         != Some(cwd.as_str())
@@ -153,7 +186,7 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                             // sftp_loading without any ListDir to clear it (the #59
                             // stuck-"loading" trap).
                             if !changed
-                                || !follow_cd_pump.load(std::sync::atomic::Ordering::Relaxed)
+                                || !rt.follow_cd.load(std::sync::atomic::Ordering::Relaxed)
                             {
                                 continue;
                             }
@@ -161,7 +194,7 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                                 prev.abort();
                             }
                             let cwd_spawn = cwd.clone();
-                            let sftp_h = sftp_handles_pump.clone();
+                            let sftp_h = rt.sftp_handles.clone();
                             let tid = tab_id_pump.clone();
                             cwd_debounce = Some(rt_pump.spawn(async move {
                                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -216,7 +249,7 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                         SessionEvent::Output(chunk) => {
                             let chunk_len = chunk.len();
                             let reply = ingest_terminal_output(
-                                &bufs_thread,
+                                &rt.bufs,
                                 &tab_id_pump,
                                 chunk.as_bytes(),
                             );
@@ -229,10 +262,10 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
 
                             if record_ingested_chunk(chunk_len, &mut ingested_since_checkpoint) {
                                 let ticket = request_tab_render(
-                                    weak_inner.clone(),
+                                    rt.window.clone(),
                                     &tab_id_pump,
-                                    &bufs_thread,
-                                    &render_gates_pump,
+                                    &rt.bufs,
+                                    &rt.gates,
                                 );
                                 dirty_since_request = false;
 
@@ -255,10 +288,10 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
 
                 if dirty_since_request {
                     let _ = request_tab_render(
-                        weak_inner.clone(),
+                        rt.window.clone(),
                         &tab_id_pump,
-                        &bufs_thread,
-                        &render_gates_pump,
+                        &rt.bufs,
+                        &rt.gates,
                     );
                 }
 
@@ -266,18 +299,21 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                     continue;
                 }
 
-                let weak_evt = weak_inner.clone();
+                let rt_evt = rt.clone();
                 let tid = tab_id_pump.clone();
-                let bufs_evt = bufs_thread.clone();
-                let st_evt = statuses_pump.clone();
-                let lc_evt = local_pump.clone();
-                let nh_evt = net_pump.clone();
-                let gates_evt = render_gates_pump.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(win) = weak_evt.upgrade() {
+                    if let Some(win) = rt_evt.window.upgrade() {
                         for evt in ui_only {
                             apply_session_event_to_window(
-                                &win, &tid, evt, &bufs_evt, &gates_evt, &st_evt, &lc_evt, &nh_evt,
+                                &win,
+                                rt_evt.window_id,
+                                &tid,
+                                evt,
+                                &rt_evt.bufs,
+                                &rt_evt.gates,
+                                &rt_evt.statuses,
+                                &rt_evt.local_snap,
+                                &rt_evt.net_hist,
                             );
                         }
                     }
@@ -288,13 +324,8 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
 
     // --- SFTP event pump (separate thread, SSH only) ---
     if let Some(sftp_evt_tx) = sftp_evt_tx {
-        let weak_sftp = ctx.weak.clone();
-        let bufs_sftp = ctx.bufs.clone();
+        let route_sftp = route.clone();
         let tab_id_sftp = tab_id.to_string();
-        let statuses_sftp = ctx.tab_statuses.clone();
-        let local_sftp = ctx.local_snap.clone();
-        let net_sftp = ctx.local_net_hist.clone();
-        let gates_sftp = ctx.render_gates.clone();
         std::thread::spawn(move || {
             let mut sftp_rx = sftp_evt_tx;
             let mut drained: Vec<SessionEvent> = Vec::new();
@@ -314,18 +345,23 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                 if ui_batch.is_empty() {
                     continue;
                 }
-                let weak_s = weak_sftp.clone();
+                let Ok(rt_s) = route_sftp.lock().map(|g| g.clone()) else {
+                    continue;
+                };
                 let tid = tab_id_sftp.clone();
-                let bufs_s = bufs_sftp.clone();
-                let st_s = statuses_sftp.clone();
-                let lc_s = local_sftp.clone();
-                let nh_s = net_sftp.clone();
-                let gates_s = gates_sftp.clone();
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(win) = weak_s.upgrade() {
+                    if let Some(win) = rt_s.window.upgrade() {
                         for sftp_evt in ui_batch {
                             apply_session_event_to_window(
-                                &win, &tid, sftp_evt, &bufs_s, &gates_s, &st_s, &lc_s, &nh_s,
+                                &win,
+                                rt_s.window_id,
+                                &tid,
+                                sftp_evt,
+                                &rt_s.bufs,
+                                &rt_s.gates,
+                                &rt_s.statuses,
+                                &rt_s.local_snap,
+                                &rt_s.net_hist,
                             );
                         }
                     }

@@ -8,3 +8,5 @@ Cargo.lock
 /.codegraph
 /AGENTS.md
 /opencode.jsonc
+/.qoder
+/docs/superpowers

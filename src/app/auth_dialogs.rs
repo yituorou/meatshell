@@ -34,10 +34,14 @@ pub(super) fn hostkey_dialog_text(
 }
 
 /// Queue a host-key prompt: answer immediately if already decided this run,
-/// merge into an existing pending entry for the same host, otherwise enqueue
-/// (and show it now if nothing else is up).
+/// merge into an existing pending entry for the same host *in the same
+/// window*, otherwise enqueue (and show it in the owning window if that
+/// window has no other host-key dialog up). Prompts from different windows
+/// never merge — each window decides for itself (#multi-window).
+#[allow(clippy::too_many_arguments)] // window_id tags the owning window
 pub(super) fn enqueue_hostkey_prompt(
     win: &AppWindow,
+    window_id: u64,
     host: String,
     port: u16,
     key_type: String,
@@ -52,14 +56,21 @@ pub(super) fn enqueue_hostkey_prompt(
     }
     let show_now = HOSTKEY_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.iter_mut().find(|p| p.host == host && p.port == port) {
+        if let Some(p) = q
+            .iter_mut()
+            .find(|p| p.window_id == window_id && p.host == host && p.port == port)
+        {
             p.responders.push(responder);
             return false;
         }
-        let was_empty = q.is_empty();
+        // Show only if this window has no other queued prompt of this type:
+        // each window's oldest queued entry is the one displayed in its
+        // dialog, so a second prompt must wait its turn in *that* window.
+        let show_now = !q.iter().any(|p| p.window_id == window_id);
         let (title, message, detail, confirm_label) =
             hostkey_dialog_text(&host, port, &key_type, &fingerprint, changed);
         q.push_back(PendingHostKey {
+            window_id,
             host,
             port,
             changed,
@@ -69,17 +80,18 @@ pub(super) fn enqueue_hostkey_prompt(
             confirm_label,
             responders: vec![responder],
         });
-        was_empty
+        show_now
     });
     if show_now {
-        show_front_hostkey(win);
+        show_front_hostkey(win, window_id);
     }
 }
 
-/// Push the front pending prompt's details into the window and open the dialog.
-pub(super) fn show_front_hostkey(win: &AppWindow) {
+/// Push this window's oldest pending prompt's details into the window and
+/// open the dialog.
+pub(super) fn show_front_hostkey(win: &AppWindow, window_id: u64) {
     HOSTKEY_QUEUE.with(|q| {
-        if let Some(p) = q.borrow().front() {
+        if let Some(p) = q.borrow().iter().find(|p| p.window_id == window_id) {
             win.set_hostkey_changed(p.changed);
             win.set_hostkey_title(p.title.clone().into());
             win.set_hostkey_message(p.message.clone().into());
@@ -90,12 +102,13 @@ pub(super) fn show_front_hostkey(win: &AppWindow) {
     });
 }
 
-/// Apply the user's decision to the front prompt, then show the next one (or
-/// close the dialog if the queue is now empty).
-pub(super) fn resolve_front_hostkey(win: &AppWindow, accept: bool) {
+/// Apply the user's decision to this window's oldest pending prompt, then
+/// show that window's next prompt (or close the dialog if it has none left).
+pub(super) fn resolve_front_hostkey(win: &AppWindow, window_id: u64, accept: bool) {
     let has_next = HOSTKEY_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.pop_front() {
+        if let Some(pos) = q.iter().position(|p| p.window_id == window_id) {
+            let p = q.remove(pos).expect("position checked above");
             // Only remember an *accept* for this run (so a slightly-later SFTP
             // prompt for the same host is answered without a second dialog). We
             // must NOT cache a reject: a single dismissal — e.g. an accidental
@@ -113,13 +126,61 @@ pub(super) fn resolve_front_hostkey(win: &AppWindow, accept: bool) {
                 r.respond(accept);
             }
         }
-        !q.is_empty()
+        q.iter().any(|p| p.window_id == window_id)
     });
     if has_next {
-        show_front_hostkey(win);
+        show_front_hostkey(win, window_id);
     } else {
         win.set_hostkey_prompt_open(false);
     }
+}
+
+/// Abort every queued prompt owned by `window_id` (called when that window
+/// closes): answer each with reject/cancel so the blocked connection attempts
+/// fail cleanly instead of hanging forever on a dialog that will never show.
+pub(super) fn abort_window_prompts(window_id: u64) {
+    HOSTKEY_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        let mut i = 0;
+        while i < q.len() {
+            if q[i].window_id == window_id {
+                let p = q.remove(i).expect("index checked above");
+                for r in &p.responders {
+                    r.respond(false);
+                }
+            } else {
+                i += 1;
+            }
+        }
+    });
+    CRED_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        let mut i = 0;
+        while i < q.len() {
+            if q[i].window_id == window_id {
+                let p = q.remove(i).expect("index checked above");
+                for r in &p.responders {
+                    r.respond(None);
+                }
+            } else {
+                i += 1;
+            }
+        }
+    });
+    MFA_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        let mut i = 0;
+        while i < q.len() {
+            if q[i].window_id == window_id {
+                let p = q.remove(i).expect("index checked above");
+                for r in &p.responders {
+                    r.respond(None);
+                }
+            } else {
+                i += 1;
+            }
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -135,10 +196,13 @@ thread_local! {
 }
 
 /// Queue a credential prompt: answer immediately if already decided this run,
-/// merge into an existing pending entry for the same session, otherwise enqueue
-/// (and show it now if nothing else is up).
+/// merge into an existing pending entry for the same session *in the same
+/// window*, otherwise enqueue (and show it in the owning window if that
+/// window has no other credential dialog up) (#multi-window).
+#[allow(clippy::too_many_arguments)] // window_id tags the owning window
 pub(super) fn enqueue_cred_prompt(
     win: &AppWindow,
+    window_id: u64,
     session_id: String,
     host: String,
     user: String,
@@ -152,12 +216,18 @@ pub(super) fn enqueue_cred_prompt(
     }
     let show_now = CRED_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.iter_mut().find(|p| p.session_id == session_id) {
+        if let Some(p) = q
+            .iter_mut()
+            .find(|p| p.window_id == window_id && p.session_id == session_id)
+        {
             p.responders.push(responder);
             return false;
         }
-        let was_empty = q.is_empty();
+        // Per-window turn: show only if this window has no other queued
+        // credential prompt (its oldest entry is the one on screen).
+        let show_now = !q.iter().any(|p| p.window_id == window_id);
         q.push_back(PendingCred {
+            window_id,
             session_id,
             host,
             user,
@@ -165,17 +235,18 @@ pub(super) fn enqueue_cred_prompt(
             need_password,
             responders: vec![responder],
         });
-        was_empty
+        show_now
     });
     if show_now {
-        show_front_cred(win);
+        show_front_cred(win, window_id);
     }
 }
 
-/// Populate the credential dialog from the front prompt and open it.
-pub(super) fn show_front_cred(win: &AppWindow) {
+/// Populate the credential dialog from this window's oldest pending prompt and
+/// open it.
+pub(super) fn show_front_cred(win: &AppWindow, window_id: u64) {
     CRED_QUEUE.with(|q| {
-        if let Some(p) = q.borrow().front() {
+        if let Some(p) = q.borrow().iter().find(|p| p.window_id == window_id) {
             win.set_cred_host(p.host.clone().into());
             win.set_cred_need_user(p.need_user);
             win.set_cred_need_password(p.need_password);
@@ -187,9 +258,10 @@ pub(super) fn show_front_cred(win: &AppWindow) {
     });
 }
 
-/// Apply the user's answer to the front credential prompt (or cancel), persist
-/// it when "remember" is checked, then show the next prompt or close.
-pub(super) fn resolve_front_cred(win: &AppWindow, accept: bool) {
+/// Apply the user's answer to this window's oldest credential prompt (or
+/// cancel), persist it when "remember" is checked, then show that window's
+/// next prompt or close its dialog.
+pub(super) fn resolve_front_cred(win: &AppWindow, window_id: u64, accept: bool) {
     let reply: Option<crate::ssh::CredentialReply> = if accept {
         Some((
             win.get_cred_user().to_string(),
@@ -201,7 +273,8 @@ pub(super) fn resolve_front_cred(win: &AppWindow, accept: bool) {
     };
     let has_next = CRED_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.pop_front() {
+        if let Some(pos) = q.iter().position(|p| p.window_id == window_id) {
+            let p = q.remove(pos).expect("position checked above");
             CRED_DECIDED.with(|d| {
                 d.borrow_mut().insert(p.session_id.clone(), reply.clone());
             });
@@ -212,12 +285,12 @@ pub(super) fn resolve_front_cred(win: &AppWindow, accept: bool) {
                 r.respond(reply.clone());
             }
         }
-        !q.is_empty()
+        q.iter().any(|p| p.window_id == window_id)
     });
     // Don't leave the typed password lingering in the UI property.
     win.set_cred_password("".into());
     if has_next {
-        show_front_cred(win);
+        show_front_cred(win, window_id);
     } else {
         win.set_cred_prompt_open(false);
     }
@@ -256,13 +329,16 @@ thread_local! {
     static MFA_QUEUE: RefCell<VecDeque<PendingMfa>> = RefCell::new(VecDeque::new());
 }
 
-/// Queue an MFA prompt: a concurrent connection for the same session (the shell
-/// and its SFTP channel both hitting the prompt at once) merges into the open
-/// dialog so the code is only typed once; otherwise enqueue (and show it now if
-/// nothing else is up). We deliberately do NOT cache answers across attempts —
-/// a wrong code must re-prompt on reconnect, not be silently replayed.
+/// Queue an MFA prompt: a concurrent connection for the same session *in the
+/// same window* (the shell and its SFTP channel both hitting the prompt at
+/// once) merges into the open dialog so the code is only typed once; otherwise
+/// enqueue (and show it in the owning window if that window has no other MFA
+/// dialog up). We deliberately do NOT cache answers across attempts — a wrong
+/// code must re-prompt on reconnect, not be silently replayed. Cross-window
+/// prompts never merge — each window types its own code (#multi-window).
 pub(super) fn enqueue_mfa_prompt(
     win: &AppWindow,
+    window_id: u64,
     session_id: String,
     host: String,
     prompt: String,
@@ -271,29 +347,36 @@ pub(super) fn enqueue_mfa_prompt(
 ) {
     let show_now = MFA_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.iter_mut().find(|p| p.session_id == session_id) {
+        if let Some(p) = q
+            .iter_mut()
+            .find(|p| p.window_id == window_id && p.session_id == session_id)
+        {
             p.responders.push(responder);
             return false;
         }
-        let was_empty = q.is_empty();
+        // Per-window turn: show only if this window has no other queued MFA
+        // prompt (its oldest entry is the one on screen).
+        let show_now = !q.iter().any(|p| p.window_id == window_id);
         q.push_back(PendingMfa {
+            window_id,
             session_id,
             host,
             prompt,
             echo,
             responders: vec![responder],
         });
-        was_empty
+        show_now
     });
     if show_now {
-        show_front_mfa(win);
+        show_front_mfa(win, window_id);
     }
 }
 
-/// Populate the MFA dialog from the front prompt and open it.
-pub(super) fn show_front_mfa(win: &AppWindow) {
+/// Populate the MFA dialog from this window's oldest pending prompt and open
+/// it.
+pub(super) fn show_front_mfa(win: &AppWindow, window_id: u64) {
     MFA_QUEUE.with(|q| {
-        if let Some(p) = q.borrow().front() {
+        if let Some(p) = q.borrow().iter().find(|p| p.window_id == window_id) {
             win.set_mfa_host(p.host.clone().into());
             win.set_mfa_prompt(p.prompt.clone().into());
             win.set_mfa_echo(p.echo);
@@ -303,9 +386,9 @@ pub(super) fn show_front_mfa(win: &AppWindow) {
     });
 }
 
-/// Apply the user's answer to the front MFA prompt (or cancel), then show the
-/// next prompt or close.
-pub(super) fn resolve_front_mfa(win: &AppWindow, accept: bool) {
+/// Apply the user's answer to this window's oldest MFA prompt (or cancel),
+/// then show that window's next prompt or close its dialog.
+pub(super) fn resolve_front_mfa(win: &AppWindow, window_id: u64, accept: bool) {
     let answer: Option<String> = if accept {
         Some(win.get_mfa_answer().to_string())
     } else {
@@ -313,17 +396,18 @@ pub(super) fn resolve_front_mfa(win: &AppWindow, accept: bool) {
     };
     let has_next = MFA_QUEUE.with(|q| {
         let mut q = q.borrow_mut();
-        if let Some(p) = q.pop_front() {
+        if let Some(pos) = q.iter().position(|p| p.window_id == window_id) {
+            let p = q.remove(pos).expect("position checked above");
             for r in &p.responders {
                 r.respond(answer.clone());
             }
         }
-        !q.is_empty()
+        q.iter().any(|p| p.window_id == window_id)
     });
     // Don't leave the typed code lingering in the UI property.
     win.set_mfa_answer("".into());
     if has_next {
-        show_front_mfa(win);
+        show_front_mfa(win, window_id);
     } else {
         win.set_mfa_prompt_open(false);
     }

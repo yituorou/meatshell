@@ -71,6 +71,7 @@ export struct TerminalState {
     sftp-sort-key: string,      // ""|"name"|"size"|"modified" (#248)
     sftp-sort-dir: int,         // 0 default / 1 asc / -1 desc (#248)
     sftp-available: bool,       // false for local/serial/telnet sessions
+    font-size: int,             // per-session zoom override in px (0 = follow window)
     tunnels: [TunnelInfo],      // runtime SSH tunnels (#206)
     sftp-collapsed: bool,       // SFTP panel minimised — per session (#v0.5)
     sftp-panel-height: length,  // SFTP panel extent (bottom dock) — per session
@@ -500,6 +501,9 @@ export component AppWindow inherits Window {
     }
     callback set-term-font(string);                // apply + persist font family
     callback set-term-font-size(int);              // apply + persist font size (px)
+    // Font zoom: Ctrl+=/-/0 → `tab-id`'s session only; Ctrl+Shift+=/-/0 →
+    // every session in this window (scope: false = session, true = window).
+    callback zoom-term-font(string /* tab-id */, int /* direction */, bool /* window-wide */);
     callback set-terminal-line-spacing(float);
     callback set-term-font-bold(bool);             // apply + persist bold terminal text
     callback set-term-cursor-style(string);        // apply + persist cursor shape (#275)
@@ -521,6 +525,11 @@ export component AppWindow inherits Window {
     // SFTP follows the terminal's cd; opt out in Interface settings.
     in-out property <bool> sftp-follow-cd: true;
     callback set-sftp-follow-cd(bool);             // apply + persist
+    // Hide the quick-command bar under the terminal; toolbar toggle persists it.
+    in-out property <bool> cmd-bar-hidden: false;
+    callback set-cmd-bar-hidden(bool);             // apply + persist
+    // Zen (focus) mode toggle shortcut: Ctrl+Alt+Z (⌘⌥Z on macOS).
+    callback toggle-zen-key();
     // Always ask where to save on each download (#87); default off.
     in-out property <bool> download-always-ask: false;
     callback set-download-always-ask(bool);        // apply + persist
@@ -684,6 +693,11 @@ export component AppWindow inherits Window {
 
     // --- Session list ------------------------------------------------------
     in property <[SessionInfo]> sessions;
+    // Bumped by Rust whenever the sessions model is rebuilt wholesale
+    // (set_vec). A rebuild destroys the dragging row's pointer grab, so
+    // Welcome watches this to clear its shared drag state instead of
+    // leaving a card lifted forever.
+    in property <int> sessions-revision: 0;
     in-out property <string> host-search-query;
     callback host-search-changed(string);
 
@@ -756,6 +770,8 @@ export component AppWindow inherits Window {
     callback edit-session(string /* session-id */);
     callback duplicate-session(string /* session-id */);
     callback move-session(string /* session-id */, string /* group */);
+    callback reorder-session(string /* session-id */, int /* dir: -1 up, 1 down */) -> bool;
+    callback reorder-session-end();
     callback toggle-group(string /* group */);
     callback remove-session(string /* session-id */);
     callback session-dialog-submit(SessionDraft);
@@ -771,6 +787,7 @@ export component AppWindow inherits Window {
     callback tab-selected(string);
     callback tab-closed(string);
     callback new-tab-clicked();
+    callback new-window-clicked();   // open another application window (#multi-window)
     callback tab-reorder(int /* from-index */, int /* dir: -1 left / +1 right */);
     // Per-pane tab actions (v0.5): the int is the pane (leaf) id.
     callback pane-tab-selected(int /* pane-id */, string /* tab-id */);
@@ -785,6 +802,13 @@ export component AppWindow inherits Window {
     callback pane-merge(int /* pane-id */);
     // Open another connection to the same session as `tab-id` (a new tab).
     callback tab-duplicate(string /* tab-id */);
+    // Rename an open session's tab. Request pre-fills the dialog (Rust reads
+    // the current title); submit applies the new display name.
+    callback tab-rename-request(string /* tab-id */);
+    callback rename-tab(string /* tab-id */, string /* new-title */);
+    in-out property <bool> tab-rename-open: false;
+    in-out property <string> tab-rename-id: "";
+    in-out property <string> tab-rename-value: "";
     // Drag-to-split (v0.5): cursor moved / dropped while dragging `tab-id`, in
     // pane-area coordinates. Rust hit-tests the pane + edge zone.
     callback tab-drag-move(string /* tab-id */, length /* x */, length /* y */);
@@ -801,10 +825,24 @@ export component AppWindow inherits Window {
     // Reports the pane-area size to Rust so it can flatten the split tree into
     // absolute pane / splitter rects. Fired whenever the content area resizes.
     callback content-resized(length /* w */, length /* h */);
+    // pane-area origin in window coordinates; tab drag-out converts
+    // drop points to global screen coordinates with this (#tab-detach).
+    out property <length> content-origin-x: pane-area.absolute-position.x;
+    out property <length> content-origin-y: pane-area.absolute-position.y;
     // Asks Rust to recompute the sidebar (status + resources) for whatever tab
     // is now active.  Fired on every active-tab change, UI- or code-driven.
     callback refresh-sidebar();
-    changed active-tab-id => { root.refresh-sidebar(); }
+    changed active-tab-id => {
+        root.refresh-sidebar();
+        // Closing the last session destroys the terminal's IME focus anchor
+        // and nothing else re-claims focus — with no focused item, Slint
+        // delivers keys nowhere, stranding the zen escape shortcut (and every
+        // window-level shortcut). Re-anchor on the shortcut scope whenever the
+        // welcome tab is active and no terminal remains.
+        if (root.active-tab-id == "welcome" && root.terminals.length == 0) {
+            shortcut-scope.focus();
+        }
+    }
 
     // Raw keystroke forwarding: Rust converts key+modifiers to PTY bytes.
     callback send-key(string /* tab-id */, string /* key */, bool /* ctrl */, bool /* alt */, bool /* shift */);
@@ -890,633 +928,354 @@ export component AppWindow inherits Window {
         image-fit: cover;
     }
 
-    VerticalLayout {
-        spacing: 0;
-
-        // macOS immersive bar: a strip under the native traffic-light buttons.
-        // Frosted like the other panels (bg-panel) so it matches in both themes —
-        // a plain transparent strip would show the raw wallpaper here and look dark
-        // in light mode. Left as a plain reserve (no TouchArea) so macOS's own title
-        // bar keeps handling the window drag in this region.
-        if root.titlebar-inset > 0px : Rectangle {
-            height: root.titlebar-inset;
-            background: Theme.bg-panel;
+    // Zen (focus) mode keyboard toggle — same persist path as the Settings
+    // switch (#zen).
+    toggle-zen-key => {
+        root.zen-mode = !root.zen-mode;
+        root.set-zen-mode(root.zen-mode);
+        // Entering zen with no terminals can leave nothing focused (the
+        // welcome page may be hidden as a sidebar), which would strand the
+        // Ctrl+Alt+Z escape shortcut — anchor focus on the shortcut scope.
+        if (root.zen-mode && root.terminals.length == 0) {
+            shortcut-scope.focus();
         }
+    }
 
-        // Immersive custom title bar (#119) — only on frameless platforms
-        // (Windows/Linux). App icon + name on the left, a draggable middle
-        // (move window / double-click to maximize), then the toolbar icons and
-        // window controls on the right. macOS keeps its native title bar and
-        // shows the toolbar icons via the overlay further below.
-        if root.custom-titlebar : Rectangle {
-            height: 38px;
-            background: Theme.bg-panel;
-            tb-drag := TouchArea {
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                        root.win-drag();
-                    }
-                }
-                double-clicked => { root.win-maximize-toggle(); }
-            }
-            HorizontalLayout {
-                padding-left: 12px;
-                spacing: 8px;
-                // Vertical-centering wrappers so the icon and name line up (#119).
-                VerticalLayout {
-                    alignment: center;
-                    Image {
-                        source: @image-url("../assets/icon.png");
-                        width: 18px;
-                        height: 18px;
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    Text {
-                        text: "meatshell";
-                        color: Theme.text-secondary;
-                        font-size: Theme.fs-sm;
-                    }
-                }
-                // Draggable spacer (no TouchArea → clicks fall to tb-drag).
-                Rectangle { horizontal-stretch: 1; }
-                // Window controls only — the app toolbar icons live in the tab
-                // row below, not here (#119).
-                WinBtn { icon: "\u{E15B}"; clicked => { root.win-minimize(); } }
-                WinBtn {
-                    icon: root.window-maximized ? "\u{E3E0}" : "\u{E835}";
-                    clicked => { root.win-maximize-toggle(); }
-                }
-                WinBtn { icon: "\u{E5CD}"; danger: true; clicked => { root.win-close(); } }
+    // Window-wide shortcut interceptor (#multi-window). Slint delivers a key
+    // to the focused item first and only bubbles it up the ancestor chain when
+    // it is rejected there; a Window itself cannot bind key-pressed. This
+    // passive FocusScope therefore wraps the whole main content and catches any
+    // shortcut no descendant consumed — so new-window works on the welcome page
+    // (where no TerminalView exists yet) and whenever focus is on a non-terminal
+    // widget. It never takes focus itself (focus-on-click / focus-on-tab-
+    // navigation are off), so it does not disturb the terminal IME anchor or any
+    // other widget. A focused terminal accepts ⌘⇧N / Ctrl+Shift+N on its own
+    // (terminal_view.slint), which stops propagation, so the two never
+    // double-fire.
+    shortcut-scope := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        // A window restored into zen mode starts with nothing focused when no
+        // focusable widget is on screen (e.g. the welcome page is hidden as a
+        // sidebar and no terminal exists yet). Slint delivers keys only to the
+        // focused item, so the Ctrl+Alt+Z escape shortcut would be stranded in
+        // exactly that stuck state. Claim focus on the next event-loop turn —
+        // deferred like the welcome scope so AccessKit/winit aren't re-entered
+        // from `init` (#323); any real widget that takes focus later (welcome
+        // page, terminal IME anchor) simply overrides this.
+        property <bool> zen-focus-pending: false;
+        init => { shortcut-scope.zen-focus-pending = root.zen-mode && root.terminals.length == 0; }
+        Timer {
+            interval: 0ms;
+            running: shortcut-scope.zen-focus-pending;
+            triggered => {
+                shortcut-scope.zen-focus-pending = false;
+                shortcut-scope.focus();
             }
         }
-
-        // Dock area — fills below the title bar. The resource sidebar and the
-        // central content are positioned by absolute geometry computed from
-        // `sidebar-dock`, so the sidebar can sit on any window edge (#dock).
-        dock-area := Rectangle {
-        vertical-stretch: 1;
-        // Left-edge layout (welcome-as-sidebar mode): a thin always-on icon strip
-        // (IDEA-style) + the welcome/session sidebar (0 when collapsed). The rest
-        // (resource panel + central terminal, which never collapses) sits to their
-        // right in `rest`.
-        // Collapsed-only (M5): the icon strip shows only while collapsed; the
-        // panel itself (welcome-w) only while expanded — one or the other.
-        property <bool> sidebar-strip-outside:
-            !root.zen-mode && root.welcome-as-sidebar && !root.welcome-collapsed
-            && root.sidebar-collapsed && root.sidebar-dock == root.welcome-sidebar-dock;
-        property <length> sidebar-outside-strip: dock-area.sidebar-strip-outside ? 36px : 0px;
-        property <length> welcome-strip: (!root.zen-mode && root.welcome-as-sidebar && root.welcome-collapsed) ? 36px : 0px;
-        property <length> welcome-size: (!root.zen-mode && root.welcome-as-sidebar && !root.welcome-collapsed) ? root.welcome-sidebar-width : 0px;
-        property <length> welcome-taken: welcome-strip + welcome-size + sidebar-outside-strip;
-        property <bool> welcome-horizontal: root.welcome-sidebar-horizontal;
-        property <bool> welcome-sidebar-dragging;
-        property <bool> combine-collapsed-tools:
-            root.welcome-as-sidebar && root.welcome-collapsed
-            && root.sidebar-collapsed && root.sidebar-dock == root.welcome-sidebar-dock;
-        // A collapsed quick-command sidebar joins an existing collapsed strip
-        // on the same edge. Only when no such strip exists does it reserve its
-        // own outermost 36px slot (#215).
-        property <bool> quick-merge-welcome:
-            root.quick-panel-open && root.quick-panel-collapsed
-            && root.welcome-as-sidebar && root.welcome-collapsed
-            && root.quick-panel-dock == root.welcome-sidebar-dock;
-        property <bool> quick-merge-sidebar:
-            root.quick-panel-open && root.quick-panel-collapsed
-            && !dock-area.quick-merge-welcome && root.sidebar-collapsed
-            && root.quick-panel-dock == root.sidebar-dock;
-        property <length> quick-outer-strip:
-            !root.zen-mode && root.quick-panel-open && root.quick-panel-collapsed
-                && !dock-area.quick-merge-welcome && !dock-area.quick-merge-sidebar
-                ? 36px : 0px;
-        property <bool> quick-outer-horizontal:
-            root.quick-panel-dock == "left" || root.quick-panel-dock == "right";
-        property <length> quick-left:
-            root.quick-panel-dock == "left" ? dock-area.quick-outer-strip : 0px;
-        property <length> quick-right:
-            root.quick-panel-dock == "right" ? dock-area.quick-outer-strip : 0px;
-        property <length> quick-top:
-            root.quick-panel-dock == "top" ? dock-area.quick-outer-strip : 0px;
-        property <length> quick-bottom:
-            root.quick-panel-dock == "bottom" ? dock-area.quick-outer-strip : 0px;
-
-        if dock-area.quick-outer-strip > 0px : ToolStrip {
-            x: root.quick-panel-dock == "right" ? parent.width - parent.quick-outer-strip : 0px;
-            y: root.quick-panel-dock == "bottom" ? parent.height - parent.quick-outer-strip : 0px;
-            width: parent.quick-outer-horizontal ? parent.quick-outer-strip : parent.width;
-            height: parent.quick-outer-horizontal ? parent.height : parent.quick-outer-strip;
-            dock-edge: root.quick-panel-dock;
-            glyph: "\u{E3E7}";
-            tooltip: @tr("Quick commands");
-            expand => {
-                root.quick-panel-collapsed = false;
-                if (root.sidebar-dock == root.quick-panel-dock) {
-                    root.sidebar-collapsed = true;
-                    root.set-sidebar-collapsed(true);
-                }
-                if (root.welcome-as-sidebar
-                        && root.welcome-sidebar-dock == root.quick-panel-dock) {
-                    root.welcome-collapsed = true;
-                    root.set-welcome-collapsed(true);
-                }
+        key-pressed(e) => {
+            // New window: ⌘⇧N / Ctrl+Shift+N (#multi-window). On macOS Slint
+            // maps `control` to Cmd (#158), so this single condition yields ⌘⇧N
+            // there and Ctrl+Shift+N elsewhere — identical to the TerminalView
+            // branch. \u{000e} is the Ctrl-N control char some backends send.
+            if (e.modifiers.control && e.modifiers.shift
+                    && (e.text == "n" || e.text == "N"
+                        || e.text == "\u{000e}")) {
+                root.new-window-clicked();
+                accept
+            // Font zoom: Ctrl+= / Ctrl+- / Ctrl+0 zooms the active session;
+            // adding Alt zooms every session in this window (Alt, not Shift:
+            // Ctrl+Shift is the IME-switch hotkey on Chinese Windows). Same
+            // keys as the focused-terminal branch (terminal_view.slint); a
+            // focused terminal consumes them itself, so no double-fire.
+            // Ctrl+- arrives as \u{001f} (^_) on some backends.
+            } else if (e.modifiers.control && e.modifiers.alt
+                    && (e.text == "=" || e.text == "+" || e.text == "-"
+                        || e.text == "\u{001f}" || e.text == "0")) {
+                root.zoom-term-font(root.active-tab-id,
+                    e.text == "-" || e.text == "\u{001f}" ? -1
+                        : e.text == "0" ? 0 : 1, true);
+                accept
+            } else if (e.modifiers.control && (e.text == "=" || e.text == "+")) {
+                root.zoom-term-font(root.active-tab-id, 1, false);
+                accept
+            } else if (e.modifiers.control && (e.text == "-" || e.text == "\u{001f}")) {
+                root.zoom-term-font(root.active-tab-id, -1, false);
+                accept
+            } else if (e.modifiers.control && e.text == "0") {
+                root.zoom-term-font(root.active-tab-id, 0, false);
+                accept
+            // Zen (focus) mode: Ctrl+Alt+Z toggles, same as the terminal
+            // branch below (#zen).
+            } else if (e.modifiers.control && e.modifiers.alt
+                    && (e.text == "z" || e.text == "Z" || e.text == "\u{001a}")) {
+                root.toggle-zen-key();
+                accept
+            } else {
+                reject
             }
         }
 
-        // Collapsed welcome → a thin left icon strip (click the icon to re-open).
-        if root.welcome-as-sidebar && root.welcome-collapsed : ToolStrip {
-            x: root.welcome-sidebar-dock == "right"
-                ? parent.width - parent.quick-right - parent.welcome-strip
-                : root.welcome-sidebar-dock == "left" ? parent.quick-left : parent.quick-left;
-            y: root.welcome-sidebar-dock == "bottom"
-                ? parent.height - parent.quick-bottom - parent.welcome-strip
-                : root.welcome-sidebar-dock == "top" ? parent.quick-top : parent.quick-top;
-            width: parent.welcome-horizontal ? parent.welcome-strip
-                : parent.width - parent.quick-left - parent.quick-right;
-            height: parent.welcome-horizontal
-                ? parent.height - parent.quick-top - parent.quick-bottom : parent.welcome-strip;
-            dock-edge: root.welcome-sidebar-dock;
-            glyph: "\u{E88A}";   // session list / welcome
-            show-second: parent.combine-collapsed-tools || parent.quick-merge-welcome;
-            second-glyph: parent.combine-collapsed-tools ? "\u{E871}" : "\u{E3E7}";
-            show-third: parent.combine-collapsed-tools && parent.quick-merge-welcome;
-            third-glyph: "\u{E3E7}";
-            expand => {
-                root.welcome-collapsed = false;
-                root.set-welcome-collapsed(false);
-                if (root.sidebar-dock == root.welcome-sidebar-dock) {
-                    root.sidebar-collapsed = true;
-                    root.set-sidebar-collapsed(true);
+        VerticalLayout {
+            spacing: 0;
+
+            // macOS immersive bar: a strip under the native traffic-light buttons.
+            // Frosted like the other panels (bg-panel) so it matches in both themes —
+            // a plain transparent strip would show the raw wallpaper here and look dark
+            // in light mode. Left as a plain reserve (no TouchArea) so macOS's own title
+            // bar keeps handling the window drag in this region.
+            if root.titlebar-inset > 0px : Rectangle {
+                height: root.titlebar-inset;
+                background: Theme.bg-panel;
+            }
+
+            // Immersive custom title bar (#119) — only on frameless platforms
+            // (Windows/Linux). App icon + name on the left, a draggable middle
+            // (move window / double-click to maximize), then the toolbar icons and
+            // window controls on the right. macOS keeps its native title bar and
+            // shows the toolbar icons via the overlay further below.
+            if root.custom-titlebar : Rectangle {
+                height: 38px;
+                background: Theme.bg-panel;
+                tb-drag := TouchArea {
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            root.win-drag();
+                        }
+                    }
+                    double-clicked => { root.win-maximize-toggle(); }
                 }
-                if (root.quick-panel-open
-                        && root.quick-panel-dock == root.welcome-sidebar-dock) {
-                    root.quick-panel-collapsed = true;
+                HorizontalLayout {
+                    padding-left: 12px;
+                    spacing: 8px;
+                    // Vertical-centering wrappers so the icon and name line up (#119).
+                    VerticalLayout {
+                        alignment: center;
+                        Image {
+                            source: @image-url("../assets/icon.png");
+                            width: 18px;
+                            height: 18px;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "meatshell";
+                            color: Theme.text-secondary;
+                            font-size: Theme.fs-sm;
+                        }
+                    }
+                    // Draggable spacer (no TouchArea → clicks fall to tb-drag).
+                    Rectangle { horizontal-stretch: 1; }
+                    // Window controls only — the app toolbar icons live in the tab
+                    // row below, not here (#119).
+                    WinBtn { icon: "\u{E15B}"; clicked => { root.win-minimize(); } }
+                    WinBtn {
+                        icon: root.window-maximized ? "\u{E3E0}" : "\u{E835}";
+                        clicked => { root.win-maximize-toggle(); }
+                    }
+                    WinBtn { icon: "\u{E5CD}"; danger: true; clicked => { root.win-close(); } }
                 }
             }
-            expand-second => {
-                if (parent.combine-collapsed-tools) {
-                    root.sidebar-collapsed = false;
-                    root.set-sidebar-collapsed(false);
-                    if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
-                        root.quick-panel-collapsed = true;
-                    }
-                } else {
+
+            // Dock area — fills below the title bar. The resource sidebar and the
+            // central content are positioned by absolute geometry computed from
+            // `sidebar-dock`, so the sidebar can sit on any window edge (#dock).
+            dock-area := Rectangle {
+            vertical-stretch: 1;
+            // Left-edge layout (welcome-as-sidebar mode): a thin always-on icon strip
+            // (IDEA-style) + the welcome/session sidebar (0 when collapsed). The rest
+            // (resource panel + central terminal, which never collapses) sits to their
+            // right in `rest`.
+            // Collapsed-only (M5): the icon strip shows only while collapsed; the
+            // panel itself (welcome-w) only while expanded — one or the other.
+            property <bool> sidebar-strip-outside:
+                !root.zen-mode && root.welcome-as-sidebar && !root.welcome-collapsed
+                && root.sidebar-collapsed && root.sidebar-dock == root.welcome-sidebar-dock;
+            property <length> sidebar-outside-strip: dock-area.sidebar-strip-outside ? 36px : 0px;
+            property <length> welcome-strip: (!root.zen-mode && root.welcome-as-sidebar && root.welcome-collapsed) ? 36px : 0px;
+            property <length> welcome-size: (!root.zen-mode && root.welcome-as-sidebar && !root.welcome-collapsed) ? root.welcome-sidebar-width : 0px;
+            property <length> welcome-taken: welcome-strip + welcome-size + sidebar-outside-strip;
+            property <bool> welcome-horizontal: root.welcome-sidebar-horizontal;
+            property <bool> welcome-sidebar-dragging;
+            property <bool> combine-collapsed-tools:
+                root.welcome-as-sidebar && root.welcome-collapsed
+                && root.sidebar-collapsed && root.sidebar-dock == root.welcome-sidebar-dock;
+            // A collapsed quick-command sidebar joins an existing collapsed strip
+            // on the same edge. Only when no such strip exists does it reserve its
+            // own outermost 36px slot (#215).
+            property <bool> quick-merge-welcome:
+                root.quick-panel-open && root.quick-panel-collapsed
+                && root.welcome-as-sidebar && root.welcome-collapsed
+                && root.quick-panel-dock == root.welcome-sidebar-dock;
+            property <bool> quick-merge-sidebar:
+                root.quick-panel-open && root.quick-panel-collapsed
+                && !dock-area.quick-merge-welcome && root.sidebar-collapsed
+                && root.quick-panel-dock == root.sidebar-dock;
+            property <length> quick-outer-strip:
+                !root.zen-mode && root.quick-panel-open && root.quick-panel-collapsed
+                    && !dock-area.quick-merge-welcome && !dock-area.quick-merge-sidebar
+                    ? 36px : 0px;
+            property <bool> quick-outer-horizontal:
+                root.quick-panel-dock == "left" || root.quick-panel-dock == "right";
+            property <length> quick-left:
+                root.quick-panel-dock == "left" ? dock-area.quick-outer-strip : 0px;
+            property <length> quick-right:
+                root.quick-panel-dock == "right" ? dock-area.quick-outer-strip : 0px;
+            property <length> quick-top:
+                root.quick-panel-dock == "top" ? dock-area.quick-outer-strip : 0px;
+            property <length> quick-bottom:
+                root.quick-panel-dock == "bottom" ? dock-area.quick-outer-strip : 0px;
+
+            if dock-area.quick-outer-strip > 0px : ToolStrip {
+                x: root.quick-panel-dock == "right" ? parent.width - parent.quick-outer-strip : 0px;
+                y: root.quick-panel-dock == "bottom" ? parent.height - parent.quick-outer-strip : 0px;
+                width: parent.quick-outer-horizontal ? parent.quick-outer-strip : parent.width;
+                height: parent.quick-outer-horizontal ? parent.height : parent.quick-outer-strip;
+                dock-edge: root.quick-panel-dock;
+                glyph: "\u{E3E7}";
+                tooltip: @tr("Quick commands");
+                expand => {
                     root.quick-panel-collapsed = false;
-                }
-            }
-            expand-third => { root.quick-panel-collapsed = false; }
-        }
-
-        if dock-area.sidebar-strip-outside : ToolStrip {
-            x: root.welcome-sidebar-dock == "right"
-                ? parent.width - parent.quick-right - parent.sidebar-outside-strip
-                : root.welcome-sidebar-dock == "left" ? parent.quick-left : parent.quick-left;
-            y: root.welcome-sidebar-dock == "bottom"
-                ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip
-                : root.welcome-sidebar-dock == "top" ? parent.quick-top : parent.quick-top;
-            width: parent.welcome-horizontal ? parent.sidebar-outside-strip
-                : parent.width - parent.quick-left - parent.quick-right;
-            height: parent.welcome-horizontal
-                ? parent.height - parent.quick-top - parent.quick-bottom : parent.sidebar-outside-strip;
-            dock-edge: root.welcome-sidebar-dock;
-            glyph: "\u{E871}";
-            show-second: parent.quick-merge-sidebar;
-            second-glyph: "\u{E3E7}";
-            expand => {
-                root.sidebar-collapsed = false;
-                root.set-sidebar-collapsed(false);
-                root.welcome-collapsed = true;
-                root.set-welcome-collapsed(true);
-                if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
-                    root.quick-panel-collapsed = true;
-                }
-            }
-            expand-second => { root.quick-panel-collapsed = false; }
-        }
-
-        // Welcome / session list, to the right of the icon strip. Hidden when
-        // collapsed — its icon stays in the strip; clicking it re-opens.
-        if root.welcome-as-sidebar && !root.welcome-collapsed : Rectangle {
-            x: root.welcome-sidebar-dock == "right" ? parent.width - parent.quick-right - parent.sidebar-outside-strip - parent.welcome-size
-             : root.welcome-sidebar-dock == "left" ? parent.quick-left + parent.sidebar-outside-strip
-             : parent.quick-left;
-            y: root.welcome-sidebar-dock == "bottom" ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip - parent.welcome-size
-             : root.welcome-sidebar-dock == "top" ? parent.quick-top + parent.sidebar-outside-strip
-             : parent.quick-top;
-            width: parent.welcome-horizontal ? parent.welcome-size
-                : parent.width - parent.quick-left - parent.quick-right;
-            height: parent.welcome-horizontal
-                ? parent.height - parent.quick-top - parent.quick-bottom : parent.welcome-size;
-            background: Theme.bg-panel;
-            clip: true;
-            Welcome {
-                width: parent.width;
-                height: parent.height;
-                compact: true;
-                dock-edge: root.welcome-sidebar-dock;
-                sessions: root.sessions;
-                import-hint: root.ssh-import-hint;
-                search-query <=> root.host-search-query;
-                search-changed(query) => { root.host-search-changed(query); }
-                collapse => {
-                    root.welcome-collapsed = true;
-                    root.set-welcome-collapsed(true);
-                }
-                dock-drag-move(ax, ay) => {
-                    root.panel-dragging = true;
-                    root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
-                    root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
-                }
-                dock-drag-end() => {
-                    if (root.dock-target != "") {
-                        root.welcome-sidebar-dock = root.dock-target;
-                        if (root.sidebar-dock == root.dock-target) {
-                            root.sidebar-collapsed = true;
-                            root.set-sidebar-collapsed(true);
-                        }
-                        if (root.quick-panel-open && root.quick-panel-dock == root.dock-target) {
-                            root.quick-panel-collapsed = true;
-                        }
-                        root.persist-welcome-sidebar-dock(root.welcome-sidebar-dock);
+                    if (root.sidebar-dock == root.quick-panel-dock) {
+                        root.sidebar-collapsed = true;
+                        root.set-sidebar-collapsed(true);
                     }
-                    root.panel-dragging = false;
-                }
-                new-session => { root.new-session-clicked(); }
-                import-ssh-config => { root.import-ssh-config(); }
-                connect-session(id) => { root.connect-session(id); }
-                edit-session(id) => { root.edit-session(id); }
-                duplicate-session(id) => { root.duplicate-session(id); }
-                move-session(id, group) => { root.move-session(id, group); }
-                toggle-group(group) => { root.toggle-group(group); }
-                new-group => {
-                    root.group-dialog-orig = "";
-                    root.group-dialog-name = "";
-                    root.group-dialog-error = "";
-                    root.group-dialog-open = true;
-                }
-                edit-group(name) => {
-                    root.group-dialog-orig = name;
-                    root.group-dialog-name = name;
-                    root.group-dialog-error = "";
-                    root.group-dialog-open = true;
-                }
-                delete-group(name) => { root.delete-group(name); }
-                remove-session(id) => { root.remove-session(id); }
-            }
-            Rectangle {
-                x: root.welcome-sidebar-dock == "left" ? parent.width - 1px : 0px;
-                y: root.welcome-sidebar-dock == "top" ? parent.height - 1px : 0px;
-                width: root.welcome-sidebar-horizontal ? 1px : parent.width;
-                height: root.welcome-sidebar-horizontal ? parent.height : 1px;
-                background: Theme.border-subtle;
-            }
-        }
-
-        // Drag the welcome sidebar's right edge to resize it (v0.5 M3b).
-        if root.welcome-as-sidebar && !root.welcome-collapsed : Rectangle {
-            x: root.welcome-sidebar-dock == "left" ? parent.quick-left + parent.sidebar-outside-strip + parent.welcome-size - 2px
-             : root.welcome-sidebar-dock == "right" ? parent.width - parent.quick-right - parent.sidebar-outside-strip - parent.welcome-size - 2px
-             : parent.quick-left;
-            y: root.welcome-sidebar-dock == "top" ? parent.quick-top + parent.sidebar-outside-strip + parent.welcome-size - 2px
-             : root.welcome-sidebar-dock == "bottom" ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip - parent.welcome-size - 2px
-             : parent.quick-top;
-            width: parent.welcome-horizontal ? 4px
-                : parent.width - parent.quick-left - parent.quick-right;
-            height: parent.welcome-horizontal
-                ? parent.height - parent.quick-top - parent.quick-bottom : 4px;
-            background: ws-split-ta.has-hover || dock-area.welcome-sidebar-dragging
-                ? Theme.accent : transparent;
-            ws-split-ta := TouchArea {
-                mouse-cursor: dock-area.welcome-horizontal ? ew-resize : ns-resize;
-                pointer-event(ev) => {
-                    if (ev.kind == PointerEventKind.down) {
-                        dock-area.welcome-sidebar-dragging = true;
-                    } else if (ev.kind == PointerEventKind.up) {
-                        dock-area.welcome-sidebar-dragging = false;
-                        root.persist-welcome-sidebar-width(root.welcome-sidebar-width / 1px);
-                    }
-                }
-                moved => {
-                    if (dock-area.welcome-sidebar-dragging) {
-                        if (dock-area.welcome-horizontal) {
-                            root.welcome-sidebar-width = clamp(
-                                root.welcome-sidebar-dock == "right"
-                                    ? dock-area.absolute-position.x + dock-area.width
-                                        - (self.absolute-position.x + self.mouse-x)
-                                    : self.absolute-position.x + self.mouse-x
-                                        - dock-area.absolute-position.x,
-                                160px, 480px);
-                        } else {
-                            root.welcome-sidebar-width = clamp(
-                                root.welcome-sidebar-dock == "bottom"
-                                    ? dock-area.absolute-position.y + dock-area.height
-                                        - (self.absolute-position.y + self.mouse-y)
-                                    : self.absolute-position.y + self.mouse-y
-                                        - dock-area.absolute-position.y,
-                                120px, 360px);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Everything except the welcome strip/sidebar — the resource panel,
-        // splitter and the central tab/pane content — sits to the right of them.
-        rest := Rectangle {
-        x: (root.welcome-sidebar-dock == "left" ? parent.welcome-taken : 0px)
-            + parent.quick-left;
-        y: (root.welcome-sidebar-dock == "top" ? parent.welcome-taken : 0px)
-            + parent.quick-top;
-        width: parent.width
-            - (parent.welcome-horizontal ? parent.welcome-taken : 0px)
-            - parent.quick-left - parent.quick-right;
-        height: parent.height
-            - (!parent.welcome-horizontal ? parent.welcome-taken : 0px)
-            - parent.quick-top - parent.quick-bottom;
-        // A shared ToolStrip is already reserved outside `rest` while the
-        // welcome panel is expanded, or by the merged welcome strip while both
-        // panels are collapsed. Do not reserve the same 36px a second time.
-        property <length> sb-w: root.zen-mode ? 0px
-            : dock-area.sidebar-strip-outside
-                || dock-area.combine-collapsed-tools ? 0px
-            : root.sidebar-collapsed ? 36px : root.sidebar-width;
-        property <length> sb-h: root.zen-mode ? 0px
-            : dock-area.sidebar-strip-outside
-                || dock-area.combine-collapsed-tools ? 0px
-            : root.sidebar-collapsed ? 36px : root.sidebar-height;
-        property <length> sp: root.zen-mode || root.sidebar-collapsed ? 0px : 4px;
-        // The collapsed bar (sb-h) already reserves the bottom strip now.
-        property <length> bottom-strip-h: 0px;
-
-        // Left sidebar — collapsible and drag-resizable, dockable to any edge.
-        // Only shown while expanded; collapsing swaps it for the ToolStrip icon
-        // bar below (mirrors the welcome sidebar), so no clipped widgets bleed
-        // through the 36px strip (#resource-collapse).
-        if !root.sidebar-collapsed : Rectangle {
-            x: root.sidebar-dock == "right" ? parent.width - parent.sb-w
-             : 0px;
-            y: root.sidebar-dock == "bottom" ? parent.height - parent.sb-h
-             : 0px;
-            width: root.sidebar-horizontal ? parent.sb-w : parent.width;
-            height: root.sidebar-horizontal ? parent.height : parent.sb-h;
-            clip: true;
-            Sidebar {
-            width: parent.width;
-            height: parent.height;
-            // Docked top/bottom → lay the resource widgets out in a row.
-            lay-horizontal: !root.sidebar-horizontal;
-            dock-edge: root.sidebar-dock;
-            animate width, height { duration: root.sidebar-dragging ? 0ms : 150ms; easing: ease-out; }
-            connection-state: root.connection-state;
-            conn-host: root.conn-host;
-            conn-state: root.conn-state;
-            resource-title: root.resource-title;
-            cpu-percent: root.cpu-percent;
-            mem-percent: root.mem-percent;
-            swap-percent: root.swap-percent;
-            mem-detail: root.mem-detail;
-            swap-detail: root.swap-detail;
-            net-top-up: root.net-top-up;
-            net-top-down: root.net-top-down;
-            net-top-history: root.net-top-history;
-            net-bot-up: root.net-bot-up;
-            net-bot-down: root.net-bot-down;
-            net-bot-history: root.net-bot-history;
-            net-ifaces: root.net-ifaces;
-            net-selected: root.net-selected;
-            net-show-selector: root.net-show-selector;
-            disks: root.disks;
-            system-info-available: root.system-info-available;
-            proc-available: root.proc-available;
-            app-version: root.app-version;
-            select-net-iface(i) => { root.select-net-iface(i); }
-            show-system-info() => { root.open-system-info(); }
-            show-processes() => { root.open-processes(); }
-            copy-host(h) => { root.copy-text(h); }   // reuse the clipboard helper (#192)
-            // Drag the sidebar header to dock it to another edge. Coordinates
-            // arrive in window space; convert to dock-area-relative fractions.
-            dock-drag-move(ax, ay) => {
-                root.panel-dragging = true;
-                root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
-                root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
-            }
-            dock-drag-end() => {
-                if (root.dock-target != "") {
-                    root.sidebar-dock = root.dock-target;
-                    if (root.welcome-as-sidebar && root.welcome-sidebar-dock == root.dock-target) {
+                    if (root.welcome-as-sidebar
+                            && root.welcome-sidebar-dock == root.quick-panel-dock) {
                         root.welcome-collapsed = true;
                         root.set-welcome-collapsed(true);
                     }
-                    if (root.quick-panel-open && root.quick-panel-dock == root.dock-target) {
+                }
+            }
+
+            // Collapsed welcome → a thin left icon strip (click the icon to re-open).
+            if root.welcome-as-sidebar && root.welcome-collapsed : ToolStrip {
+                x: root.welcome-sidebar-dock == "right"
+                    ? parent.width - parent.quick-right - parent.welcome-strip
+                    : root.welcome-sidebar-dock == "left" ? parent.quick-left : parent.quick-left;
+                y: root.welcome-sidebar-dock == "bottom"
+                    ? parent.height - parent.quick-bottom - parent.welcome-strip
+                    : root.welcome-sidebar-dock == "top" ? parent.quick-top : parent.quick-top;
+                width: parent.welcome-horizontal ? parent.welcome-strip
+                    : parent.width - parent.quick-left - parent.quick-right;
+                height: parent.welcome-horizontal
+                    ? parent.height - parent.quick-top - parent.quick-bottom : parent.welcome-strip;
+                dock-edge: root.welcome-sidebar-dock;
+                glyph: "\u{E88A}";   // session list / welcome
+                show-second: parent.combine-collapsed-tools || parent.quick-merge-welcome;
+                second-glyph: parent.combine-collapsed-tools ? "\u{E871}" : "\u{E3E7}";
+                show-third: parent.combine-collapsed-tools && parent.quick-merge-welcome;
+                third-glyph: "\u{E3E7}";
+                expand => {
+                    root.welcome-collapsed = false;
+                    root.set-welcome-collapsed(false);
+                    if (root.sidebar-dock == root.welcome-sidebar-dock) {
+                        root.sidebar-collapsed = true;
+                        root.set-sidebar-collapsed(true);
+                    }
+                    if (root.quick-panel-open
+                            && root.quick-panel-dock == root.welcome-sidebar-dock) {
                         root.quick-panel-collapsed = true;
                     }
-                    root.persist-sidebar-dock(root.sidebar-dock);
                 }
-                root.panel-dragging = false;
+                expand-second => {
+                    if (parent.combine-collapsed-tools) {
+                        root.sidebar-collapsed = false;
+                        root.set-sidebar-collapsed(false);
+                        if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
+                            root.quick-panel-collapsed = true;
+                        }
+                    } else {
+                        root.quick-panel-collapsed = false;
+                    }
+                }
+                expand-third => { root.quick-panel-collapsed = false; }
             }
-            toggle-collapse() => {
-                root.sidebar-collapsed = !root.sidebar-collapsed;
-                root.set-sidebar-collapsed(root.sidebar-collapsed);
-            }
-            }
-        }
 
-        // Collapsed resource panel → a ToolStrip icon bar at the same docked edge
-        // (M5), in place of the old floating expand button.
-        if root.sidebar-collapsed && !dock-area.combine-collapsed-tools && !dock-area.sidebar-strip-outside : ToolStrip {
-            x: root.sidebar-dock == "right" ? parent.width - parent.sb-w : 0px;
-            y: root.sidebar-dock == "bottom" ? parent.height - parent.sb-h : 0px;
-            width: root.sidebar-horizontal ? parent.sb-w : parent.width;
-            height: root.sidebar-horizontal ? parent.height : parent.sb-h;
-            dock-edge: root.sidebar-dock;
-            glyph: "\u{E871}";   // dashboard — resource panel
-            show-second: dock-area.quick-merge-sidebar;
-            second-glyph: "\u{E3E7}";
-            expand => {
-                root.sidebar-collapsed = false;
-                root.set-sidebar-collapsed(false);
-                if (root.welcome-as-sidebar && root.welcome-sidebar-dock == root.sidebar-dock) {
+            if dock-area.sidebar-strip-outside : ToolStrip {
+                x: root.welcome-sidebar-dock == "right"
+                    ? parent.width - parent.quick-right - parent.sidebar-outside-strip
+                    : root.welcome-sidebar-dock == "left" ? parent.quick-left : parent.quick-left;
+                y: root.welcome-sidebar-dock == "bottom"
+                    ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip
+                    : root.welcome-sidebar-dock == "top" ? parent.quick-top : parent.quick-top;
+                width: parent.welcome-horizontal ? parent.sidebar-outside-strip
+                    : parent.width - parent.quick-left - parent.quick-right;
+                height: parent.welcome-horizontal
+                    ? parent.height - parent.quick-top - parent.quick-bottom : parent.sidebar-outside-strip;
+                dock-edge: root.welcome-sidebar-dock;
+                glyph: "\u{E871}";
+                show-second: parent.quick-merge-sidebar;
+                second-glyph: "\u{E3E7}";
+                expand => {
+                    root.sidebar-collapsed = false;
+                    root.set-sidebar-collapsed(false);
                     root.welcome-collapsed = true;
                     root.set-welcome-collapsed(true);
-                }
-                if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
-                    root.quick-panel-collapsed = true;
-                }
-            }
-            expand-second => { root.quick-panel-collapsed = false; }
-        }
-
-        // Splitter — drag to resize the sidebar. Orientation + which dimension it
-        // adjusts follow the dock edge. Hidden while collapsed.
-        Rectangle {
-            visible: !root.sidebar-collapsed;
-            // Horizontal docks → a vertical 4px bar at the sidebar's inner edge;
-            // vertical docks → a horizontal 4px bar.
-            x: root.sidebar-dock == "left"   ? parent.sb-w
-             : root.sidebar-dock == "right"  ? parent.width - parent.sb-w - 4px
-             : 0px;
-            y: root.sidebar-dock == "top"    ? parent.sb-h
-             : root.sidebar-dock == "bottom" ? parent.height - parent.sb-h - 4px
-             : 0px;
-            width:  root.sidebar-horizontal ? 4px : parent.width;
-            height: root.sidebar-horizontal ? parent.height : 4px;
-            background: sb-split-ta.has-hover || root.sidebar-dragging
-                ? Theme.accent
-                : Theme.border-subtle;
-            sb-split-ta := TouchArea {
-                mouse-cursor: root.sidebar-horizontal ? ew-resize : ns-resize;
-                pointer-event(ev) => {
-                    if (ev.kind == PointerEventKind.down) {
-                        root.sidebar-dragging = true;
-                    } else if (ev.kind == PointerEventKind.up) {
-                        root.sidebar-dragging = false;
-                        root.persist-sidebar-width(root.sidebar-width / 1px);
+                    if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
+                        root.quick-panel-collapsed = true;
                     }
                 }
-                moved => {
-                    if (root.sidebar-dragging) {
-                        if (root.sidebar-horizontal) {
-                            // Track the cursor in stable dock-area coordinates.
-                            // The splitter moves while resizing, so adding local
-                            // mouse deltas to the current width feeds the movement
-                            // back into itself and can suddenly widen the panel
-                            // on Win10 (#244).
-                            root.sidebar-width = clamp(
-                                root.sidebar-dock == "right"
-                                    ? dock-area.absolute-position.x + dock-area.width
-                                        - (self.absolute-position.x + self.mouse-x)
-                                    : (self.absolute-position.x + self.mouse-x)
-                                        - dock-area.absolute-position.x,
-                                160px, 520px);
-                        } else {
-                            root.sidebar-height = clamp(
-                                root.sidebar-dock == "bottom"
-                                    ? dock-area.absolute-position.y + dock-area.height
-                                        - (self.absolute-position.y + self.mouse-y)
-                                    : (self.absolute-position.y + self.mouse-y)
-                                        - dock-area.absolute-position.y,
-                                120px, 480px);
-                        }
-                    }
-                }
+                expand-second => { root.quick-panel-collapsed = false; }
             }
-        }
 
-        // Right side: tabs + content — positioned in the rect left after the
-        // sidebar is carved off its docked edge. Clipped so the terminal / SFTP
-        // panel can never bleed (visually or for clicks) onto a panel docked on
-        // the bottom or right (#dock).
-        quick-area := Rectangle {
-            x: root.sidebar-dock == "left" ? parent.sb-w + parent.sp : 0px;
-            y: root.sidebar-dock == "top"  ? parent.sb-h + parent.sp : 0px;
-            width:  root.sidebar-horizontal ? parent.width - parent.sb-w - parent.sp : parent.width;
-            height: root.sidebar-horizontal ? parent.height : parent.height - parent.sb-h - parent.sp - parent.bottom-strip-h;
-            clip: true;
-            property <bool> quick-horizontal:
-                root.quick-panel-dock == "left" || root.quick-panel-dock == "right";
-            property <length> quick-w:
-                !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? root.quick-panel-width : 0px;
-            property <length> quick-h:
-                !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? root.quick-panel-height : 0px;
-            property <length> quick-sp:
-                !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? 4px : 0px;
-
-            central := Rectangle {
-            x: root.quick-panel-open && !root.quick-panel-collapsed && root.quick-panel-dock == "left"
-                ? parent.quick-w + parent.quick-sp : 0px;
-            y: root.quick-panel-open && !root.quick-panel-collapsed && root.quick-panel-dock == "top"
-                ? parent.quick-h + parent.quick-sp : 0px;
-            width: root.quick-panel-open && !root.quick-panel-collapsed && parent.quick-horizontal
-                ? parent.width - parent.quick-w - parent.quick-sp : parent.width;
-            height: root.quick-panel-open && !root.quick-panel-collapsed && !parent.quick-horizontal
-                ? parent.height - parent.quick-h - parent.quick-sp : parent.height;
-            clip: true;
-            // Split-pane area (v0.5): panes tile this rect; each pane has its own
-            // tab strip + active terminal / welcome. Rust flattens the split tree
-            // into `panes` for the size we report here.
-            pane-area := Rectangle {
-                width: parent.width;
-                height: parent.height;
-                changed width => { root.content-resized(self.width, self.height); }
-                changed height => { root.content-resized(self.width, self.height); }
-            for pane[pi] in root.panes : Rectangle {
-                x: pane.x; y: pane.y; width: pane.w; height: pane.h;
+            // Welcome / session list, to the right of the icon strip. Hidden when
+            // collapsed — its icon stays in the strip; clicking it re-opens.
+            if root.welcome-as-sidebar && !root.welcome-collapsed : Rectangle {
+                x: root.welcome-sidebar-dock == "right" ? parent.width - parent.quick-right - parent.sidebar-outside-strip - parent.welcome-size
+                 : root.welcome-sidebar-dock == "left" ? parent.quick-left + parent.sidebar-outside-strip
+                 : parent.quick-left;
+                y: root.welcome-sidebar-dock == "bottom" ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip - parent.welcome-size
+                 : root.welcome-sidebar-dock == "top" ? parent.quick-top + parent.sidebar-outside-strip
+                 : parent.quick-top;
+                width: parent.welcome-horizontal ? parent.welcome-size
+                    : parent.width - parent.quick-left - parent.quick-right;
+                height: parent.welcome-horizontal
+                    ? parent.height - parent.quick-top - parent.quick-bottom : parent.welcome-size;
+                background: Theme.bg-panel;
                 clip: true;
-                VerticalLayout {
-                spacing: 0;
-
-                HorizontalLayout {
-                spacing: 0;
-                // (Collapsed resource panel now reserves its own ToolStrip slot in
-                // `rest`, so the tab strip no longer needs a spacer for it.)
-                TabBar {
-                    horizontal-stretch: 1;
-                    // Reserve room for the top-right toolbar icons that sit over
-                    // this row so tabs don't slide underneath them (#122).
-                    reserve-right: pane.reserve-right;
-                    show-new-tab: !root.welcome-as-sidebar;
-                    can-merge-pane: root.panes.length > 1;
-                    tabs: pane.tabs;
-                    active-id: pane.active-id;
-                    tab-selected(id) => { root.pane-tab-selected(pane.id, id); }
-                    tab-closed(id) => { root.pane-tab-closed(pane.id, id); }
-                    new-tab() => { root.pane-new-tab(pane.id); }
-                    tab-reorder(from-index, direction) => {
-                        root.pane-tab-reorder(pane.id, from-index, direction);
-                    }
-                    tab-split(id, dir) => { root.pane-split(pane.id, id, dir); }
-                    merge-pane() => { root.pane-merge(pane.id); }
-                    tab-duplicate(id) => { root.tab-duplicate(id); }
-                    tab-drag-move(id, ax, ay) => {
-                        root.tab-drag-move(id,
-                            ax - pane-area.absolute-position.x,
-                            ay - pane-area.absolute-position.y);
-                    }
-                    tab-drag-drop(id, ax, ay) => {
-                        root.tab-drag-drop(id,
-                            ax - pane-area.absolute-position.x,
-                            ay - pane-area.absolute-position.y);
-                    }
-                }
-            }
-
-            // Content area swaps based on active tab kind.
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.bg-root;
-
-                // Empty pane outside welcome-sidebar mode: keep a small hint for
-                // rare empty panes, but do not cover the wallpaper when the
-                // session list is already visible as a sidebar.
-                if pane.tabs.length == 0 && !root.welcome-as-sidebar : Rectangle {
+                Welcome {
                     width: parent.width;
                     height: parent.height;
-                    Text {
-                        text: root.lang-en
-                            ? "Pick a session on the left to begin"
-                            : "从左侧选择一个会话开始";
-                        color: Theme.text-muted;
-                        font-size: Theme.fs-sm;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                // Welcome tab — fill the content area explicitly (some renderers
-                // don't auto-fill, which spread the header/card apart) (#dock).
-                if pane.active-id == "welcome" : Welcome {
-                    width: parent.width;
-                    height: parent.height;
+                    compact: true;
+                    dock-edge: root.welcome-sidebar-dock;
                     sessions: root.sessions;
                     import-hint: root.ssh-import-hint;
                     search-query <=> root.host-search-query;
+                    sessions-revision: root.sessions-revision;
                     search-changed(query) => { root.host-search-changed(query); }
+                    collapse => {
+                        root.welcome-collapsed = true;
+                        root.set-welcome-collapsed(true);
+                    }
+                    dock-drag-move(ax, ay) => {
+                        root.panel-dragging = true;
+                        root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
+                        root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
+                    }
+                    dock-drag-end() => {
+                        if (root.dock-target != "") {
+                            root.welcome-sidebar-dock = root.dock-target;
+                            if (root.sidebar-dock == root.dock-target) {
+                                root.sidebar-collapsed = true;
+                                root.set-sidebar-collapsed(true);
+                            }
+                            if (root.quick-panel-open && root.quick-panel-dock == root.dock-target) {
+                                root.quick-panel-collapsed = true;
+                            }
+                            root.persist-welcome-sidebar-dock(root.welcome-sidebar-dock);
+                        }
+                        root.panel-dragging = false;
+                    }
                     new-session => { root.new-session-clicked(); }
                     import-ssh-config => { root.import-ssh-config(); }
                     connect-session(id) => { root.connect-session(id); }
                     edit-session(id) => { root.edit-session(id); }
                     duplicate-session(id) => { root.duplicate-session(id); }
                     move-session(id, group) => { root.move-session(id, group); }
+                    reorder-session(id, dir) => { return root.reorder-session(id, dir); }
+                    reorder-end => { root.reorder-session-end(); }
                     toggle-group(group) => { root.toggle-group(group); }
                     new-group => {
                         root.group-dialog-orig = "";
@@ -1532,367 +1291,747 @@ export component AppWindow inherits Window {
                     }
                     delete-group(name) => { root.delete-group(name); }
                     remove-session(id) => { root.remove-session(id); }
-                    cycle-tab(reverse) => { root.cycle-tab(reverse); }
                 }
+                Rectangle {
+                    x: root.welcome-sidebar-dock == "left" ? parent.width - 1px : 0px;
+                    y: root.welcome-sidebar-dock == "top" ? parent.height - 1px : 0px;
+                    width: root.welcome-sidebar-horizontal ? 1px : parent.width;
+                    height: root.welcome-sidebar-horizontal ? parent.height : 1px;
+                    background: Theme.border-subtle;
+                }
+            }
 
-                // Terminal tabs — one TerminalView per terminal state. Only
-                // the one matching `active-tab-id` is visible. Slint doesn't
-                // allow nesting `if` directly inside a `for`, so we toggle
-                // visibility instead and rely on the layout to overlap them.
-                for term[i] in root.terminals : TerminalView {
-                    visible: term.id == pane.active-id;
-                    active: term.id == root.active-tab-id;
-                    zen-mode: root.zen-mode;
-                    width: term.id == pane.active-id ? parent.width : 0px;
-                    height: term.id == pane.active-id ? parent.height : 0px;
-                    tab-id: term.id;
-                    status-line: term.status;
-                    spans: term.spans;
-                    cursor-row: term.cursor-row;
-                    cursor-col: term.cursor-col;
-                    cursor-style: root.term-cursor-style;
-                    cursor-color: root.term-cursor-color;
-                    terminal-line-spacing: root.terminal-line-spacing;
-                    extra-paste-shortcuts-enabled: root.extra-paste-shortcuts-enabled;
-                    rows-used: term.rows-used;
-                    scroll-max: term.scroll-max;
-                    scroll-offset: term.scroll-offset;
-                    is-alt-screen: term.is-alt-screen;
-                    find-matches: term.find-matches;
-                    selection: term.selection;
-                    sftp-panel-height: term.sftp-panel-height;
-                    set-sftp-panel-height(v) => { root.set-pane-sftp-height(term.id, v); }
-                    sftp-panel-width: term.sftp-panel-width;
-                    set-sftp-panel-width(v) => { root.set-pane-sftp-width(term.id, v); }
-                    sftp-dock <=> root.sftp-dock;
-                    sftp-collapsed: term.sftp-collapsed;
-                    set-sftp-collapsed(v) => { root.set-pane-sftp-collapsed(term.id, v); }
-                    sftp-saved-height: term.sftp-saved-height;
-                    set-sftp-saved-height(v) => { root.set-pane-sftp-saved-height(term.id, v); }
-                    sftp-tree-width: root.sftp-tree-width;
-                    persist-sftp-tree-width(v) => { root.persist-sftp-tree-width(v); }
-                    sftp-path: term.sftp-path;
-                    sftp-entries: term.sftp-entries;
-                    sftp-status: term.sftp-status;
-                    sftp-loading: term.sftp-loading;
-                    sftp-tree-nodes: term.sftp-tree-nodes;
-                    sftp-transfer-targets: root.tabs;
-                    sftp-selected-count: term.sftp-selected-count;
-                    sftp-sort-key: term.sftp-sort-key;
-                    sftp-sort-dir: term.sftp-sort-dir;
-                    sftp-available: term.sftp-available && !root.zen-mode;
-                    tunnels: term.tunnels;
-                    quick-commands: root.quick-commands;
-                    quick-sidebar-enabled: root.quick-commands-as-sidebar;
-                    quick-panel-docked: root.quick-panel-open;
-                    quick-external-command: root.quick-external-command;
-                    quick-external-send-enter: root.quick-external-send-enter;
-                    quick-external-sequence: root.quick-external-sequence;
-                    command-history: root.command-history;
-                    history-view: root.history-view;
-                    run-command(cmd, all) => { root.run-command(term.id, cmd, all); }
-                    copy-text(t) => { root.copy-text(t); }
-                    delete-history(i) => { root.delete-history(i); }
-                    delete-history-cmd(c) => { root.delete-history-cmd(c); }
-                    search-history(q) => { root.search-history(q); }
-                    manage-quick-commands() => {
-                        root.qcm-name = "";
-                        root.qcm-command = "";
-                        root.qcm-group = "";
-                        root.qcm-edit-index = -1;
-                        root.quick-cmd-manage-open = true;
-                    }
-                    quick-dock-drag-move(ax, ay) => {
-                        root.panel-dragging = true;
-                        root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
-                        root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
-                    }
-                    quick-dock-drag-end() => {
-                        if (root.dock-target != "") {
-                            root.quick-panel-dock = root.dock-target;
-                            root.quick-panel-open = true;
-                            root.quick-panel-collapsed = false;
-                            if (root.sidebar-dock == root.dock-target) {
-                                root.sidebar-collapsed = true;
-                                root.set-sidebar-collapsed(true);
-                            }
-                            if (root.welcome-as-sidebar
-                                    && root.welcome-sidebar-dock == root.dock-target) {
-                                root.welcome-collapsed = true;
-                                root.set-welcome-collapsed(true);
-                            }
+            // Drag the welcome sidebar's right edge to resize it (v0.5 M3b).
+            if root.welcome-as-sidebar && !root.welcome-collapsed : Rectangle {
+                x: root.welcome-sidebar-dock == "left" ? parent.quick-left + parent.sidebar-outside-strip + parent.welcome-size - 2px
+                 : root.welcome-sidebar-dock == "right" ? parent.width - parent.quick-right - parent.sidebar-outside-strip - parent.welcome-size - 2px
+                 : parent.quick-left;
+                y: root.welcome-sidebar-dock == "top" ? parent.quick-top + parent.sidebar-outside-strip + parent.welcome-size - 2px
+                 : root.welcome-sidebar-dock == "bottom" ? parent.height - parent.quick-bottom - parent.sidebar-outside-strip - parent.welcome-size - 2px
+                 : parent.quick-top;
+                width: parent.welcome-horizontal ? 4px
+                    : parent.width - parent.quick-left - parent.quick-right;
+                height: parent.welcome-horizontal
+                    ? parent.height - parent.quick-top - parent.quick-bottom : 4px;
+                background: ws-split-ta.has-hover || dock-area.welcome-sidebar-dragging
+                    ? Theme.accent : transparent;
+                ws-split-ta := TouchArea {
+                    mouse-cursor: dock-area.welcome-horizontal ? ew-resize : ns-resize;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down) {
+                            dock-area.welcome-sidebar-dragging = true;
+                        } else if (ev.kind == PointerEventKind.up) {
+                            dock-area.welcome-sidebar-dragging = false;
+                            root.persist-welcome-sidebar-width(root.welcome-sidebar-width / 1px);
                         }
-                        root.panel-dragging = false;
                     }
-                    toggle-quick-group(g) => { root.toggle-quick-group(g); }
-                    edit-quick-command(i) => { root.edit-quick-command(i); }
-                    duplicate-quick-command(i) => { root.duplicate-quick-command(i); }
-                    delete-quick-command(i) => { root.delete-quick-command(i); }
-                    move-quick-command(i, g) => { root.move-quick-command(i, g); }
-                    new-quick-group() => { root.qcg-orig = ""; root.qcg-name = ""; root.qcg-open = true; }
-                    rename-quick-group(g) => { root.qcg-orig = g; root.qcg-name = g; root.qcg-open = true; }
-                    delete-quick-group(g) => { root.delete-quick-group(g); }
-                    send-key(key, ctrl, alt, shift) => { root.send-key(term.id, key, ctrl, alt, shift) }
-                    diagnose-key-event(key, control, meta, alt, shift) => {
-                        root.diagnose-key-event(term.id, key, control, meta, alt, shift);
-                    }
-                    cycle-tab(reverse) => { root.cycle-tab(reverse); }
-                    terminal-resize(w, h) => { root.terminal-resize(term.id, w, h) }
-                    sftp-navigate(path) => { root.sftp-navigate(term.id, path); }
-                    sftp-download(path) => { root.sftp-download(term.id, path); }
-                    sftp-upload-clicked(dir, folder) => { root.sftp-upload-clicked(term.id, dir, folder); }
-                    sftp-refresh(path) => { root.sftp-refresh(term.id, path); }
-                    sftp-tree-expand(path) => { root.sftp-tree-expand(term.id, path); }
-                    sftp-toggle-select(i) => { root.sftp-toggle-select(term.id, i); }
-                    sftp-download-selected() => { root.sftp-download-selected(term.id); }
-                    sftp-copy-to-target(path, target) => { root.sftp-copy-to-target(term.id, path, target); }
-                    sftp-copy-selected-to-target(target) => { root.sftp-copy-selected-to-target(term.id, target); }
-                    // Confirm before deleting the checked entries (#100), reusing
-                    // the delete-confirm dialog in batch mode.
-                    sftp-delete-selected() => {
-                        root.confirm-delete-tab = term.id;
-                        root.confirm-delete-batch = true;
-                        root.confirm-delete-path = root.lang-en ? "the selected items" : "选中的项目";
-                        root.confirm-delete-open = true;
-                    }
-                    // Gate delete behind an in-app confirmation (#28): stash the
-                    // target and open the modal; the real delete fires on confirm.
-                    sftp-delete(path) => {
-                        root.confirm-delete-tab = term.id;
-                        root.confirm-delete-path = path;
-                        root.confirm-delete-open = true;
-                    }
-                    sftp-view(path) => { root.sftp-view(term.id, path); }
-                    sftp-edit(path) => { root.sftp-edit(term.id, path); }
-                    sftp-open-external(path) => { root.sftp-open-external(term.id, path); }
-                    sftp-edit-external(path) => { root.sftp-edit-external(term.id, path); }
-                    sftp-sort-request(key) => { root.sftp-sort-request(term.id, key); }
-                    sftp-clear-sort() => { root.sftp-clear-sort(term.id); }
-                    tunnel-add(name, kind, bind, bind-port, host, host-port) => {
-                        root.tunnel-add(term.id, name, kind, bind, bind-port, host, host-port);
-                    }
-                    tunnel-stop(id) => { root.tunnel-stop(term.id, id); }
-                    // #69 context-menu extensions → shared prompt dialog.
-                    sftp-rename-request(path, name) => {
-                        root.sftp-prompt-kind = "rename";
-                        root.sftp-prompt-tab = term.id;
-                        root.sftp-prompt-target = path;
-                        root.sftp-prompt-value = name;
-                        root.sftp-prompt-open = true;
-                    }
-                    sftp-chmod-request(path, name, mode) => {
-                        root.sftp-chmod-open(term.id, path, name, mode);
-                    }
-                    sftp-copy-path(path) => { root.sftp-copy-path(path); }
-                    sftp-new-folder(dir) => {
-                        root.sftp-prompt-kind = "mkdir";
-                        root.sftp-prompt-tab = term.id;
-                        root.sftp-prompt-target = dir;
-                        root.sftp-prompt-value = "";
-                        root.sftp-prompt-open = true;
-                    }
-                    sftp-new-file(dir) => {
-                        root.sftp-prompt-kind = "touch";
-                        root.sftp-prompt-tab = term.id;
-                        root.sftp-prompt-target = dir;
-                        root.sftp-prompt-value = "";
-                        root.sftp-prompt-open = true;
-                    }
-                    paste-from-clipboard() => { root.paste-from-clipboard(term.id); }
-                    copy-terminal-text() => { root.copy-terminal-text(term.id); }
-                    clear-terminal() => { root.clear-terminal(term.id); }
-                    find-query-changed(q) => { root.find-query-changed(term.id, q); }
-                    terminal-scroll(d) => { root.terminal-scroll(term.id, d); }
-                    terminal-wheel(d, c, r) => { root.terminal-wheel(term.id, d, c, r); }
-                    terminal-scroll-to(o) => { root.terminal-scroll-to(term.id, o); }
-                    select-start(r, c, ctrl, shift) => { root.term-select-start(term.id, r, c, ctrl, shift); }
-                    select-update(r, c) => { root.term-select-update(term.id, r, c); }
-                    select-end() => { root.term-select-end(term.id); }
-                    select-word(r, c) => { root.term-select-word(term.id, r, c); }
-                    select-autoscroll(dir) => { root.term-select-autoscroll(term.id, dir); }
-                }
-
-                // Windows may show the terminal model being reconstructed when
-                // restoring from minimize (#183). Briefly cover the terminal area
-                // until the restore repaint settles; the underlying PTY/buffer is
-                // untouched.
-                if root.terminal-restore-cover && pane.active-id != "welcome" && pane.tabs.length > 0 : Rectangle {
-                    width: parent.width;
-                    height: parent.height;
-                    background: Theme.term-bg;
-                }
-            }
-            }
-            }
-
-            // Draggable splitters between panes. Single pane => the model is
-            // empty, so this renders nothing. The handle is a thin 6px bar but its
-            // TouchArea reaches ±5px beyond so it's easy to grab.
-            for sp[si] in root.splitters : Rectangle {
-                x: sp.x; y: sp.y; width: sp.w; height: sp.h;
-                // A tab dropped on a pane boundary leaves the pointer hovering
-                // over this splitter. Highlight only while the splitter itself
-                // is being dragged, otherwise that hover looks like a stuck
-                // full-height tab insertion caret.
-                background: sp-ta.pressed ? Theme.accent : Theme.border-strong;
-                animate background { duration: 100ms; }
-                sp-ta := TouchArea {
-                    x: sp.vertical ? -5px : 0px;
-                    y: sp.vertical ? 0px : -5px;
-                    width: sp.vertical ? parent.width + 10px : parent.width;
-                    height: sp.vertical ? parent.height : parent.height + 10px;
-                    mouse-cursor: sp.vertical ? ew-resize : ns-resize;
                     moved => {
-                        if (self.pressed) {
-                            root.splitter-drag(sp.split-id,
-                                sp.vertical ? sp.x - 5px + self.mouse-x
-                                            : sp.y - 5px + self.mouse-y,
-                                sp.vertical);
+                        if (dock-area.welcome-sidebar-dragging) {
+                            if (dock-area.welcome-horizontal) {
+                                root.welcome-sidebar-width = clamp(
+                                    root.welcome-sidebar-dock == "right"
+                                        ? dock-area.absolute-position.x + dock-area.width
+                                            - (self.absolute-position.x + self.mouse-x)
+                                        : self.absolute-position.x + self.mouse-x
+                                            - dock-area.absolute-position.x,
+                                    160px, 480px);
+                            } else {
+                                root.welcome-sidebar-width = clamp(
+                                    root.welcome-sidebar-dock == "bottom"
+                                        ? dock-area.absolute-position.y + dock-area.height
+                                            - (self.absolute-position.y + self.mouse-y)
+                                        : self.absolute-position.y + self.mouse-y
+                                            - dock-area.absolute-position.y,
+                                    120px, 360px);
+                            }
                         }
                     }
                 }
             }
 
-            // Drag-to-split drop-zone highlight (v0.5). Purely visual (no
-            // TouchArea) so it never eats the drag; Rust sets the rect.
-            if root.drag-active : Rectangle {
-                x: root.drag-hl-x;
-                y: root.drag-hl-y;
-                width: root.drag-hl-w;
-                height: root.drag-hl-h;
-                background: Theme.accent.with-alpha(0.22);
-                border-width: 2px;
-                border-color: Theme.accent;
-                border-radius: Theme.radius-sm;
-            }
-            }
-        }
+            // Everything except the welcome strip/sidebar — the resource panel,
+            // splitter and the central tab/pane content — sits to the right of them.
+            rest := Rectangle {
+            x: (root.welcome-sidebar-dock == "left" ? parent.welcome-taken : 0px)
+                + parent.quick-left;
+            y: (root.welcome-sidebar-dock == "top" ? parent.welcome-taken : 0px)
+                + parent.quick-top;
+            width: parent.width
+                - (parent.welcome-horizontal ? parent.welcome-taken : 0px)
+                - parent.quick-left - parent.quick-right;
+            height: parent.height
+                - (!parent.welcome-horizontal ? parent.welcome-taken : 0px)
+                - parent.quick-top - parent.quick-bottom;
+            // A shared ToolStrip is already reserved outside `rest` while the
+            // welcome panel is expanded, or by the merged welcome strip while both
+            // panels are collapsed. Do not reserve the same 36px a second time.
+            property <length> sb-w: root.zen-mode ? 0px
+                : dock-area.sidebar-strip-outside
+                    || dock-area.combine-collapsed-tools ? 0px
+                : root.sidebar-collapsed ? 36px : root.sidebar-width;
+            property <length> sb-h: root.zen-mode ? 0px
+                : dock-area.sidebar-strip-outside
+                    || dock-area.combine-collapsed-tools ? 0px
+                : root.sidebar-collapsed ? 36px : root.sidebar-height;
+            property <length> sp: root.zen-mode || root.sidebar-collapsed ? 0px : 4px;
+            // The collapsed bar (sb-h) already reserves the bottom strip now.
+            property <length> bottom-strip-h: 0px;
 
-        if root.quick-panel-open && !root.quick-panel-collapsed : QuickDockPanel {
-            x: root.quick-panel-dock == "right" ? parent.width - parent.quick-w : 0px;
-            y: root.quick-panel-dock == "bottom" ? parent.height - parent.quick-h : 0px;
-            width: parent.quick-horizontal ? parent.quick-w : parent.width;
-            height: parent.quick-horizontal ? parent.height : parent.quick-h;
-            commands: root.quick-commands;
-            dock-edge: root.quick-panel-dock;
-            activate(command, send-enter) => {
-                root.quick-external-command = command;
-                root.quick-external-send-enter = send-enter;
-                root.quick-external-sequence += 1;
-            }
-            toggle-group(group) => { root.toggle-quick-group(group); }
-            manage => {
-                root.qcm-name = "";
-                root.qcm-command = "";
-                root.qcm-group = "";
-                root.qcm-edit-index = -1;
-                root.quick-cmd-manage-open = true;
-            }
-            close => { root.quick-panel-collapsed = true; }
-            dock-drag-move(ax, ay) => {
-                root.panel-dragging = true;
-                root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
-                root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
-            }
-            dock-drag-end => {
-                if (root.dock-target != "") {
-                    root.quick-panel-dock = root.dock-target;
-                    if (root.sidebar-dock == root.dock-target) {
-                        root.sidebar-collapsed = true;
-                        root.set-sidebar-collapsed(true);
+            // Left sidebar — collapsible and drag-resizable, dockable to any edge.
+            // Only shown while expanded; collapsing swaps it for the ToolStrip icon
+            // bar below (mirrors the welcome sidebar), so no clipped widgets bleed
+            // through the 36px strip (#resource-collapse).
+            if !root.sidebar-collapsed : Rectangle {
+                x: root.sidebar-dock == "right" ? parent.width - parent.sb-w
+                 : 0px;
+                y: root.sidebar-dock == "bottom" ? parent.height - parent.sb-h
+                 : 0px;
+                width: root.sidebar-horizontal ? parent.sb-w : parent.width;
+                height: root.sidebar-horizontal ? parent.height : parent.sb-h;
+                clip: true;
+                Sidebar {
+                width: parent.width;
+                height: parent.height;
+                // Docked top/bottom → lay the resource widgets out in a row.
+                lay-horizontal: !root.sidebar-horizontal;
+                dock-edge: root.sidebar-dock;
+                animate width, height { duration: root.sidebar-dragging ? 0ms : 150ms; easing: ease-out; }
+                connection-state: root.connection-state;
+                conn-host: root.conn-host;
+                conn-state: root.conn-state;
+                resource-title: root.resource-title;
+                cpu-percent: root.cpu-percent;
+                mem-percent: root.mem-percent;
+                swap-percent: root.swap-percent;
+                mem-detail: root.mem-detail;
+                swap-detail: root.swap-detail;
+                net-top-up: root.net-top-up;
+                net-top-down: root.net-top-down;
+                net-top-history: root.net-top-history;
+                net-bot-up: root.net-bot-up;
+                net-bot-down: root.net-bot-down;
+                net-bot-history: root.net-bot-history;
+                net-ifaces: root.net-ifaces;
+                net-selected: root.net-selected;
+                net-show-selector: root.net-show-selector;
+                disks: root.disks;
+                system-info-available: root.system-info-available;
+                proc-available: root.proc-available;
+                app-version: root.app-version;
+                select-net-iface(i) => { root.select-net-iface(i); }
+                show-system-info() => { root.open-system-info(); }
+                show-processes() => { root.open-processes(); }
+                copy-host(h) => { root.copy-text(h); }   // reuse the clipboard helper (#192)
+                // Drag the sidebar header to dock it to another edge. Coordinates
+                // arrive in window space; convert to dock-area-relative fractions.
+                dock-drag-move(ax, ay) => {
+                    root.panel-dragging = true;
+                    root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
+                    root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
+                }
+                dock-drag-end() => {
+                    if (root.dock-target != "") {
+                        root.sidebar-dock = root.dock-target;
+                        if (root.welcome-as-sidebar && root.welcome-sidebar-dock == root.dock-target) {
+                            root.welcome-collapsed = true;
+                            root.set-welcome-collapsed(true);
+                        }
+                        if (root.quick-panel-open && root.quick-panel-dock == root.dock-target) {
+                            root.quick-panel-collapsed = true;
+                        }
+                        root.persist-sidebar-dock(root.sidebar-dock);
                     }
-                    if (root.welcome-as-sidebar
-                            && root.welcome-sidebar-dock == root.dock-target) {
+                    root.panel-dragging = false;
+                }
+                toggle-collapse() => {
+                    root.sidebar-collapsed = !root.sidebar-collapsed;
+                    root.set-sidebar-collapsed(root.sidebar-collapsed);
+                }
+                }
+            }
+
+            // Collapsed resource panel → a ToolStrip icon bar at the same docked edge
+            // (M5), in place of the old floating expand button.
+            if root.sidebar-collapsed && !dock-area.combine-collapsed-tools && !dock-area.sidebar-strip-outside : ToolStrip {
+                x: root.sidebar-dock == "right" ? parent.width - parent.sb-w : 0px;
+                y: root.sidebar-dock == "bottom" ? parent.height - parent.sb-h : 0px;
+                width: root.sidebar-horizontal ? parent.sb-w : parent.width;
+                height: root.sidebar-horizontal ? parent.height : parent.sb-h;
+                dock-edge: root.sidebar-dock;
+                glyph: "\u{E871}";   // dashboard — resource panel
+                show-second: dock-area.quick-merge-sidebar;
+                second-glyph: "\u{E3E7}";
+                expand => {
+                    root.sidebar-collapsed = false;
+                    root.set-sidebar-collapsed(false);
+                    if (root.welcome-as-sidebar && root.welcome-sidebar-dock == root.sidebar-dock) {
                         root.welcome-collapsed = true;
                         root.set-welcome-collapsed(true);
                     }
+                    if (root.quick-panel-open && root.quick-panel-dock == root.sidebar-dock) {
+                        root.quick-panel-collapsed = true;
+                    }
                 }
-                root.panel-dragging = false;
+                expand-second => { root.quick-panel-collapsed = false; }
             }
-        }
 
-        Rectangle {
-            visible: root.quick-panel-open && !root.quick-panel-collapsed;
-            x: root.quick-panel-dock == "left" ? parent.quick-w
-             : root.quick-panel-dock == "right" ? parent.width - parent.quick-w - 4px
-             : 0px;
-            y: root.quick-panel-dock == "top" ? parent.quick-h
-             : root.quick-panel-dock == "bottom" ? parent.height - parent.quick-h - 4px
-             : 0px;
-            width: parent.quick-horizontal ? 4px : parent.width;
-            height: parent.quick-horizontal ? parent.height : 4px;
-            background: quick-split-ta.has-hover ? Theme.accent : Theme.border-subtle;
-            quick-split-ta := TouchArea {
-                x: quick-area.quick-horizontal ? -4px : 0px;
-                y: quick-area.quick-horizontal ? 0px : -4px;
-                width: quick-area.quick-horizontal ? 12px : parent.width;
-                height: quick-area.quick-horizontal ? parent.height : 12px;
-                mouse-cursor: quick-area.quick-horizontal ? ew-resize : ns-resize;
-                moved => {
-                    if (self.pressed) {
-                        if (quick-area.quick-horizontal) {
-                            root.quick-panel-width = clamp(
-                                root.quick-panel-dock == "right"
-                                    ? quick-area.width - ((self.absolute-position.x + self.mouse-x)
-                                        - quick-area.absolute-position.x)
-                                    : (self.absolute-position.x + self.mouse-x)
-                                        - quick-area.absolute-position.x,
-                                180px, max(200px, quick-area.width - 240px));
-                        } else {
-                            root.quick-panel-height = clamp(
-                                root.quick-panel-dock == "bottom"
-                                    ? quick-area.height - ((self.absolute-position.y + self.mouse-y)
-                                        - quick-area.absolute-position.y)
-                                    : (self.absolute-position.y + self.mouse-y)
-                                        - quick-area.absolute-position.y,
-                                120px, max(140px, quick-area.height - 160px));
+            // Splitter — drag to resize the sidebar. Orientation + which dimension it
+            // adjusts follow the dock edge. Hidden while collapsed.
+            Rectangle {
+                visible: !root.sidebar-collapsed;
+                // Horizontal docks → a vertical 4px bar at the sidebar's inner edge;
+                // vertical docks → a horizontal 4px bar.
+                x: root.sidebar-dock == "left"   ? parent.sb-w
+                 : root.sidebar-dock == "right"  ? parent.width - parent.sb-w - 4px
+                 : 0px;
+                y: root.sidebar-dock == "top"    ? parent.sb-h
+                 : root.sidebar-dock == "bottom" ? parent.height - parent.sb-h - 4px
+                 : 0px;
+                width:  root.sidebar-horizontal ? 4px : parent.width;
+                height: root.sidebar-horizontal ? parent.height : 4px;
+                background: sb-split-ta.has-hover || root.sidebar-dragging
+                    ? Theme.accent
+                    : Theme.border-subtle;
+                sb-split-ta := TouchArea {
+                    mouse-cursor: root.sidebar-horizontal ? ew-resize : ns-resize;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down) {
+                            root.sidebar-dragging = true;
+                        } else if (ev.kind == PointerEventKind.up) {
+                            root.sidebar-dragging = false;
+                            root.persist-sidebar-width(root.sidebar-width / 1px);
+                        }
+                    }
+                    moved => {
+                        if (root.sidebar-dragging) {
+                            if (root.sidebar-horizontal) {
+                                // Track the cursor in stable dock-area coordinates.
+                                // The splitter moves while resizing, so adding local
+                                // mouse deltas to the current width feeds the movement
+                                // back into itself and can suddenly widen the panel
+                                // on Win10 (#244).
+                                root.sidebar-width = clamp(
+                                    root.sidebar-dock == "right"
+                                        ? dock-area.absolute-position.x + dock-area.width
+                                            - (self.absolute-position.x + self.mouse-x)
+                                        : (self.absolute-position.x + self.mouse-x)
+                                            - dock-area.absolute-position.x,
+                                    160px, 520px);
+                            } else {
+                                root.sidebar-height = clamp(
+                                    root.sidebar-dock == "bottom"
+                                        ? dock-area.absolute-position.y + dock-area.height
+                                            - (self.absolute-position.y + self.mouse-y)
+                                        : (self.absolute-position.y + self.mouse-y)
+                                            - dock-area.absolute-position.y,
+                                    120px, 480px);
+                            }
                         }
                     }
                 }
             }
-        }
-        }
-        }
 
-        // (Resource collapse now uses a ToolStrip inside `rest`, above.)
+            // Right side: tabs + content — positioned in the rect left after the
+            // sidebar is carved off its docked edge. Clipped so the terminal / SFTP
+            // panel can never bleed (visually or for clicks) onto a panel docked on
+            // the bottom or right (#dock).
+            quick-area := Rectangle {
+                x: root.sidebar-dock == "left" ? parent.sb-w + parent.sp : 0px;
+                y: root.sidebar-dock == "top"  ? parent.sb-h + parent.sp : 0px;
+                width:  root.sidebar-horizontal ? parent.width - parent.sb-w - parent.sp : parent.width;
+                height: root.sidebar-horizontal ? parent.height : parent.height - parent.sb-h - parent.sp - parent.bottom-strip-h;
+                clip: true;
+                property <bool> quick-horizontal:
+                    root.quick-panel-dock == "left" || root.quick-panel-dock == "right";
+                property <length> quick-w:
+                    !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? root.quick-panel-width : 0px;
+                property <length> quick-h:
+                    !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? root.quick-panel-height : 0px;
+                property <length> quick-sp:
+                    !root.zen-mode && root.quick-panel-open && !root.quick-panel-collapsed ? 4px : 0px;
 
-        // Drag-to-dock snap overlay — four edge zones; the one under the cursor
-        // (root.dock-target) lights up. Purely visual (no TouchArea) so the
-        // header's drag keeps receiving move events (#dock).
-        if root.panel-dragging : Rectangle {
-            x: 0; y: 0;
-            width: parent.width;
-            height: parent.height;
-            Rectangle {   // left zone
-                x: 0; y: 0; width: parent.width * 0.22; height: parent.height;
-                background: root.dock-target == "left"
-                    ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
-                border-width: root.dock-target == "left" ? 2px : 0px;
-                border-color: Theme.accent;
+                central := Rectangle {
+                x: root.quick-panel-open && !root.quick-panel-collapsed && root.quick-panel-dock == "left"
+                    ? parent.quick-w + parent.quick-sp : 0px;
+                y: root.quick-panel-open && !root.quick-panel-collapsed && root.quick-panel-dock == "top"
+                    ? parent.quick-h + parent.quick-sp : 0px;
+                width: root.quick-panel-open && !root.quick-panel-collapsed && parent.quick-horizontal
+                    ? parent.width - parent.quick-w - parent.quick-sp : parent.width;
+                height: root.quick-panel-open && !root.quick-panel-collapsed && !parent.quick-horizontal
+                    ? parent.height - parent.quick-h - parent.quick-sp : parent.height;
+                clip: true;
+                // Split-pane area (v0.5): panes tile this rect; each pane has its own
+                // tab strip + active terminal / welcome. Rust flattens the split tree
+                // into `panes` for the size we report here.
+                pane-area := Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    changed width => { root.content-resized(self.width, self.height); }
+                    changed height => { root.content-resized(self.width, self.height); }
+                for pane[pi] in root.panes : Rectangle {
+                    x: pane.x; y: pane.y; width: pane.w; height: pane.h;
+                    clip: true;
+                    VerticalLayout {
+                    spacing: 0;
+
+                    HorizontalLayout {
+                    spacing: 0;
+                    // (Collapsed resource panel now reserves its own ToolStrip slot in
+                    // `rest`, so the tab strip no longer needs a spacer for it.)
+                    TabBar {
+                        horizontal-stretch: 1;
+                        // Reserve room for the top-right toolbar icons that sit over
+                        // this row so tabs don't slide underneath them (#122).
+                        reserve-right: pane.reserve-right;
+                        show-new-tab: !root.welcome-as-sidebar;
+                        can-merge-pane: root.panes.length > 1;
+                        tabs: pane.tabs;
+                        active-id: pane.active-id;
+                        tab-selected(id) => { root.pane-tab-selected(pane.id, id); }
+                        tab-closed(id) => { root.pane-tab-closed(pane.id, id); }
+                        new-tab() => { root.pane-new-tab(pane.id); }
+                        tab-reorder(from-index, direction) => {
+                            root.pane-tab-reorder(pane.id, from-index, direction);
+                        }
+                        tab-split(id, dir) => { root.pane-split(pane.id, id, dir); }
+                        merge-pane() => { root.pane-merge(pane.id); }
+                        tab-duplicate(id) => { root.tab-duplicate(id); }
+                        tab-rename-request(id) => { root.tab-rename-request(id); }
+                        tab-drag-move(id, ax, ay) => {
+                            root.tab-drag-move(id,
+                                ax - pane-area.absolute-position.x,
+                                ay - pane-area.absolute-position.y);
+                        }
+                        tab-drag-drop(id, ax, ay) => {
+                            root.tab-drag-drop(id,
+                                ax - pane-area.absolute-position.x,
+                                ay - pane-area.absolute-position.y);
+                        }
+                    }
+                }
+
+                // Content area swaps based on active tab kind.
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.bg-root;
+
+                    // Empty pane outside welcome-sidebar mode: keep a small hint for
+                    // rare empty panes, but do not cover the wallpaper when the
+                    // session list is already visible as a sidebar.
+                    if pane.tabs.length == 0 && !root.welcome-as-sidebar : Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        Text {
+                            text: root.lang-en
+                                ? "Pick a session on the left to begin"
+                                : "从左侧选择一个会话开始";
+                            color: Theme.text-muted;
+                            font-size: Theme.fs-sm;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Welcome tab — fill the content area explicitly (some renderers
+                    // don't auto-fill, which spread the header/card apart) (#dock).
+                    if pane.active-id == "welcome" : Welcome {
+                        width: parent.width;
+                        height: parent.height;
+                        sessions: root.sessions;
+                        import-hint: root.ssh-import-hint;
+                        search-query <=> root.host-search-query;
+                        sessions-revision: root.sessions-revision;
+                        search-changed(query) => { root.host-search-changed(query); }
+                        new-session => { root.new-session-clicked(); }
+                        import-ssh-config => { root.import-ssh-config(); }
+                        connect-session(id) => { root.connect-session(id); }
+                        edit-session(id) => { root.edit-session(id); }
+                        duplicate-session(id) => { root.duplicate-session(id); }
+                        move-session(id, group) => { root.move-session(id, group); }
+                        reorder-session(id, dir) => { return root.reorder-session(id, dir); }
+                        reorder-end => { root.reorder-session-end(); }
+                        toggle-group(group) => { root.toggle-group(group); }
+                        new-group => {
+                            root.group-dialog-orig = "";
+                            root.group-dialog-name = "";
+                            root.group-dialog-error = "";
+                            root.group-dialog-open = true;
+                        }
+                        edit-group(name) => {
+                            root.group-dialog-orig = name;
+                            root.group-dialog-name = name;
+                            root.group-dialog-error = "";
+                            root.group-dialog-open = true;
+                        }
+                        delete-group(name) => { root.delete-group(name); }
+                        remove-session(id) => { root.remove-session(id); }
+                        cycle-tab(reverse) => { root.cycle-tab(reverse); }
+                    }
+
+                    // Terminal tabs — one TerminalView per terminal state. Only
+                    // the one matching `active-tab-id` is visible. Slint doesn't
+                    // allow nesting `if` directly inside a `for`, so we toggle
+                    // visibility instead and rely on the layout to overlap them.
+                    for term[i] in root.terminals : TerminalView {
+                        visible: term.id == pane.active-id;
+                        active: term.id == root.active-tab-id;
+                        zen-mode: root.zen-mode;
+                        width: term.id == pane.active-id ? parent.width : 0px;
+                        height: term.id == pane.active-id ? parent.height : 0px;
+                        tab-id: term.id;
+                        status-line: term.status;
+                        spans: term.spans;
+                        cursor-row: term.cursor-row;
+                        cursor-col: term.cursor-col;
+                        cursor-style: root.term-cursor-style;
+                        cursor-color: root.term-cursor-color;
+                        terminal-line-spacing: root.terminal-line-spacing;
+                        extra-paste-shortcuts-enabled: root.extra-paste-shortcuts-enabled;
+                        rows-used: term.rows-used;
+                        scroll-max: term.scroll-max;
+                        scroll-offset: term.scroll-offset;
+                        is-alt-screen: term.is-alt-screen;
+                        find-matches: term.find-matches;
+                        selection: term.selection;
+                        sftp-panel-height: term.sftp-panel-height;
+                        set-sftp-panel-height(v) => { root.set-pane-sftp-height(term.id, v); }
+                        sftp-panel-width: term.sftp-panel-width;
+                        set-sftp-panel-width(v) => { root.set-pane-sftp-width(term.id, v); }
+                        sftp-dock <=> root.sftp-dock;
+                        sftp-collapsed: term.sftp-collapsed;
+                        set-sftp-collapsed(v) => { root.set-pane-sftp-collapsed(term.id, v); }
+                        sftp-saved-height: term.sftp-saved-height;
+                        set-sftp-saved-height(v) => { root.set-pane-sftp-saved-height(term.id, v); }
+                        sftp-tree-width: root.sftp-tree-width;
+                        persist-sftp-tree-width(v) => { root.persist-sftp-tree-width(v); }
+                        sftp-path: term.sftp-path;
+                        sftp-entries: term.sftp-entries;
+                        sftp-status: term.sftp-status;
+                        sftp-loading: term.sftp-loading;
+                        sftp-tree-nodes: term.sftp-tree-nodes;
+                        sftp-transfer-targets: root.tabs;
+                        sftp-selected-count: term.sftp-selected-count;
+                        sftp-sort-key: term.sftp-sort-key;
+                        sftp-sort-dir: term.sftp-sort-dir;
+                        sftp-available: term.sftp-available;
+                        tunnels: term.tunnels;
+                        quick-commands: root.quick-commands;
+                        quick-sidebar-enabled: root.quick-commands-as-sidebar;
+                        quick-panel-docked: root.quick-panel-open;
+                        cmd-bar-hidden: root.cmd-bar-hidden;
+                        quick-external-command: root.quick-external-command;
+                        quick-external-send-enter: root.quick-external-send-enter;
+                        quick-external-sequence: root.quick-external-sequence;
+                        command-history: root.command-history;
+                        history-view: root.history-view;
+                        run-command(cmd, all) => { root.run-command(term.id, cmd, all); }
+                        copy-text(t) => { root.copy-text(t); }
+                        delete-history(i) => { root.delete-history(i); }
+                        delete-history-cmd(c) => { root.delete-history-cmd(c); }
+                        search-history(q) => { root.search-history(q); }
+                        manage-quick-commands() => {
+                            root.qcm-name = "";
+                            root.qcm-command = "";
+                            root.qcm-group = "";
+                            root.qcm-edit-index = -1;
+                            root.quick-cmd-manage-open = true;
+                        }
+                        quick-dock-drag-move(ax, ay) => {
+                            root.panel-dragging = true;
+                            root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
+                            root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
+                        }
+                        quick-dock-drag-end() => {
+                            if (root.dock-target != "") {
+                                root.quick-panel-dock = root.dock-target;
+                                root.quick-panel-open = true;
+                                root.quick-panel-collapsed = false;
+                                if (root.sidebar-dock == root.dock-target) {
+                                    root.sidebar-collapsed = true;
+                                    root.set-sidebar-collapsed(true);
+                                }
+                                if (root.welcome-as-sidebar
+                                        && root.welcome-sidebar-dock == root.dock-target) {
+                                    root.welcome-collapsed = true;
+                                    root.set-welcome-collapsed(true);
+                                }
+                            }
+                            root.panel-dragging = false;
+                        }
+                        toggle-quick-group(g) => { root.toggle-quick-group(g); }
+                        edit-quick-command(i) => { root.edit-quick-command(i); }
+                        duplicate-quick-command(i) => { root.duplicate-quick-command(i); }
+                        delete-quick-command(i) => { root.delete-quick-command(i); }
+                        move-quick-command(i, g) => { root.move-quick-command(i, g); }
+                        new-quick-group() => { root.qcg-orig = ""; root.qcg-name = ""; root.qcg-open = true; }
+                        rename-quick-group(g) => { root.qcg-orig = g; root.qcg-name = g; root.qcg-open = true; }
+                        delete-quick-group(g) => { root.delete-quick-group(g); }
+                        send-key(key, ctrl, alt, shift) => { root.send-key(term.id, key, ctrl, alt, shift) }
+                        diagnose-key-event(key, control, meta, alt, shift) => {
+                            root.diagnose-key-event(term.id, key, control, meta, alt, shift);
+                        }
+                        cycle-tab(reverse) => { root.cycle-tab(reverse); }
+                        new-window-key() => { root.new-window-clicked(); }
+                        zoom-key(direction, window-wide) => { root.zoom-term-font(term.id, direction, window-wide); }
+                        zen-key() => { root.toggle-zen-key(); }
+                        term-font-size-px: term.font-size > 0 ? term.font-size * 1.0 : root.term-font-size / 1px;
+                        terminal-resize(w, h) => { root.terminal-resize(term.id, w, h) }
+                        sftp-navigate(path) => { root.sftp-navigate(term.id, path); }
+                        sftp-download(path) => { root.sftp-download(term.id, path); }
+                        sftp-upload-clicked(dir, folder) => { root.sftp-upload-clicked(term.id, dir, folder); }
+                        sftp-refresh(path) => { root.sftp-refresh(term.id, path); }
+                        sftp-tree-expand(path) => { root.sftp-tree-expand(term.id, path); }
+                        sftp-toggle-select(i) => { root.sftp-toggle-select(term.id, i); }
+                        sftp-download-selected() => { root.sftp-download-selected(term.id); }
+                        sftp-copy-to-target(path, target) => { root.sftp-copy-to-target(term.id, path, target); }
+                        sftp-copy-selected-to-target(target) => { root.sftp-copy-selected-to-target(term.id, target); }
+                        // Confirm before deleting the checked entries (#100), reusing
+                        // the delete-confirm dialog in batch mode.
+                        sftp-delete-selected() => {
+                            root.confirm-delete-tab = term.id;
+                            root.confirm-delete-batch = true;
+                            root.confirm-delete-path = root.lang-en ? "the selected items" : "选中的项目";
+                            root.confirm-delete-open = true;
+                        }
+                        // Gate delete behind an in-app confirmation (#28): stash the
+                        // target and open the modal; the real delete fires on confirm.
+                        sftp-delete(path) => {
+                            root.confirm-delete-tab = term.id;
+                            root.confirm-delete-path = path;
+                            root.confirm-delete-open = true;
+                        }
+                        sftp-view(path) => { root.sftp-view(term.id, path); }
+                        sftp-edit(path) => { root.sftp-edit(term.id, path); }
+                        sftp-open-external(path) => { root.sftp-open-external(term.id, path); }
+                        sftp-edit-external(path) => { root.sftp-edit-external(term.id, path); }
+                        sftp-sort-request(key) => { root.sftp-sort-request(term.id, key); }
+                        sftp-clear-sort() => { root.sftp-clear-sort(term.id); }
+                        tunnel-add(name, kind, bind, bind-port, host, host-port) => {
+                            root.tunnel-add(term.id, name, kind, bind, bind-port, host, host-port);
+                        }
+                        tunnel-stop(id) => { root.tunnel-stop(term.id, id); }
+                        // #69 context-menu extensions → shared prompt dialog.
+                        sftp-rename-request(path, name) => {
+                            root.sftp-prompt-kind = "rename";
+                            root.sftp-prompt-tab = term.id;
+                            root.sftp-prompt-target = path;
+                            root.sftp-prompt-value = name;
+                            root.sftp-prompt-open = true;
+                        }
+                        sftp-chmod-request(path, name, mode) => {
+                            root.sftp-chmod-open(term.id, path, name, mode);
+                        }
+                        sftp-copy-path(path) => { root.sftp-copy-path(path); }
+                        sftp-new-folder(dir) => {
+                            root.sftp-prompt-kind = "mkdir";
+                            root.sftp-prompt-tab = term.id;
+                            root.sftp-prompt-target = dir;
+                            root.sftp-prompt-value = "";
+                            root.sftp-prompt-open = true;
+                        }
+                        sftp-new-file(dir) => {
+                            root.sftp-prompt-kind = "touch";
+                            root.sftp-prompt-tab = term.id;
+                            root.sftp-prompt-target = dir;
+                            root.sftp-prompt-value = "";
+                            root.sftp-prompt-open = true;
+                        }
+                        paste-from-clipboard() => { root.paste-from-clipboard(term.id); }
+                        copy-terminal-text() => { root.copy-terminal-text(term.id); }
+                        clear-terminal() => { root.clear-terminal(term.id); }
+                        find-query-changed(q) => { root.find-query-changed(term.id, q); }
+                        terminal-scroll(d) => { root.terminal-scroll(term.id, d); }
+                        terminal-wheel(d, c, r) => { root.terminal-wheel(term.id, d, c, r); }
+                        terminal-scroll-to(o) => { root.terminal-scroll-to(term.id, o); }
+                        select-start(r, c, ctrl, shift) => { root.term-select-start(term.id, r, c, ctrl, shift); }
+                        select-update(r, c) => { root.term-select-update(term.id, r, c); }
+                        select-end() => { root.term-select-end(term.id); }
+                        select-word(r, c) => { root.term-select-word(term.id, r, c); }
+                        select-autoscroll(dir) => { root.term-select-autoscroll(term.id, dir); }
+                    }
+
+                    // Windows may show the terminal model being reconstructed when
+                    // restoring from minimize (#183). Briefly cover the terminal area
+                    // until the restore repaint settles; the underlying PTY/buffer is
+                    // untouched.
+                    if root.terminal-restore-cover && pane.active-id != "welcome" && pane.tabs.length > 0 : Rectangle {
+                        width: parent.width;
+                        height: parent.height;
+                        background: Theme.term-bg;
+                    }
+                }
+                }
+                }
+
+                // Draggable splitters between panes. Single pane => the model is
+                // empty, so this renders nothing. The handle is a thin 6px bar but its
+                // TouchArea reaches ±5px beyond so it's easy to grab.
+                for sp[si] in root.splitters : Rectangle {
+                    x: sp.x; y: sp.y; width: sp.w; height: sp.h;
+                    // A tab dropped on a pane boundary leaves the pointer hovering
+                    // over this splitter. Highlight only while the splitter itself
+                    // is being dragged, otherwise that hover looks like a stuck
+                    // full-height tab insertion caret.
+                    background: sp-ta.pressed ? Theme.accent : Theme.border-strong;
+                    animate background { duration: 100ms; }
+                    sp-ta := TouchArea {
+                        x: sp.vertical ? -5px : 0px;
+                        y: sp.vertical ? 0px : -5px;
+                        width: sp.vertical ? parent.width + 10px : parent.width;
+                        height: sp.vertical ? parent.height : parent.height + 10px;
+                        mouse-cursor: sp.vertical ? ew-resize : ns-resize;
+                        moved => {
+                            if (self.pressed) {
+                                root.splitter-drag(sp.split-id,
+                                    sp.vertical ? sp.x - 5px + self.mouse-x
+                                                : sp.y - 5px + self.mouse-y,
+                                    sp.vertical);
+                            }
+                        }
+                    }
+                }
+
+                // Drag-to-split drop-zone highlight (v0.5). Purely visual (no
+                // TouchArea) so it never eats the drag; Rust sets the rect.
+                if root.drag-active : Rectangle {
+                    x: root.drag-hl-x;
+                    y: root.drag-hl-y;
+                    width: root.drag-hl-w;
+                    height: root.drag-hl-h;
+                    background: Theme.accent.with-alpha(0.22);
+                    border-width: 2px;
+                    border-color: Theme.accent;
+                    border-radius: Theme.radius-sm;
+                }
+                }
             }
-            Rectangle {   // right zone
-                x: parent.width * 0.78; y: 0; width: parent.width * 0.22; height: parent.height;
-                background: root.dock-target == "right"
-                    ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
-                border-width: root.dock-target == "right" ? 2px : 0px;
-                border-color: Theme.accent;
+
+            if root.quick-panel-open && !root.quick-panel-collapsed : QuickDockPanel {
+                x: root.quick-panel-dock == "right" ? parent.width - parent.quick-w : 0px;
+                y: root.quick-panel-dock == "bottom" ? parent.height - parent.quick-h : 0px;
+                width: parent.quick-horizontal ? parent.quick-w : parent.width;
+                height: parent.quick-horizontal ? parent.height : parent.quick-h;
+                commands: root.quick-commands;
+                dock-edge: root.quick-panel-dock;
+                activate(command, send-enter) => {
+                    root.quick-external-command = command;
+                    root.quick-external-send-enter = send-enter;
+                    root.quick-external-sequence += 1;
+                }
+                toggle-group(group) => { root.toggle-quick-group(group); }
+                manage => {
+                    root.qcm-name = "";
+                    root.qcm-command = "";
+                    root.qcm-group = "";
+                    root.qcm-edit-index = -1;
+                    root.quick-cmd-manage-open = true;
+                }
+                close => { root.quick-panel-collapsed = true; }
+                dock-drag-move(ax, ay) => {
+                    root.panel-dragging = true;
+                    root.drag-nx = (ax - dock-area.absolute-position.x) / dock-area.width;
+                    root.drag-ny = (ay - dock-area.absolute-position.y) / dock-area.height;
+                }
+                dock-drag-end => {
+                    if (root.dock-target != "") {
+                        root.quick-panel-dock = root.dock-target;
+                        if (root.sidebar-dock == root.dock-target) {
+                            root.sidebar-collapsed = true;
+                            root.set-sidebar-collapsed(true);
+                        }
+                        if (root.welcome-as-sidebar
+                                && root.welcome-sidebar-dock == root.dock-target) {
+                            root.welcome-collapsed = true;
+                            root.set-welcome-collapsed(true);
+                        }
+                    }
+                    root.panel-dragging = false;
+                }
             }
-            Rectangle {   // top zone
-                x: 0; y: 0; width: parent.width; height: parent.height * 0.22;
-                background: root.dock-target == "top"
-                    ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
-                border-width: root.dock-target == "top" ? 2px : 0px;
-                border-color: Theme.accent;
+
+            Rectangle {
+                visible: root.quick-panel-open && !root.quick-panel-collapsed;
+                x: root.quick-panel-dock == "left" ? parent.quick-w
+                 : root.quick-panel-dock == "right" ? parent.width - parent.quick-w - 4px
+                 : 0px;
+                y: root.quick-panel-dock == "top" ? parent.quick-h
+                 : root.quick-panel-dock == "bottom" ? parent.height - parent.quick-h - 4px
+                 : 0px;
+                width: parent.quick-horizontal ? 4px : parent.width;
+                height: parent.quick-horizontal ? parent.height : 4px;
+                background: quick-split-ta.has-hover ? Theme.accent : Theme.border-subtle;
+                quick-split-ta := TouchArea {
+                    x: quick-area.quick-horizontal ? -4px : 0px;
+                    y: quick-area.quick-horizontal ? 0px : -4px;
+                    width: quick-area.quick-horizontal ? 12px : parent.width;
+                    height: quick-area.quick-horizontal ? parent.height : 12px;
+                    mouse-cursor: quick-area.quick-horizontal ? ew-resize : ns-resize;
+                    moved => {
+                        if (self.pressed) {
+                            if (quick-area.quick-horizontal) {
+                                root.quick-panel-width = clamp(
+                                    root.quick-panel-dock == "right"
+                                        ? quick-area.width - ((self.absolute-position.x + self.mouse-x)
+                                            - quick-area.absolute-position.x)
+                                        : (self.absolute-position.x + self.mouse-x)
+                                            - quick-area.absolute-position.x,
+                                    180px, max(200px, quick-area.width - 240px));
+                            } else {
+                                root.quick-panel-height = clamp(
+                                    root.quick-panel-dock == "bottom"
+                                        ? quick-area.height - ((self.absolute-position.y + self.mouse-y)
+                                            - quick-area.absolute-position.y)
+                                        : (self.absolute-position.y + self.mouse-y)
+                                            - quick-area.absolute-position.y,
+                                    120px, max(140px, quick-area.height - 160px));
+                            }
+                        }
+                    }
+                }
             }
-            Rectangle {   // bottom zone
-                x: 0; y: parent.height * 0.78; width: parent.width; height: parent.height * 0.22;
-                background: root.dock-target == "bottom"
-                    ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
-                border-width: root.dock-target == "bottom" ? 2px : 0px;
-                border-color: Theme.accent;
+            }
+            }
+
+            // (Resource collapse now uses a ToolStrip inside `rest`, above.)
+
+            // Drag-to-dock snap overlay — four edge zones; the one under the cursor
+            // (root.dock-target) lights up. Purely visual (no TouchArea) so the
+            // header's drag keeps receiving move events (#dock).
+            if root.panel-dragging : Rectangle {
+                x: 0; y: 0;
+                width: parent.width;
+                height: parent.height;
+                Rectangle {   // left zone
+                    x: 0; y: 0; width: parent.width * 0.22; height: parent.height;
+                    background: root.dock-target == "left"
+                        ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
+                    border-width: root.dock-target == "left" ? 2px : 0px;
+                    border-color: Theme.accent;
+                }
+                Rectangle {   // right zone
+                    x: parent.width * 0.78; y: 0; width: parent.width * 0.22; height: parent.height;
+                    background: root.dock-target == "right"
+                        ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
+                    border-width: root.dock-target == "right" ? 2px : 0px;
+                    border-color: Theme.accent;
+                }
+                Rectangle {   // top zone
+                    x: 0; y: 0; width: parent.width; height: parent.height * 0.22;
+                    background: root.dock-target == "top"
+                        ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
+                    border-width: root.dock-target == "top" ? 2px : 0px;
+                    border-color: Theme.accent;
+                }
+                Rectangle {   // bottom zone
+                    x: 0; y: parent.height * 0.78; width: parent.width; height: parent.height * 0.22;
+                    background: root.dock-target == "bottom"
+                        ? Theme.accent.with-alpha(0.35) : Theme.accent.with-alpha(0.10);
+                    border-width: root.dock-target == "bottom" ? 2px : 0px;
+                    border-color: Theme.accent;
+                }
             }
         }
-    }
+        }
     }
 
     // App toolbar icons (settings/download/theme/sync). They sit at the top-right
@@ -1928,6 +2067,15 @@ export component AppWindow inherits Window {
             ? (root.sync-input ? "Sync input: ON" : "Sync input")
             : (root.sync-input ? "会话同步：开" : "会话同步");
         clicked => { root.sync-input = !root.sync-input; root.set-sync-input(root.sync-input); }
+    }
+    IconBtn {
+        x: root.width - 154px - root.toolbar-x-off; y: root.toolbar-y;
+        icon: "\u{E86F}";   // Material "code" — command bar
+        active: !root.cmd-bar-hidden;
+        tooltip: root.lang-en
+            ? (root.cmd-bar-hidden ? "Show command bar" : "Hide command bar")
+            : (root.cmd-bar-hidden ? "显示命令栏" : "隐藏命令栏");
+        clicked => { root.cmd-bar-hidden = !root.cmd-bar-hidden; root.set-cmd-bar-hidden(root.cmd-bar-hidden); }
     }
 
     // Frameless resize edges (#119): thin hit-zones that start an OS-level
@@ -2846,6 +2994,77 @@ export component AppWindow inherits Window {
         }
     }
 
+    // --- Rename-session dialog ----------------------------------------------
+    // Tab context menu → Rename: a display-name override for one open session.
+    // Submitting an empty name restores the saved session name.
+    if root.tab-rename-open : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #00000080;
+        TouchArea { clicked => { root.tab-rename-open = false; } }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 340px;
+            height: 196px;
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #000000a0;
+            TouchArea {}   // swallow inside clicks
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                Text {
+                    text: root.lang-en ? "Rename session" : "重命名会话";
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-lg;
+                    font-weight: 700;
+                }
+                Text {
+                    text: @tr("Session name");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                tr-input := LineEdit {
+                    text <=> root.tab-rename-value;
+                    font-family: Theme.ui-font-family; // CJK-capable (#54)
+                    placeholder-text: @tr("Session name");
+                    // Focus the text the moment the dialog opens.
+                    init => { tr-input.focus(); }
+                    accepted => {
+                        root.rename-tab(root.tab-rename-id, root.tab-rename-value);
+                    }
+                }
+                Text {
+                    text: @tr("Leave empty to restore the default name");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button {
+                        text: root.lang-en ? "Cancel" : "取消";
+                        clicked => { root.tab-rename-open = false; }
+                    }
+                    Button {
+                        text: root.lang-en ? "OK" : "确定";
+                        primary: true;
+                        clicked => {
+                            root.rename-tab(root.tab-rename-id, root.tab-rename-value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Quick-command manage dialog (#55) --------------------------------
         if root.quick-cmd-manage-open : Rectangle {
         width: parent.width;
@@ -3577,12 +3796,24 @@ export component AppWindow inherits Window {
                 ShortcutRow { keys: root.is-mac ? "⌃⇧Tab" : "Ctrl+Shift+Tab"; desc: root.lang-en ? "Previous tab" : "上一个标签页"; }
 
                 Rectangle { height: 6px; }
+                Text { text: root.lang-en ? "Window" : "窗口";
+                       color: Theme.text-muted; font-size: Theme.fs-xs; }
+                ShortcutRow { keys: root.is-mac ? "⌘⇧N" : "Ctrl+Shift+N"; desc: root.lang-en ? "New window" : "新建窗口"; }
+                ShortcutRow { keys: root.is-mac ? "⌘⌥Z" : "Ctrl+Alt+Z"; desc: root.lang-en ? "Toggle zen (focus) mode" : "切换专注模式"; }
+
+                Rectangle { height: 6px; }
                 Text { text: root.lang-en ? "Terminal" : "终端";
                        color: Theme.text-muted; font-size: Theme.fs-xs; }
                 ShortcutRow { keys: root.is-mac ? "⌘C" : "Ctrl+Shift+C"; desc: root.lang-en ? "Copy selection" : "复制选中内容"; }
                 ShortcutRow { keys: root.is-mac ? "⌘V" : "Ctrl+V"; desc: root.lang-en ? "Paste" : "粘贴"; }
                 ShortcutRow { keys: root.is-mac ? "⌘F" : "Ctrl+F"; desc: root.lang-en ? "Find in terminal" : "查找"; }
                 ShortcutRow { keys: root.is-mac ? "⌘⇧R" : "Ctrl+Shift+R"; desc: root.lang-en ? "Jump to command history search" : "跳到命令历史搜索"; }
+                ShortcutRow { keys: root.is-mac ? "⌘=" : "Ctrl+="; desc: root.lang-en ? "Enlarge terminal font (this session)" : "放大终端字体（当前会话）"; }
+                ShortcutRow { keys: root.is-mac ? "⌘-" : "Ctrl+-"; desc: root.lang-en ? "Shrink terminal font (this session)" : "缩小终端字体（当前会话）"; }
+                ShortcutRow { keys: root.is-mac ? "⌘0" : "Ctrl+0"; desc: root.lang-en ? "Reset terminal font size (this session)" : "重置终端字体大小（当前会话）"; }
+                ShortcutRow { keys: root.is-mac ? "⌘⌥=" : "Ctrl+Alt+="; desc: root.lang-en ? "Enlarge terminal font (all sessions in window)" : "放大终端字体（本窗口所有会话）"; }
+                ShortcutRow { keys: root.is-mac ? "⌘⌥-" : "Ctrl+Alt+-"; desc: root.lang-en ? "Shrink terminal font (all sessions in window)" : "缩小终端字体（本窗口所有会话）"; }
+                ShortcutRow { keys: root.is-mac ? "⌘⌥0" : "Ctrl+Alt+0"; desc: root.lang-en ? "Reset terminal font size (all sessions in window)" : "重置终端字体大小（本窗口所有会话）"; }
                 ShortcutRow { keys: root.lang-en ? "Drag" : "鼠标拖动"; desc: root.lang-en ? "Select text" : "选择文本"; }
                 ShortcutRow { keys: root.lang-en ? "Wheel / Scrollbar" : "滚轮 / 滚动条"; desc: root.lang-en ? "Scroll history" : "滚动历史"; }
 

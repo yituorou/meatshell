@@ -66,21 +66,7 @@ pub(super) fn parse_batch_import(text: &str) -> Vec<Session> {
 /// dropdown (#179). Ungrouped ("") is excluded; the dialog leaves the field blank
 /// for that case.
 pub(super) fn session_groups_model(store: &ConfigStore) -> ModelRc<SharedString> {
-    let sessions = store.sessions();
-    let mut named: Vec<String> = store
-        .groups()
-        .iter()
-        .filter(|group| !is_reserved_session_group(group.trim()))
-        .cloned()
-        .chain(
-            sessions
-                .iter()
-                .filter(|s| !s.group.is_empty() && !is_reserved_session_group(s.group.trim()))
-                .map(|s| s.group.clone()),
-        )
-        .collect();
-    named.sort_by_key(|g| g.to_lowercase());
-    named.dedup();
+    let named = named_display_groups(store.groups(), store.sessions());
     ModelRc::from(Rc::new(VecModel::from(
         named
             .into_iter()
@@ -183,20 +169,7 @@ fn build_session_rows(
             .map(|session| session.group.clone())
             .collect()
     } else {
-        explicit_groups
-            .iter()
-            .filter(|group| !is_reserved_session_group(group.trim()))
-            .cloned()
-            .chain(
-                sessions
-                    .iter()
-                    .filter(|session| {
-                        !session.group.is_empty()
-                            && !is_reserved_session_group(session.group.trim())
-                    })
-                    .map(|session| session.group.clone()),
-            )
-            .collect()
+        named_display_groups(explicit_groups, sessions)
     };
     named.sort_by_key(|g| g.to_lowercase());
     named.dedup();
@@ -244,7 +217,7 @@ fn build_session_rows(
         });
     }
     for group in &display_groups {
-        let mut gs: Vec<&Session> = if group == "default" {
+        let gs: Vec<&Session> = if group == "default" {
             sessions
                 .iter()
                 .filter(|session| {
@@ -258,8 +231,9 @@ fn build_session_rows(
                 .filter(|session| &session.group == group && matches(session))
                 .collect()
         };
-        gs.sort_by_key(|s| s.name.to_lowercase());
-
+        // No alphabetical sort: the stored Vec order is the user's manual
+        // order, maintained by drag-to-reorder (same convention as quick
+        // commands). New sessions land at the end of their group.
         if gs.is_empty() && !searching {
             rows.push(blank(group));
         } else {
@@ -306,13 +280,42 @@ pub(super) fn sync_sessions_to_model_with_filter(
     ));
 }
 
+/// Same rows as `sync_sessions_to_model_with_filter`, but when the row count
+/// is unchanged the rows are written with `set_row_data` instead of `set_vec`:
+/// the `for` loop keeps its elements (and a drag's pointer grab) alive. Used
+/// for per-hop updates during drag-to-reorder. Returns false when the row
+/// count changed and a full `set_vec` rebuild was required — that recreates
+/// the rows and drops the dragging row's pointer grab.
+pub(super) fn refresh_session_rows_in_place(
+    store: &ConfigStore,
+    model: &VecModel<SessionInfo>,
+    query: &str,
+) -> bool {
+    use slint::Model as _;
+    let builtin_sessions = builtin_local_sessions(store.wsl_profiles());
+    let rows = build_session_rows(
+        store.sessions(),
+        store.groups(),
+        store.collapsed_session_groups(),
+        &builtin_sessions,
+        query,
+    );
+    if rows.len() == model.row_count() {
+        for (i, row) in rows.into_iter().enumerate() {
+            model.set_row_data(i, row);
+        }
+        true
+    } else {
+        model.set_vec(rows);
+        false
+    }
+}
+
 pub(super) fn sync_sessions_to_model(store: &ConfigStore, model: &VecModel<SessionInfo>) {
     sync_sessions_to_model_with_filter(store, model, "");
 }
 
-pub(super) fn builtin_local_sessions(
-    wsl_profiles: &[crate::config::WslProfile],
-) -> Vec<Session> {
+pub(super) fn builtin_local_sessions(wsl_profiles: &[crate::config::WslProfile]) -> Vec<Session> {
     let mut out = Vec::new();
     #[cfg(windows)]
     {

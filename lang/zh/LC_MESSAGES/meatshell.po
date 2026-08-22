@@ -536,3 +536,9 @@ msgstr "没有匹配的会话"
 
 msgid "Clear search"
 msgstr "清除搜索"
+
+msgid "Session name"
+msgstr "会话名称"
+
+msgid "Leave empty to restore the default name"
+msgstr "留空则恢复默认名称"

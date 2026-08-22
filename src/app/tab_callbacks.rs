@@ -2,6 +2,8 @@ use super::*;
 
 pub(super) fn wire_tab_callbacks(
     window: &AppWindow,
+    window_id: u64,
+    core: Rc<AppCore>,
     tabs_model: Rc<VecModel<TabInfo>>,
     terminals_model: Rc<VecModel<TerminalState>>,
     layout: Rc<RefCell<crate::layout::Layout>>,
@@ -13,6 +15,7 @@ pub(super) fn wire_tab_callbacks(
     render_gates: RenderGates,
     sftp_handles: SftpHandles,
     sftp_last_cwd: SftpLastCwd,
+    tab_titles: Rc<RefCell<HashMap<String, String>>>,
 ) {
     // Ctrl+Tab / Ctrl+Shift+Tab cycle within the currently focused pane (#294).
     {
@@ -138,11 +141,14 @@ pub(super) fn wire_tab_callbacks(
         let sftp_last_cwd = sftp_last_cwd.clone();
         let panes_model = panes_model.clone();
         let splitters_model = splitters_model.clone();
+        let tab_titles = tab_titles.clone();
+        let tab_routes = core.tab_routes.clone();
         window.on_pane_tab_closed(move |_pane_id: i32, id: SharedString| {
             let id = id.to_string();
             if id == "welcome" {
                 return;
             }
+            tab_titles.borrow_mut().remove(&id);
             if let Some(handle) = handles.borrow_mut().remove(&id) {
                 handle.close();
             }
@@ -154,6 +160,9 @@ pub(super) fn wire_tab_callbacks(
                 gate.close();
             }
             bufs.lock().unwrap().remove(&id);
+            if let Ok(mut routes) = tab_routes.lock() {
+                routes.remove(&id);
+            }
 
             // Remove from tabs + terminals models.
             let mut idx = None;
@@ -388,7 +397,15 @@ pub(super) fn wire_tab_callbacks(
         let weak = window.as_weak();
         let layout = layout.clone();
         let content_size = content_size.clone();
-        window.on_tab_drag_move(move |_tab_id: SharedString, x: f32, y: f32| {
+        let core = core.clone();
+        window.on_tab_drag_move(move |tab_id: SharedString, x: f32, y: f32| {
+            let tab_id = tab_id.to_string();
+            // Cross-window detach/merge owns the feedback once the cursor
+            // leaves the window (the torn-off window follows the pointer,
+            // the window under the cursor lights up) (#tab-detach).
+            if handle_global_tab_drag_move(&core, window_id, &tab_id, x, y) {
+                return;
+            }
             if let Some(w) = weak.upgrade() {
                 match drag_target(&layout.borrow(), content_size.get(), x, y) {
                     Some((_, _, (hx, hy, hw, hh))) => {
@@ -416,6 +433,12 @@ pub(super) fn wire_tab_callbacks(
         let splitters_model = splitters_model.clone();
         window.on_tab_drag_drop(move |tab_id: SharedString, x: f32, y: f32| {
             let tab_id = tab_id.to_string();
+            // A cross-window drag (torn-off window following the cursor) is
+            // settled here: merged into the window under the pointer, or
+            // kept where it is (#tab-detach).
+            if handle_global_tab_drag_drop(&core, window_id, &tab_id, x, y) {
+                return;
+            }
             let target = drag_target(&layout.borrow(), content_size.get(), x, y);
             if let Some((pane, zone, _)) = target {
                 let mut lay = layout.borrow_mut();

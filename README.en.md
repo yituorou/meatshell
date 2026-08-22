@@ -101,6 +101,7 @@ open /Applications/meatshell.app
 - [x] Session passwords encrypted at rest (ChaCha20-Poly1305)
 - [x] Known-hosts (`known_hosts`) verification + first-connect confirmation
 - [x] Split panes for tabbed terminals
+- [x] Multiple windows: Ctrl+Shift+N (macOS ⌘⇧N) or the system "New window" entry (Windows taskbar / macOS Dock / Linux desktop right-click), managed as a single Chrome-style process
 
 Color emoji graphics are provided by [Twemoji](https://github.com/jdecked/twemoji)
 under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See

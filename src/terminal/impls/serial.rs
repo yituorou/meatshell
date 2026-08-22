@@ -99,24 +99,34 @@ async fn run_serial(
         session.baud_rate
     )));
 
-    // Open on a blocking thread — serialport::open() can stall on a busy device.
+    // Open on a blocking thread — serialport::open() can stall on a busy
+    // device. The timeout bounds the stall: sans it, Close never reaches the
+    // command pump (open is awaited before the pump starts) and the task
+    // would wedge runtime shutdown forever.
     let open_name = port_name.clone();
     let baud = session.baud_rate;
     let data_bits = parse_data_bits(session.data_bits);
     let stop_bits = parse_stop_bits(session.stop_bits);
     let parity = parse_parity(&session.parity);
     let flow = parse_flow(&session.flow_control);
-    let port = tokio::task::spawn_blocking(move || {
-        serialport::new(&open_name, baud)
-            .data_bits(data_bits)
-            .stop_bits(stop_bits)
-            .parity(parity)
-            .flow_control(flow)
-            // Short read timeout so the reader thread can poll the stop flag.
-            .timeout(Duration::from_millis(50))
-            .open()
-    })
+    let port = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio::task::spawn_blocking(move || {
+            serialport::new(&open_name, baud)
+                .data_bits(data_bits)
+                .stop_bits(stop_bits)
+                .parity(parity)
+                .flow_control(flow)
+                // Short read timeout so the reader thread can poll the stop flag.
+                .timeout(Duration::from_millis(50))
+                .open()
+        }),
+    )
     .await
+    .context(t(
+        "打开串口超时",
+        "timed out opening the serial port",
+    ))?
     .context("serial open task panicked")?
     .with_context(|| {
         format!(
@@ -179,17 +189,38 @@ async fn run_serial(
                 // Never log keystroke bytes — they can be passwords (#15).
                 tracing::debug!("serial write len={} bytes", bytes.len());
                 let w = writer.clone();
-                let res = tokio::task::spawn_blocking(move || {
-                    let mut guard = w.lock().unwrap();
-                    guard.write_all(&bytes).and_then(|_| guard.flush())
-                })
+                // Hardware flow control with a stopped peer wedges write_all
+                // forever; the timeout keeps Close serviceable so the task
+                // can still finish on shutdown.
+                let res = tokio::time::timeout(
+                    Duration::from_secs(30),
+                    tokio::task::spawn_blocking(move || {
+                        let mut guard = w.lock().unwrap();
+                        guard.write_all(&bytes).and_then(|_| guard.flush())
+                    }),
+                )
                 .await;
-                if let Ok(Err(e)) = res {
-                    let _ = events.send(SessionEvent::Closed(format!(
-                        "{}: {e}",
-                        t("串口写入失败", "serial write failed")
-                    )));
-                    break;
+                match res {
+                    Ok(Ok(Ok(()))) => {}
+                    Ok(Ok(Err(e))) => {
+                        let _ = events.send(SessionEvent::Closed(format!(
+                            "{}: {e}",
+                            t("串口写入失败", "serial write failed")
+                        )));
+                        break;
+                    }
+                    Ok(Err(_)) => {
+                        let _ = events.send(SessionEvent::Closed(
+                            t("串口写入线程异常", "serial write thread panicked").into(),
+                        ));
+                        break;
+                    }
+                    Err(_) => {
+                        let _ = events.send(SessionEvent::Closed(
+                            t("串口写入超时", "serial write timed out").into(),
+                        ));
+                        break;
+                    }
                 }
             }
             // A serial line has no window size; nothing to propagate.

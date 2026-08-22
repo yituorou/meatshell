@@ -32,14 +32,12 @@ pub(super) fn apply_window_chrome(window: &slint::Window) {
         };
         let hwnd = h.hwnd.get();
 
+        // Pointer-width param instead of *const c_void: keeps this FFI
+        // declaration free of core::ffi (a module older rustc releases
+        // lack) while remaining ABI-identical on every supported target.
         #[link(name = "dwmapi")]
         extern "system" {
-            fn DwmSetWindowAttribute(
-                hwnd: isize,
-                attr: u32,
-                pv: *const core::ffi::c_void,
-                cb: u32,
-            ) -> i32;
+            fn DwmSetWindowAttribute(hwnd: isize, attr: u32, pv: isize, cb: u32) -> i32;
         }
         // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2 (Windows 11+).
         const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
@@ -49,7 +47,7 @@ pub(super) fn apply_window_chrome(window: &slint::Window) {
             let corner_hr = DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_WINDOW_CORNER_PREFERENCE,
-                (&pref as *const u32).cast(),
+                &pref as *const u32 as isize,
                 4,
             );
             tracing::debug!("window chrome applied: hwnd={hwnd:#x} corner_hr={corner_hr:#x}");

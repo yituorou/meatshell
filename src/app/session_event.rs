@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn apply_session_event_to_window(
     win: &AppWindow,
+    window_id: u64,
     tab_id: &str,
     event: SessionEvent,
     bufs: &TermBuffers,
@@ -96,6 +97,7 @@ pub(super) fn apply_session_event_to_window(
             // synthetic Output event so it reuses the normal render path (#79).
             apply_session_event_to_window(
                 win,
+                window_id,
                 tab_id,
                 SessionEvent::Output(format!(
                     "\r\n\x1b[31m{}\x1b[0m\r\n",
@@ -274,6 +276,7 @@ pub(super) fn apply_session_event_to_window(
                 // into the terminal via a synthetic Output event (#70).
                 apply_session_event_to_window(
                     win,
+                    window_id,
                     tab_id,
                     SessionEvent::Output(format!(
                         "\r\n[meatshell] {} {}: {}\r\n",
@@ -378,7 +381,16 @@ pub(super) fn apply_session_event_to_window(
             changed,
             responder,
         } => {
-            enqueue_hostkey_prompt(win, host, port, key_type, fingerprint, changed, responder);
+            enqueue_hostkey_prompt(
+                win,
+                window_id,
+                host,
+                port,
+                key_type,
+                fingerprint,
+                changed,
+                responder,
+            );
         }
         SessionEvent::CredentialPrompt {
             session_id,
@@ -390,6 +402,7 @@ pub(super) fn apply_session_event_to_window(
         } => {
             enqueue_cred_prompt(
                 win,
+                window_id,
                 session_id,
                 host,
                 user,
@@ -405,7 +418,7 @@ pub(super) fn apply_session_event_to_window(
             echo,
             responder,
         } => {
-            enqueue_mfa_prompt(win, session_id, host, prompt, echo, responder);
+            enqueue_mfa_prompt(win, window_id, session_id, host, prompt, echo, responder);
         }
         SessionEvent::CommandRan(cmd) => {
             // A command typed directly in the terminal, captured via the shell

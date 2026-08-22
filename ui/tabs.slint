@@ -71,24 +71,31 @@ component SingleTab inherits Rectangle {
             if (root.pressing) {
                 // A drag begins once the cursor drifts horizontally OR leaves the
                 // tab vertically (so a straight-down drag to split also counts).
-                if (abs(self.mouse-x - root.grab-offset) > 5px
-                        || self.mouse-y < -6px || self.mouse-y > root.height + 6px) {
+                if (!root.dragging
+                        && (abs(self.mouse-x - root.grab-offset) > 5px
+                            || self.mouse-y < -6px || self.mouse-y > root.height + 6px)) {
                     root.dragging = true;
                 }
-                // Tell the parent where the cursor is, for drop-to-split zones.
-                root.drag-moved(self.absolute-position.x + self.mouse-x,
-                                self.absolute-position.y + self.mouse-y);
-                // Reorder within the strip only while the cursor stays on the strip
-                // row; once it drops into a pane body we hand off to drag-to-split.
-                // One slot = the tab's own width + the 2px strip spacing; re-anchor
-                // grab-offset after each hop so the drift resets (no oscillation).
-                if (self.mouse-y > -10px && self.mouse-y < root.height + 10px) {
-                    if (self.mouse-x - root.grab-offset > (root.width + 2px) / 2) {
-                        root.reorder(1);
-                        root.grab-offset = self.mouse-x - (root.width + 2px);
-                    } else if (self.mouse-x - root.grab-offset < -(root.width + 2px) / 2) {
-                        root.reorder(-1);
-                        root.grab-offset = self.mouse-x + (root.width + 2px);
+                // Gate everything below on `dragging`: a plain click can emit
+                // tiny `moved` events (macOS), which would otherwise light up
+                // the drop-zone highlight and leave it stuck — no drop ever
+                // follows a click to clear it.
+                if (root.dragging) {
+                    // Tell the parent where the cursor is, for drop-to-split zones.
+                    root.drag-moved(self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                    // Reorder within the strip only while the cursor stays on the strip
+                    // row; once it drops into a pane body we hand off to drag-to-split.
+                    // One slot = the tab's own width + the 2px strip spacing; re-anchor
+                    // grab-offset after each hop so the drift resets (no oscillation).
+                    if (self.mouse-y > -10px && self.mouse-y < root.height + 10px) {
+                        if (self.mouse-x - root.grab-offset > (root.width + 2px) / 2) {
+                            root.reorder(1);
+                            root.grab-offset = self.mouse-x - (root.width + 2px);
+                        } else if (self.mouse-x - root.grab-offset < -(root.width + 2px) / 2) {
+                            root.reorder(-1);
+                            root.grab-offset = self.mouse-x + (root.width + 2px);
+                        }
                     }
                 }
             }
@@ -181,6 +188,8 @@ export component TabBar inherits Rectangle {
     callback tab-split(string /* tab-id */, string /* dir */);
     // Open another connection to the same session as `tab-id` (#v0.5).
     callback tab-duplicate(string /* tab-id */);
+    // Rename an open session's tab (display name only).
+    callback tab-rename-request(string /* tab-id */);
     callback merge-pane();
     // Drag-to-split (#v0.5): cursor moved / dropped while dragging `tab-id`, in
     // absolute (window) coordinates.
@@ -275,7 +284,7 @@ export component TabBar inherits Rectangle {
         x: root.menu-x;
         y: root.menu-y;
         width: 140px;
-        height: 6 * 29px + 13px;
+        height: 7 * 29px + 13px;
         Rectangle {
             background: Theme.popup-bg;
             border-radius: Theme.radius-sm;
@@ -290,6 +299,11 @@ export component TabBar inherits Rectangle {
                     label: @tr("Duplicate connection");
                     enabled: root.menu-target != "welcome";
                     clicked => { root.tab-duplicate(root.menu-target); }
+                }
+                TabMenuItem {
+                    label: @tr("Rename");
+                    enabled: root.menu-target != "welcome";
+                    clicked => { root.tab-rename-request(root.menu-target); }
                 }
                 Rectangle { height: 1px; background: Theme.border-subtle; }
                 TabMenuItem {

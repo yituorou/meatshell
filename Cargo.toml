@@ -117,6 +117,13 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 # import library at link time when using the MSVC toolchain (#224).
 [target.'cfg(target_os = "macos")'.dependencies]
 slint = { version = "1.8", features = ["renderer-skia"] }
+# Dock context menu ("新建窗口", see src/app/dock_menu.rs): winit's
+# NSApplication delegate does not implement applicationDockMenu:, so we add
+# that method (plus the menu item's action) to the NSApplication class at
+# runtime via class_addMethod. MSRV 1.71 fits the repo's 1.75 floor.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSMenu", "NSMenuItem"] }
+objc2-foundation = { version = "0.3", features = ["NSString"] }
 
 [build-dependencies]
 slint-build = "1.8"
@@ -125,6 +132,20 @@ slint-build = "1.8"
 # show the app icon. Windows-only; ignored on other targets.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
+
+# Win32 COM APIs for the taskbar jump list ("新建窗口" task, see
+# src/app/jump_list.rs). 0.58 matches the version already in Cargo.lock via
+# transitive deps, keeping the lock diff minimal.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 [profile.release]
 opt-level = 3

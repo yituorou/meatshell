@@ -306,6 +306,10 @@ export component TerminalView inherits Rectangle {
     in property <[string]> command-history;   // oldest first (newest last, #113)
     in property <[string]> history-view;       // filtered dropdown, newest first (#101, #331)
     property <bool> send-to-all: false;
+    in property <bool> cmd-bar-hidden: false;  // toolbar toggle hides the whole bar
+    // Effective terminal font size in px: per-session zoom override when > 0,
+    // else the window/global size (Theme.term-font-size).
+    in property <float> term-font-size-px: Theme.term-font-size / 1px;
     property <bool> quick-open: false;         // quick-command popup visibility
     property <bool> history-open: false;       // history dropdown visibility
     property <bool> history-autocomplete: false; // live suggestions from command input (#349)
@@ -341,6 +345,13 @@ export component TerminalView inherits Rectangle {
     // Temporary on-device diagnostics for #312. Rust redacts printable text.
     callback diagnose-key-event(string, bool, bool, bool, bool);
     callback cycle-tab(bool /* reverse */);
+    // Ctrl+Shift+N (⌘⇧N on macOS) — open a new application window (#multi-window).
+    callback new-window-key();
+    // Font zoom: Ctrl+= / Ctrl+- / Ctrl+0 (⌘ on macOS). Direction:
+    // 1 = larger, -1 = smaller, 0 = reset to default.
+    callback zoom-key(int /* direction */, bool /* window-wide */);
+    // Ctrl+Alt+Z (⌘⌥Z on macOS) — toggle zen (focus) mode.
+    callback zen-key();
     callback terminal-resize(float, float);
     callback sftp-navigate(string);
     callback sftp-download(string);
@@ -440,7 +451,7 @@ export component TerminalView inherits Rectangle {
     cell-probe := Text {
         text: "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"; // exactly 50×M
         font-family: Theme.term-font-family;
-        font-size: Theme.term-font-size;
+        font-size: root.term-font-size-px * 1px;
         font-weight: Theme.term-font-bold ? 700 : 400;
         // Keep it in layout but invisible: opacity:0 forces full font loading.
         opacity: 0;
@@ -568,12 +579,11 @@ export component TerminalView inherits Rectangle {
         // Side-docked SFTP needs enough room for its compact action row and a
         // usable path field. Clamp legacy/saved widths below that floor instead
         // of letting Slint squeeze controls out of alignment.
-        property <length> sf-w: root.zen-mode ? 0px
-            : root.sftp-collapsed ? 36px
+        property <length> sf-w: root.sftp-collapsed ? 36px
             : root.sftp-horizontal ? max(300px, root.sftp-panel-width)
             : root.sftp-panel-width;
-        property <length> sf-h: root.zen-mode ? 0px : root.sftp-collapsed ? 36px : root.sftp-panel-height;
-        property <length> sp: root.zen-mode || root.sftp-collapsed ? 0px : 4px;
+        property <length> sf-h: root.sftp-collapsed ? 36px : root.sftp-panel-height;
+        property <length> sp: root.sftp-collapsed ? 0px : 4px;
         // The collapsed bar (sf-h) already reserves the bottom strip now.
         property <length> bottom-strip-h: 0px;
 
@@ -786,7 +796,7 @@ export component TerminalView inherits Rectangle {
                                 // terminal font lacks CJK glyphs and Slint tofu's
                                 // *isolated* CJK punctuation (、。,) on fallback (#54).
                                 font-family: span.cjk ? Theme.ui-font-family : Theme.term-font-family;
-                                font-size: Theme.term-font-size;
+                                font-size: root.term-font-size-px * 1px;
                                 font-weight: (Theme.term-font-bold || span.bold) ? 700 : 400;
                             }
                             if span.emoji : Image {
@@ -997,6 +1007,48 @@ export component TerminalView inherits Rectangle {
                                 || event.text == "\u{0012}")) {
                         root.history-open = true;
                         accept
+                    // ── New window: ⌘⇧N / Ctrl+Shift+N (#multi-window) ──
+                    // `control` is Cmd on macOS (Slint modifier swap, #158), so
+                    // this single condition gives ⌘⇧N there and Ctrl+Shift+N
+                    // elsewhere. Intercepted here — before send-key — so the
+                    // keystroke never reaches the remote shell.
+                    } else if (event.modifiers.control && event.modifiers.shift
+                            && (event.text == "n" || event.text == "N"
+                                || event.text == "\u{000e}")) {
+                        root.new-window-key();
+                        accept
+                    // ── Zen (focus) mode: Ctrl+Alt+Z toggles (#zen). Hidden
+                    // views reject it so the window-level fallback handles it.
+                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
+                            && (event.text == "z" || event.text == "Z"
+                                || event.text == "\u{001a}")) {
+                        root.zen-key();
+                        accept
+                    // ── Font zoom: Ctrl+= / Ctrl+- / Ctrl+0 (⌘ on macOS) ──
+                    // Zooms this session only; adding Alt zooms every session
+                    // in the window. Alt (not Shift) because Ctrl+Shift is the
+                    // IME-switch hotkey on Chinese Windows and gets swallowed.
+                    // A hidden (inactive tab) view that still holds focus
+                    // rejects these so the window-level fallback zooms the
+                    // visible session (#zoom).
+                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
+                            && (event.text == "=" || event.text == "+"
+                                || event.text == "-" || event.text == "\u{001f}"
+                                || event.text == "0")) {
+                        root.zoom-key(event.text == "-" || event.text == "\u{001f}" ? -1
+                            : event.text == "0" ? 0 : 1, true);
+                        accept
+                    } else if (root.visible && event.modifiers.control
+                            && (event.text == "=" || event.text == "+")) {
+                        root.zoom-key(1, false);
+                        accept
+                    } else if (root.visible && event.modifiers.control
+                            && (event.text == "-" || event.text == "\u{001f}")) {
+                        root.zoom-key(-1, false);
+                        accept
+                    } else if (root.visible && event.modifiers.control && event.text == "0") {
+                        root.zoom-key(0, false);
+                        accept
                     // ── Copy: ⌘C (macOS, no Shift) / Ctrl+Shift+C ──
                     } else if (event.modifiers.control
                             && (!event.modifiers.alt || root.extra-paste-shortcuts-enabled)
@@ -1170,8 +1222,8 @@ export component TerminalView inherits Rectangle {
 
         // --- Command bar (#55): quick commands + input box + history ---------
         cmd-bar := Rectangle {
-            visible: !root.zen-mode;
-            height: root.zen-mode ? 0px : 34px;
+            visible: !root.cmd-bar-hidden;
+            height: root.cmd-bar-hidden ? 0px : 34px;
             background: Theme.bg-panel-alt;
             border-width: 0;
 

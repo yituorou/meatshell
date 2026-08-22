@@ -314,6 +314,31 @@ pub(crate) fn is_reserved_session_group(name: &str) -> bool {
     name.eq_ignore_ascii_case("default") || name.eq_ignore_ascii_case("system")
 }
 
+/// Named display groups: explicit folders ∪ the groups sessions are filed
+/// under, with reserved names and ungrouped excluded, de-duplicated and
+/// sorted case-insensitively. The single source of truth for group display
+/// order — shared by the welcome list, drag-reorder target finding and the
+/// group dropdown; if these ever drift, drop targets and rendered rows
+/// disagree (#41).
+pub(crate) fn named_display_groups(explicit: &[String], sessions: &[Session]) -> Vec<String> {
+    let mut named: Vec<String> = explicit
+        .iter()
+        .filter(|group| !is_reserved_session_group(group.trim()))
+        .cloned()
+        .chain(
+            sessions
+                .iter()
+                .filter(|session| {
+                    !session.group.is_empty() && !is_reserved_session_group(session.group.trim())
+                })
+                .map(|session| session.group.clone()),
+        )
+        .collect();
+    named.sort_by_key(|group| group.to_lowercase());
+    named.dedup();
+    named
+}
+
 /// Repair configurations created before #316/#324, when the Move-to menu exposed
 /// the built-in `system` group as a destination for saved server sessions.
 fn normalize_reserved_session_groups(cfg: &mut ConfigFile) -> bool {
@@ -513,9 +538,122 @@ impl ConfigStore {
         &self.cache.sessions
     }
 
-    #[allow(dead_code)] // reserved for an upcoming reorder/drag-drop feature
-    pub fn sessions_mut(&mut self) -> &mut Vec<Session> {
-        &mut self.cache.sessions
+    /// Drag-to-reorder a saved session (`dir < 0` = up). The stored Vec order
+    /// is the display order within a group (same convention as quick commands).
+    /// Same-group hops swap neighbours; when there is no same-group neighbour
+    /// the hop crosses the group boundary instead: the session moves into the
+    /// nearest visible display group along `dir`, landing at that group's
+    /// boundary (first member moving down, last moving up). Returns whether
+    /// anything changed.
+    pub fn reorder_session(&mut self, id: &str, dir: isize) -> bool {
+        // Display group of a session: ungrouped (and reserved names) render
+        // under "default"; everything else under its own group. Mirrors
+        // build_session_rows in src/app/session_models.rs.
+        fn display_group(session: &Session) -> String {
+            if session.group.is_empty() || is_reserved_session_group(session.group.trim()) {
+                "default".to_string()
+            } else {
+                session.group.clone()
+            }
+        }
+
+        let Some(idx) = self.cache.sessions.iter().position(|s| s.id == id) else {
+            return false;
+        };
+        let group = display_group(&self.cache.sessions[idx]);
+
+        // Same-group neighbour in stored (= display) order → plain swap.
+        let same_group_target = {
+            let sessions = &self.cache.sessions;
+            if dir < 0 {
+                (0..idx)
+                    .rev()
+                    .find(|&i| display_group(&sessions[i]) == group)
+            } else {
+                (idx + 1..sessions.len()).find(|&i| display_group(&sessions[i]) == group)
+            }
+        };
+        if let Some(target) = same_group_target {
+            self.cache.sessions.swap(idx, target);
+            return true;
+        }
+
+        // Cross-group hop. Display order: "default" first (only when ungrouped
+        // sessions exist), then named groups — explicit folders ∪ sessions'
+        // groups — alphabetically. Collapsed groups are skipped: their rows
+        // are hidden, so a card must never land inside one.
+        let Some(collapsed_groups) = self.cache.collapsed_session_groups.clone() else {
+            // Mirrors build_session_rows: no collapse list = everything
+            // collapsed, so no visible target group can exist.
+            return false;
+        };
+        let is_collapsed = |name: &str| collapsed_groups.iter().any(|g| g == name);
+
+        let mut display: Vec<String> = Vec::new();
+        if self
+            .cache
+            .sessions
+            .iter()
+            .any(|s| display_group(s) == "default")
+        {
+            display.push("default".to_string());
+        }
+        display.extend(named_display_groups(
+            &self.cache.groups,
+            &self.cache.sessions,
+        ));
+
+        let Some(pos) = display.iter().position(|g| g == &group) else {
+            return false;
+        };
+        let target_group = if dir < 0 {
+            (0..pos).rev().find(|&i| !is_collapsed(&display[i]))
+        } else {
+            (pos + 1..display.len()).find(|&i| !is_collapsed(&display[i]))
+        }
+        .map(|i| display[i].clone());
+        let Some(target_group) = target_group else {
+            return false;
+        };
+
+        let source_group = self.cache.sessions[idx].group.clone();
+        let mut moved = self.cache.sessions.remove(idx);
+        moved.group = if target_group == "default" {
+            String::new()
+        } else {
+            target_group.clone()
+        };
+        let insert_at = {
+            let members: Vec<usize> = self
+                .cache
+                .sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| display_group(s) == target_group)
+                .map(|(i, _)| i)
+                .collect();
+            if members.is_empty() {
+                idx.min(self.cache.sessions.len())
+            } else if dir < 0 {
+                members[members.len() - 1] + 1
+            } else {
+                members[0]
+            }
+        };
+        self.cache.sessions.insert(insert_at, moved);
+
+        // A named source group that just lost its last member would vanish
+        // from the list (changing the row count mid-drag, which drops the
+        // dragging row's pointer grab); keep it as an empty folder. Register
+        // it in `groups` directly rather than via add_group: the folder was
+        // visibly expanded during the drag, and add_group would collapse it.
+        if group != "default"
+            && !self.cache.sessions.iter().any(|s| s.group == source_group)
+            && !self.cache.groups.iter().any(|g| g == &source_group)
+        {
+            self.cache.groups.push(source_group);
+        }
+        true
     }
 
     pub fn upsert(&mut self, mut session: Session) {
@@ -808,6 +946,15 @@ impl ConfigStore {
 
     pub fn set_sftp_follow_cd(&mut self, follow: bool) {
         self.cache.sftp_no_follow_cd = !follow;
+    }
+
+    /// Whether the quick-command bar under the terminal is hidden.
+    pub fn cmd_bar_hidden(&self) -> bool {
+        self.cache.hide_cmd_bar
+    }
+
+    pub fn set_cmd_bar_hidden(&mut self, hidden: bool) {
+        self.cache.hide_cmd_bar = hidden;
     }
 
     /// Saved quick commands (#55).
@@ -1706,6 +1853,147 @@ mod tests {
             .any(|group| group == "production"));
     }
 
+    /// Display order for these tests: default(d1, d2), alpha(a1), beta(b1, b2)
+    /// — "default" first, named groups alphabetically, stored Vec order
+    /// matching display order.
+    fn reorder_store() -> ConfigStore {
+        let mut store = temp_store();
+        store.cache.sessions = vec![
+            sample_session("d1"),
+            sample_session("d2"),
+            Session {
+                group: "alpha".into(),
+                ..sample_session("a1")
+            },
+            Session {
+                group: "beta".into(),
+                ..sample_session("b1")
+            },
+            Session {
+                group: "beta".into(),
+                ..sample_session("b2")
+            },
+        ];
+        // Empty collapse list = every group expanded.
+        store.cache.collapsed_session_groups = Some(Vec::new());
+        store
+    }
+
+    fn id_of(store: &ConfigStore, name: &str) -> String {
+        store
+            .sessions()
+            .iter()
+            .find(|s| s.name == name)
+            .expect("session present")
+            .id
+            .clone()
+    }
+
+    fn order_of(store: &ConfigStore) -> Vec<(String, String)> {
+        store
+            .sessions()
+            .iter()
+            .map(|s| (s.name.clone(), s.group.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn reorder_session_swaps_same_group_neighbours() {
+        let mut store = reorder_store();
+        assert!(store.reorder_session(&id_of(&store, "d1"), 1));
+        assert_eq!(
+            order_of(&store)[..2],
+            [("d2".into(), "".into()), ("d1".into(), "".into())]
+        );
+    }
+
+    #[test]
+    fn reorder_session_hops_down_into_next_group_at_its_top() {
+        let mut store = reorder_store();
+        assert!(store.reorder_session(&id_of(&store, "d2"), 1));
+        assert_eq!(
+            order_of(&store)[1..4],
+            [
+                ("d2".into(), "alpha".into()),
+                ("a1".into(), "alpha".into()),
+                ("b1".into(), "beta".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reorder_session_hops_up_into_previous_group_at_its_bottom() {
+        let mut store = reorder_store();
+        assert!(store.reorder_session(&id_of(&store, "a1"), -1));
+        assert_eq!(
+            order_of(&store)[..3],
+            [
+                ("d1".into(), "".into()),
+                ("d2".into(), "".into()),
+                ("a1".into(), "".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reorder_session_skips_collapsed_groups() {
+        let mut store = reorder_store();
+        store.set_session_group_collapsed("alpha", true);
+        assert!(store.reorder_session(&id_of(&store, "d2"), 1));
+        assert_eq!(
+            order_of(&store)[1..4],
+            [
+                ("a1".into(), "alpha".into()),
+                ("d2".into(), "beta".into()),
+                ("b1".into(), "beta".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn reorder_session_lands_in_empty_explicit_folder() {
+        let mut store = reorder_store();
+        store.cache.groups.push("gamma".into());
+        assert!(store.reorder_session(&id_of(&store, "b2"), 1));
+        let last = store.sessions().iter().find(|s| s.name == "b2").unwrap();
+        assert_eq!(last.group, "gamma");
+    }
+
+    #[test]
+    fn reorder_session_keeps_emptied_implicit_group_as_folder() {
+        let mut store = reorder_store();
+        assert!(store.reorder_session(&id_of(&store, "a1"), 1));
+        assert_eq!(
+            store
+                .sessions()
+                .iter()
+                .find(|s| s.name == "a1")
+                .unwrap()
+                .group,
+            "beta"
+        );
+        assert!(store.groups().iter().any(|g| g == "alpha"));
+    }
+
+    #[test]
+    fn reorder_session_no_op_at_list_edges() {
+        let mut store = reorder_store();
+        assert!(!store.reorder_session(&id_of(&store, "d1"), -1));
+        assert!(!store.reorder_session(&id_of(&store, "b2"), 1));
+        assert_eq!(order_of(&store).len(), 5);
+    }
+
+    #[test]
+    fn reorder_session_cross_group_needs_a_collapse_list() {
+        let mut store = reorder_store();
+        store.cache.collapsed_session_groups = None;
+        // Same-group hops still work ...
+        assert!(store.reorder_session(&id_of(&store, "d1"), 1));
+        // ... but crossing a boundary does not: no list means every group
+        // renders collapsed (mirrors build_session_rows).
+        assert!(!store.reorder_session(&id_of(&store, "b2"), 1));
+    }
+
     #[test]
     fn issue_316_reserved_system_groups_are_repaired_and_rejected() {
         let mut system_session = sample_session("misfiled");
@@ -2078,5 +2366,34 @@ mod tests {
         assert!(!store.paste_confirm_enabled());
         assert!(!store.extra_paste_shortcuts_enabled());
         assert!(store.zen_mode());
+    }
+
+    #[test]
+    fn reorder_session_swaps_same_group_siblings_only() {
+        let mut store = temp_store();
+        let mk = |id: &str, group: &str| Session {
+            id: id.into(),
+            name: id.into(),
+            group: group.into(),
+            ..Session::new_empty()
+        };
+        store.cache.sessions = vec![mk("a", ""), mk("x", "ops"), mk("b", ""), mk("c", "")];
+
+        // Moving "c" up swaps it with the nearest ungrouped sibling ("b"),
+        // leaving the grouped session in between untouched.
+        assert!(store.reorder_session("c", -1));
+        assert_eq!(
+            store
+                .sessions()
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "x", "c", "b"]
+        );
+        // "a" is already the first ungrouped session; "x" is alone in its
+        // group; unknown ids are no-ops.
+        assert!(!store.reorder_session("a", -1));
+        assert!(!store.reorder_session("x", 1));
+        assert!(!store.reorder_session("nope", 1));
     }
 }

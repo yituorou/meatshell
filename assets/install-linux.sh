@@ -65,6 +65,12 @@ Categories=Network;System;TerminalEmulator;Utility;
 Keywords=ssh;sftp;terminal;shell;
 StartupNotify=true
 StartupWMClass=meatshell
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Name[zh_CN]=新建窗口
+Exec=$BIN --new-window
 EOF
 chmod 644 "$APP_DIR/meatshell.desktop"
 

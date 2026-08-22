@@ -132,8 +132,7 @@ pub(super) fn natural_ascii_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     ab.len().cmp(&bb.len())
 }
 
-/// Push a value into a fixed-length ring buffer (newest at the end).
-
+/// Collect the remote paths currently selected in an SFTP tab's file list.
 pub(super) fn collect_sftp_selected(
     terminals: &VecModel<TerminalState>,
     tab_id: &str,
