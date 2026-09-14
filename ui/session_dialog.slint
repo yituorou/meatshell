@@ -23,7 +23,7 @@ export struct TriggerDraft {
 export struct SessionDraft {
     id: string,
     name: string,
-    kind: string,      // "ssh" | "serial" | "telnet"
+    kind: string,      // "ssh" | "serial" | "telnet" | "rdp"
     host: string,
     port: int,
     user: string,
@@ -41,6 +41,11 @@ export struct SessionDraft {
     stop-bits: int,
     parity: string,        // "none" | "odd" | "even"
     flow-control: string,  // "none" | "hardware" | "software"
+    // RDP-only (ignored unless kind == "rdp")
+    rdp-domain: string,      // Windows logon domain ("" = none)
+    rdp-resolution: string,  // "fullscreen" | "custom" | "WxH"
+    rdp-width: int,          // desktop size used by the "custom" choice
+    rdp-height: int,
     encoding: string,
     // Honor VT100 line drawing (DEC Special Graphics) even in UTF-8 mode (#376),
     // like PuTTY's Window → Translation option. On by default.
@@ -493,6 +498,11 @@ export component SessionDialog inherits Rectangle {
     in-out property <string> draft-stop-bits: "1";
     in-out property <string> draft-parity: "none";
     in-out property <string> draft-flow: "none";
+    in-out property <string> draft-rdp-domain;
+    // "fullscreen" | "custom" | "<width>x<height>" (a preset from the dropdown).
+    in-out property <string> draft-rdp-resolution: "1280x720";
+    in-out property <string> draft-rdp-width: "1280";
+    in-out property <string> draft-rdp-height: "720";
     in-out property <string> draft-encoding: "UTF-8";
     in-out property <bool> draft-vt100-drawing: false;
     in-out property <bool> draft-disable-shell-integration: false;
@@ -629,7 +639,7 @@ export component SessionDialog inherits Rectangle {
                         active: root.draft-kind == "ssh";
                         clicked => {
                             // Switch protocol defaults while leaving non-default ports untouched (#303).
-                            if (root.draft-kind != "ssh" && root.draft-port == "23") {
+                            if (root.draft-kind != "ssh" && (root.draft-port == "23" || root.draft-port == "3389")) {
                                 root.draft-port = "22";
                             }
                             root.draft-kind = "ssh";
@@ -644,10 +654,20 @@ export component SessionDialog inherits Rectangle {
                         label: "Telnet";
                         active: root.draft-kind == "telnet";
                         clicked => {
-                            if (root.draft-kind != "telnet" && root.draft-port == "22") {
+                            if (root.draft-kind != "telnet" && (root.draft-port == "22" || root.draft-port == "3389")) {
                                 root.draft-port = "23";
                             }
                             root.draft-kind = "telnet";
+                        }
+                    }
+                    SegOption {
+                        label: "RDP";
+                        active: root.draft-kind == "rdp";
+                        clicked => {
+                            if (root.draft-kind != "rdp" && (root.draft-port == "22" || root.draft-port == "23")) {
+                                root.draft-port = "3389";
+                            }
+                            root.draft-kind = "rdp";
                         }
                     }
                 }
@@ -694,7 +714,8 @@ export component SessionDialog inherits Rectangle {
                     input-background: Theme.bg-elevated;
                     idle-border: Theme.border-strong;
                     label: @tr("Port");
-                    placeholder: root.draft-kind == "telnet" ? "23" : "22";
+                    placeholder: root.draft-kind == "telnet" ? "23"
+                        : root.draft-kind == "rdp" ? "3389" : "22";
                     value <=> root.draft-port;
                     horizontal-stretch: 1;
                 }
@@ -888,6 +909,84 @@ export component SessionDialog inherits Rectangle {
                 value <=> root.draft-password;
             }
 
+            // ── RDP-only fields ─────────────────────────────────────────────
+            if root.draft-kind == "rdp" : LabeledInput {
+                input-background: Theme.bg-elevated;
+                idle-border: Theme.border-strong;
+                label: @tr("Username");
+                placeholder: @tr("DOMAIN\\user or user@domain");
+                value <=> root.draft-user;
+            }
+
+            if root.draft-kind == "rdp" : LabeledInput {
+                input-background: Theme.bg-elevated;
+                idle-border: Theme.border-strong;
+                label: @tr("Password");
+                placeholder: root.is-editing ? @tr("Leave blank to keep the current password") : "••••••••";
+                password: true;
+                value <=> root.draft-password;
+            }
+
+            if root.draft-kind == "rdp" : LabeledInput {
+                input-background: Theme.bg-elevated;
+                idle-border: Theme.border-strong;
+                label: @tr("Domain (optional)");
+                placeholder: "CONTOSO";
+                value <=> root.draft-rdp-domain;
+            }
+
+            // Resolution: full screen, a common desktop size, or a custom one.
+            // Keep the preset list in sync with RDP_RESOLUTION_PRESETS in
+            // src/app/session_models.rs.
+            if root.draft-kind == "rdp" : VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("Resolution");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                ComboBox {
+                    model: [@tr("Full screen"), "1280x720", "1366x768", "1440x900",
+                            "1600x900", "1920x1080", "2560x1440", "3840x2160",
+                            @tr("Custom")];
+                    current-value: root.draft-rdp-resolution == "fullscreen"
+                        ? @tr("Full screen")
+                        : root.draft-rdp-resolution == "custom"
+                            ? @tr("Custom")
+                            : root.draft-rdp-resolution;
+                    selected(value) => {
+                        root.draft-rdp-resolution = value == @tr("Full screen")
+                            ? "fullscreen"
+                            : value == @tr("Custom") ? "custom" : value;
+                    }
+                }
+                Text {
+                    text: @tr("Full screen uses this computer's screen resolution.");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                }
+            }
+
+            if root.draft-kind == "rdp" && root.draft-rdp-resolution == "custom" : HorizontalLayout {
+                spacing: 10px;
+                LabeledInput {
+                    input-background: Theme.bg-elevated;
+                    idle-border: Theme.border-strong;
+                    label: @tr("Width");
+                    placeholder: "1920";
+                    value <=> root.draft-rdp-width;
+                    horizontal-stretch: 1;
+                }
+                LabeledInput {
+                    input-background: Theme.bg-elevated;
+                    idle-border: Theme.border-strong;
+                    label: @tr("Height");
+                    placeholder: "1080";
+                    value <=> root.draft-rdp-height;
+                    horizontal-stretch: 1;
+                }
+            }
+
             // ── Serial-only fields ──────────────────────────────────────────
             if root.draft-kind == "serial" : LabeledInput {
                 input-background: Theme.bg-elevated;
@@ -942,7 +1041,9 @@ export component SessionDialog inherits Rectangle {
             }
 
             // ── Advanced (collapsed by default): proxy + port forwarding ────
-            if root.draft-kind != "serial" : Rectangle {
+            // Not offered for serial (nothing to configure) or RDP (its extras
+            // live in the main section, and the SSH-only parts do not apply).
+            if root.draft-kind != "serial" && root.draft-kind != "rdp" : Rectangle {
                 height: 26px;
                 adv-ta := TouchArea {
                     mouse-cursor: pointer;
@@ -1193,6 +1294,10 @@ export component SessionDialog inherits Rectangle {
                             stop-bits: root.draft-stop-bits.to-float(),
                             parity: root.draft-parity,
                             flow-control: root.draft-flow,
+                            rdp-domain: root.draft-rdp-domain,
+                            rdp-resolution: root.draft-rdp-resolution,
+                            rdp-width: root.draft-rdp-width.to-float(),
+                            rdp-height: root.draft-rdp-height.to-float(),
                             encoding: root.draft-encoding,
                             vt100-drawing: root.draft-vt100-drawing,
                             disable-shell-integration: root.draft-disable-shell-integration,
@@ -1246,6 +1351,10 @@ export component SessionDialog inherits Rectangle {
                             stop-bits: root.draft-stop-bits.to-float(),
                             parity: root.draft-parity,
                             flow-control: root.draft-flow,
+                            rdp-domain: root.draft-rdp-domain,
+                            rdp-resolution: root.draft-rdp-resolution,
+                            rdp-width: root.draft-rdp-width.to-float(),
+                            rdp-height: root.draft-rdp-height.to-float(),
                             encoding: root.draft-encoding,
                             vt100-drawing: root.draft-vt100-drawing,
                             disable-shell-integration: root.draft-disable-shell-integration,

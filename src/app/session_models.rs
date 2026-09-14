@@ -447,8 +447,16 @@ pub(super) fn session_from_draft(
         _ if draft.user.trim().is_empty() => draft.host.to_string(),
         _ => format!("{}@{}", draft.user, draft.host),
     };
-    let default_port = if kind == SessionKind::Telnet { 23 } else { 22 };
-
+    let default_port = match kind {
+        SessionKind::Telnet => 23,
+        SessionKind::Rdp => 3389,
+        _ => 22,
+    };
+    let (rdp_fullscreen, rdp_width, rdp_height) = rdp_display_settings(
+        &draft.rdp_resolution.to_string(),
+        draft.rdp_width,
+        draft.rdp_height,
+    );
     Session {
         id: draft.id.to_string(),
         name: if draft.name.is_empty() {
@@ -490,7 +498,99 @@ pub(super) fn session_from_draft(
         disable_shell_integration: draft.disable_shell_integration,
         note: draft.note.to_string(),
         jump_session_id: draft.jump_session_id.to_string(),
+        rdp_domain: draft.rdp_domain.to_string(),
+        rdp_fullscreen,
+        rdp_width,
+        rdp_height,
     }
+}
+
+/// Resolution choice meaning "start full screen".
+pub(super) const RDP_RESOLUTION_FULLSCREEN: &str = "fullscreen";
+/// Resolution choice meaning "use the size typed into the dialog".
+pub(super) const RDP_RESOLUTION_CUSTOM: &str = "custom";
+/// Resolution preselected for a new session: a window that fits most screens,
+/// leaving the "full screen" choice one click away.
+pub(super) const RDP_RESOLUTION_DEFAULT: &str = "1280x720";
+
+/// Presets offered by the dialog's resolution dropdown. Keep in sync with the
+/// `ComboBox` model in `ui/session_dialog.slint`.
+pub(super) const RDP_RESOLUTION_PRESETS: [&str; 7] = [
+    "1280x720",
+    "1366x768",
+    "1440x900",
+    "1600x900",
+    "1920x1080",
+    "2560x1440",
+    "3840x2160",
+];
+
+/// Smallest / largest desktop side we accept from the dialog, in pixels.
+const RDP_MIN_SIDE: i32 = 200;
+const RDP_MAX_SIDE: i32 = 8192;
+const RDP_DEFAULT_WIDTH: u16 = 1280;
+const RDP_DEFAULT_HEIGHT: u16 = 720;
+
+/// Turn the dialog's resolution choice into the stored RDP display fields:
+/// `(fullscreen, width, height)`. Sizes are clamped into a range the server
+/// accepts; unusable input falls back to the defaults instead of failing the
+/// save.
+pub(super) fn rdp_display_settings(
+    resolution: &str,
+    custom_width: i32,
+    custom_height: i32,
+) -> (bool, u16, u16) {
+    // Positive values are clamped into the acceptable range so a typo like
+    // "99999" still gives a usable desktop; empty/non-numeric input (<= 0)
+    // keeps the default instead of failing the save.
+    let side = |value: i32, fallback: u16| {
+        if value <= 0 {
+            fallback
+        } else {
+            value.clamp(RDP_MIN_SIDE, RDP_MAX_SIDE) as u16
+        }
+    };
+    let custom = || {
+        (
+            side(custom_width, RDP_DEFAULT_WIDTH),
+            side(custom_height, RDP_DEFAULT_HEIGHT),
+        )
+    };
+    match resolution {
+        RDP_RESOLUTION_FULLSCREEN => {
+            // The size is unused while full screen, but a sensible one is kept
+            // so switching back to a windowed session needs no retyping.
+            let (width, height) = custom();
+            (true, width, height)
+        }
+        RDP_RESOLUTION_CUSTOM => {
+            let (width, height) = custom();
+            (false, width, height)
+        }
+        // A preset looks like "1920x1080".
+        preset => match preset.split_once(['x', 'X', '*']) {
+            Some((width, height)) => {
+                let (width, height) = (
+                    side(width.trim().parse().unwrap_or(0), RDP_DEFAULT_WIDTH),
+                    side(height.trim().parse().unwrap_or(0), RDP_DEFAULT_HEIGHT),
+                );
+                (false, width, height)
+            }
+            None => (true, RDP_DEFAULT_WIDTH, RDP_DEFAULT_HEIGHT),
+        },
+    }
+}
+
+/// The resolution choice to preselect when editing a saved session.
+pub(super) fn rdp_resolution_choice(fullscreen: bool, width: u16, height: u16) -> &'static str {
+    if fullscreen {
+        return RDP_RESOLUTION_FULLSCREEN;
+    }
+    let size = format!("{width}x{height}");
+    RDP_RESOLUTION_PRESETS
+        .into_iter()
+        .find(|preset| *preset == size)
+        .unwrap_or(RDP_RESOLUTION_CUSTOM)
 }
 
 #[cfg(test)]
@@ -612,6 +712,56 @@ mod serial_display_tests {
             assert_eq!(rows[0].host.as_str(), "example.com");
             assert_eq!(rows[0].port, 2222);
             assert_eq!(rows[0].user.as_str(), "alice");
+        }
+    }
+}
+
+#[cfg(test)]
+mod rdp_display_tests {
+    use super::*;
+
+    #[test]
+    fn resolution_choice_becomes_the_stored_fields() {
+        // A preset selects that desktop size in a window.
+        assert_eq!(
+            rdp_display_settings("1920x1080", 1280, 720),
+            (false, 1920, 1080)
+        );
+        // Full screen keeps a usable size for a later switch back to a window.
+        assert_eq!(
+            rdp_display_settings(RDP_RESOLUTION_FULLSCREEN, 1600, 900),
+            (true, 1600, 900)
+        );
+        // Custom uses what was typed, clamped to a range the server accepts.
+        assert_eq!(
+            rdp_display_settings(RDP_RESOLUTION_CUSTOM, 2560, 1440),
+            (false, 2560, 1440)
+        );
+        assert_eq!(
+            rdp_display_settings(RDP_RESOLUTION_CUSTOM, 0, 99_999),
+            (false, 1280, 8192)
+        );
+        // Anything unrecognised falls back to full screen at the default size.
+        assert_eq!(rdp_display_settings("nonsense", 0, 0), (true, 1280, 720));
+    }
+
+    #[test]
+    fn stored_fields_select_the_matching_dropdown_entry() {
+        assert_eq!(
+            rdp_resolution_choice(true, 1920, 1080),
+            RDP_RESOLUTION_FULLSCREEN
+        );
+        assert_eq!(rdp_resolution_choice(false, 1920, 1080), "1920x1080");
+        // A size that is not a preset needs the custom inputs.
+        assert_eq!(
+            rdp_resolution_choice(false, 1234, 567),
+            RDP_RESOLUTION_CUSTOM
+        );
+        // Every offered preset round-trips through the dialog and back.
+        for preset in RDP_RESOLUTION_PRESETS {
+            let (fullscreen, width, height) = rdp_display_settings(preset, 0, 0);
+            assert!(!fullscreen, "{preset} is a windowed size");
+            assert_eq!(rdp_resolution_choice(false, width, height), preset);
         }
     }
 }

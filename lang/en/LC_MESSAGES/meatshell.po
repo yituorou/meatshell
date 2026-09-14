@@ -587,3 +587,31 @@ msgstr "Add trigger"
 
 msgid "When expected text appears, send the response automatically. Responses are stored encrypted."
 msgstr "When expected text appears, send the response automatically. Responses are stored encrypted."
+
+msgid "DOMAIN\\user or user@domain"
+msgstr "DOMAIN\\user or user@domain"
+
+msgid "Domain (optional)"
+msgstr "Domain (optional)"
+
+
+
+
+
+msgid "Resolution"
+msgstr "Resolution"
+
+msgid "Full screen"
+msgstr "Full screen"
+
+msgid "Custom"
+msgstr "Custom"
+
+msgid "Full screen uses this computer's screen resolution."
+msgstr "Full screen uses this computer's screen resolution."
+
+msgid "Width"
+msgstr "Width"
+
+msgid "Height"
+msgstr "Height"

@@ -892,6 +892,12 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-stop-bits: "1";
     in-out property <string> dialog-parity: "none";
     in-out property <string> dialog-flow: "none";
+    // Windows logon domain for an RDP session ("" = none).
+    in-out property <string> dialog-rdp-domain;
+    // "fullscreen" | "custom" | "<width>x<height>" plus the custom size.
+    in-out property <string> dialog-rdp-resolution: "1280x720";
+    in-out property <string> dialog-rdp-width: "1280";
+    in-out property <string> dialog-rdp-height: "720";
     in-out property <string> dialog-encoding: "UTF-8";
     in-out property <bool> dialog-vt100-drawing: false;
     in-out property <bool> dialog-disable-shell-integration: false;
@@ -4596,6 +4602,10 @@ export component AppWindow inherits Window {
         draft-stop-bits <=> root.dialog-stop-bits;
         draft-parity <=> root.dialog-parity;
         draft-flow <=> root.dialog-flow;
+        draft-rdp-domain <=> root.dialog-rdp-domain;
+        draft-rdp-resolution <=> root.dialog-rdp-resolution;
+        draft-rdp-width <=> root.dialog-rdp-width;
+        draft-rdp-height <=> root.dialog-rdp-height;
         draft-encoding <=> root.dialog-encoding;
         draft-vt100-drawing <=> root.dialog-vt100-drawing;
         draft-disable-shell-integration <=> root.dialog-disable-shell-integration;
