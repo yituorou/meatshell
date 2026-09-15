@@ -1,17 +1,20 @@
-//! Launching RDP sessions in the operating system's own remote desktop client.
+//! Launching RDP sessions in a remote desktop client that already speaks RDP.
 //!
-//! RDP follows FinalShell's model: meatshell never speaks the protocol itself.
-//! It only stores the account details — host, port, user, password, domain —
-//! and hands them to the client that ships with the system (`mstsc` on
-//! Windows), so the session opens in a familiar native window instead of one
-//! of our tabs.
+//! RDP follows FinalShell's model: meatshell never implements the protocol
+//! itself. It only stores the account details — host, port, user, password,
+//! domain, resolution — and hands them over, so the session opens in the
+//! client's own native window instead of one of our tabs.
 //!
-//! On Windows the hand-off goes through a generated `.rdp` file, which is the
-//! only way to pass credentials: `mstsc` deliberately refuses a password on its
-//! command line. The password is stored DPAPI-encrypted for the current user,
-//! exactly the format `mstsc` writes when you tick "remember me" — the blob can
-//! only be decrypted by the same user on the same machine, and a failed
-//! decryption (or an unsaved password) just makes the client prompt instead.
+//! * Windows: `mstsc`, driven through a generated `.rdp` file, which is the only
+//!   way to pass credentials — `mstsc` deliberately refuses a password on its
+//!   command line. The password goes in DPAPI-encrypted for the current user,
+//!   exactly the format `mstsc` writes when you tick "remember me": only the
+//!   same user on the same machine can decrypt it, and a failed decryption (or
+//!   an unsaved password) just makes the client prompt instead.
+//! * Linux / macOS / BSD: FreeRDP's `xfreerdp3` / `xfreerdp`, with the password
+//!   handed over on stdin so it never shows up in the process list. The Flatpak
+//!   bundle builds FreeRDP into `/app` (see `packaging/flatpak`), so no separate
+//!   installation is needed there.
 
 use std::process::Command;
 
@@ -227,44 +230,366 @@ fn start_client(account: &Account<'_>, session_id: &str) -> Result<String, Strin
     Ok(format!("{}:{} (mstsc)", account.host, account.port))
 }
 
-/// Linux / macOS / BSD: drive FreeRDP's `xfreerdp` when it is installed. The
-/// credential block is fed through stdin (`/from-stdin`) so the password never
-/// shows up in the process list.
-#[cfg(not(windows))]
-fn start_client(account: &Account<'_>, _session_id: &str) -> Result<String, String> {
-    for client in ["xfreerdp3", "xfreerdp"] {
-        let mut command = Command::new(client);
-        command
-            .arg(format!("/v:{}:{}", account.host, account.port))
-            .arg("/cert:ignore")
-            .arg("+clipboard")
-            .arg("/from-stdin")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+/// Portable pieces of the FreeRDP hand-off: which flavour the installed client
+/// is, and the command line it needs. Deliberately free of `cfg` so the tests
+/// below run on every platform, not only on Linux.
+#[cfg_attr(windows, allow(dead_code))]
+mod freerdp {
+    use super::Account;
+
+    /// Which command line dialect a FreeRDP build speaks. FreeRDP 3 added the
+    /// optional `force` value to `/from-stdin` — read the credentials before
+    /// connecting instead of when the server asks for them — and FreeRDP 2
+    /// rejects that value, so the two cannot share one flag.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub(super) enum Dialect {
+        /// FreeRDP 2.x: the `xfreerdp` binary on older distributions.
+        V2,
+        /// FreeRDP 3.x: `xfreerdp3`, and what the Flatpak bundle carries.
+        V3,
+    }
+
+    /// Client binaries to try, in order.
+    ///
+    /// `PATH` comes first, which is what someone who installed FreeRDP by hand
+    /// expects and where Flatpak puts the bundled client (`/app/bin`). The
+    /// absolute paths cover GUI launches: those can inherit a bare `PATH` that
+    /// misses `/usr/local/bin`, and macOS GUI apps never see `/opt/homebrew`.
+    pub(super) const CLIENTS: [&str; 9] = [
+        "xfreerdp3",
+        "xfreerdp",
+        "/app/bin/xfreerdp3",
+        "/usr/bin/xfreerdp3",
+        "/usr/local/bin/xfreerdp3",
+        "/opt/homebrew/bin/xfreerdp3",
+        "/usr/bin/xfreerdp",
+        "/usr/local/bin/xfreerdp",
+        "/opt/homebrew/bin/xfreerdp",
+    ];
+
+    /// Read the major version out of a `--version` banner such as
+    /// "This is FreeRDP version 3.21.0 (3.21.0)". `None` means the text says
+    /// nothing usable; the caller then assumes the older, always-valid flag.
+    pub(super) fn parse_dialect(version_output: &str) -> Option<Dialect> {
+        let after = version_output.split_once("version")?.1;
+        let major: u32 = after
+            .trim_start()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()?;
+        Some(if major >= 3 { Dialect::V3 } else { Dialect::V2 })
+    }
+
+    /// Ask a client binary for its version. `None` also means "no such binary",
+    /// which is how the caller finds the next candidate.
+    pub(super) fn probe_dialect(client: &str) -> Option<Dialect> {
+        for flag in ["--version", "/version"] {
+            let Ok(output) = std::process::Command::new(client)
+                .arg(flag)
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+            else {
+                return None;
+            };
+            if let Some(dialect) = parse_dialect(&String::from_utf8_lossy(&output.stdout)) {
+                return Some(dialect);
+            }
+        }
+        None
+    }
+
+    /// The command line for a FreeRDP connect.
+    ///
+    /// The password is deliberately absent — it goes over stdin, see
+    /// [`credential_lines`]. User name and domain are not secrets: they sit in
+    /// `mstsc`'s `.rdp` file on Windows and in the session list in the UI.
+    pub(super) fn args(account: &Account<'_>, dialect: Dialect) -> Vec<String> {
+        let mut args = vec![
+            format!("/v:{}:{}", account.host, account.port),
+            "/cert:ignore".to_string(),
+            "/clipboard".to_string(),
+            // Let the session follow the window when it is resized. FreeRDP
+            // refuses to start when `+smart-sizing` is given as well — "Smart
+            // sizing and dynamic resolution are mutually exclusive options" —
+            // and following the window keeps the picture pixel sharp instead of
+            // scaling it up, so this is the one we ask for.
+            "+dynamic-resolution".to_string(),
+        ];
+        // Omitted when empty: `/u:` with no value does not mean "no user name".
+        if !account.user.is_empty() {
+            args.push(format!("/u:{}", account.user));
+        }
+        if !account.domain.is_empty() {
+            args.push(format!("/d:{}", account.domain));
+        }
         // Same display choice as the Windows path.
         if account.fullscreen {
-            command.arg("/f");
+            args.push("/f".to_string());
         } else {
-            command.arg(format!("/w:{}", account.width));
-            command.arg(format!("/h:{}", account.height));
+            args.push(format!("/w:{}", account.width));
+            args.push(format!("/h:{}", account.height));
         }
+        args.push(match dialect {
+            // `:force` reads stdin up front. Without it FreeRDP 3 only reads
+            // when the server asks for credentials, which is where its
+            // `/from-stdin` handling regressed (FreeRDP issue #10217).
+            Dialect::V3 => "/from-stdin:force".to_string(),
+            Dialect::V2 => "/from-stdin".to_string(),
+        });
+        args
+    }
+
+    /// The lines the client reads from stdin, in the order it asks for them.
+    ///
+    /// FreeRDP only prompts for what the command line left out, so with a user
+    /// name in the arguments this is the password alone — no reliance on an
+    /// undocumented order of user name, password and domain.
+    pub(super) fn credential_lines(account: &Account<'_>) -> Vec<String> {
+        let mut lines = Vec::new();
+        if account.user.is_empty() {
+            lines.push(account.user.to_string());
+        }
+        lines.push(account.password.to_string());
+        lines
+    }
+
+    /// True inside a Flatpak sandbox, where the client comes with the bundle in
+    /// `/app` rather than with the host.
+    pub(super) fn in_flatpak_sandbox() -> bool {
+        std::env::var_os("FLATPAK_ID").is_some() || std::path::Path::new("/.flatpak-info").exists()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn account() -> Account<'static> {
+            Account {
+                host: "10.0.0.5",
+                port: 3389,
+                user: "alice",
+                domain: "CONTOSO",
+                password: "s3cret",
+                fullscreen: false,
+                width: 1600,
+                height: 900,
+            }
+        }
+
+        #[test]
+        fn dialect_follows_the_reported_major_version() {
+            assert_eq!(
+                parse_dialect("This is FreeRDP version 3.21.0 (3.21.0)"),
+                Some(Dialect::V3)
+            );
+            assert_eq!(
+                parse_dialect("This is FreeRDP version 2.11.5 (2.11.5)"),
+                Some(Dialect::V2)
+            );
+            // Nothing usable → the caller falls back to the older dialect.
+            assert_eq!(parse_dialect(""), None);
+            assert_eq!(parse_dialect("xfreerdp: command not found"), None);
+        }
+
+        #[test]
+        fn the_password_never_reaches_the_command_line() {
+            for dialect in [Dialect::V2, Dialect::V3] {
+                let args = args(&account(), dialect);
+                assert!(
+                    !args.iter().any(|arg| arg.contains("s3cret")),
+                    "{dialect:?} leaked the password: {args:?}"
+                );
+                assert!(args.contains(&"/u:alice".to_string()));
+                assert!(args.contains(&"/d:CONTOSO".to_string()));
+                assert!(args.contains(&"/v:10.0.0.5:3389".to_string()));
+            }
+        }
+
+        #[test]
+        fn v3_forces_the_stdin_read_and_v2_must_not() {
+            assert!(args(&account(), Dialect::V3).contains(&"/from-stdin:force".to_string()));
+            let v2 = args(&account(), Dialect::V2);
+            assert!(v2.contains(&"/from-stdin".to_string()));
+            // FreeRDP 2 rejects a value there and would refuse to start.
+            assert!(!v2.iter().any(|arg| arg.starts_with("/from-stdin:")));
+        }
+
+        /// FreeRDP aborts with "Smart sizing and dynamic resolution are
+        /// mutually exclusive options" when both are on the command line, which
+        /// is how the very first Deepin test run failed.
+        #[test]
+        fn only_one_resize_strategy_is_requested() {
+            for dialect in [Dialect::V2, Dialect::V3] {
+                let args = args(&account(), dialect);
+                assert!(args.contains(&"+dynamic-resolution".to_string()));
+                assert!(
+                    !args.iter().any(|arg| arg.contains("smart-sizing")),
+                    "{dialect:?} asked for both resize strategies: {args:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn windowed_and_full_screen_sizes_are_mutually_exclusive() {
+            let mut account = account();
+            let windowed = args(&account, Dialect::V3);
+            assert!(windowed.contains(&"/w:1600".to_string()));
+            assert!(windowed.contains(&"/h:900".to_string()));
+            assert!(!windowed.contains(&"/f".to_string()));
+
+            account.fullscreen = true;
+            let full = args(&account, Dialect::V3);
+            assert!(full.contains(&"/f".to_string()));
+            assert!(!full
+                .iter()
+                .any(|arg| arg.starts_with("/w:") || arg.starts_with("/h:")));
+        }
+
+        #[test]
+        fn an_empty_user_or_domain_is_not_sent_at_all() {
+            let mut account = account();
+            account.user = "";
+            account.domain = "";
+            let args = args(&account, Dialect::V3);
+            assert!(!args
+                .iter()
+                .any(|arg| arg.starts_with("/u:") || arg.starts_with("/d:")));
+        }
+
+        #[test]
+        fn credentials_are_only_the_fields_missing_from_the_command_line() {
+            // User name (and domain) came with the arguments, so the password is
+            // the only thing the client asks for.
+            assert_eq!(credential_lines(&account()), vec!["s3cret".to_string()]);
+
+            // Without a user name the client asks for it too, and an empty line
+            // is the answer.
+            let mut anonymous = account();
+            anonymous.user = "";
+            assert_eq!(
+                credential_lines(&anonymous),
+                vec![String::new(), "s3cret".to_string()]
+            );
+        }
+
+        #[test]
+        fn the_flatpak_bundle_is_looked_up_by_name_and_by_path() {
+            assert!(CLIENTS.contains(&"xfreerdp3"));
+            assert!(CLIENTS.contains(&"/app/bin/xfreerdp3"));
+        }
+    }
+}
+
+/// Feed the credentials to a running client over its stdin: a pipe cannot be
+/// read out of the process list, and nothing is written to disk.
+#[cfg(not(windows))]
+fn write_credentials(child: &mut std::process::Child, account: &Account<'_>) {
+    use std::io::Write as _;
+    let Some(mut stdin) = child.stdin.take() else {
+        return;
+    };
+    for line in freerdp::credential_lines(account) {
+        let _ = writeln!(stdin, "{line}");
+    }
+    let _ = stdin.flush();
+}
+
+/// Give a freshly started client a moment to fail, collecting what it printed.
+///
+/// A missing display, an unknown flag or a client that needs different
+/// arguments makes it exit at once, and knowing that beats announcing a window
+/// that never appears. `Some(stderr)` means it exited; the text is for the log,
+/// not for the UI. `None` means it is still running, which is what we want.
+#[cfg(not(windows))]
+fn early_exit(child: &mut std::process::Child) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(700);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => return None,
+        }
+    }
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        use std::io::Read as _;
+        let _ = pipe.take(4096).read_to_string(&mut stderr);
+    }
+    Some(stderr.trim().to_string())
+}
+
+/// Linux / macOS / BSD: drive FreeRDP's `xfreerdp3` / `xfreerdp`.
+#[cfg(not(windows))]
+fn start_client(account: &Account<'_>, _session_id: &str) -> Result<String, String> {
+    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Err(t(
+            "当前环境没有图形显示（DISPLAY / WAYLAND_DISPLAY），无法打开远程桌面窗口",
+            "no graphical display here (DISPLAY / WAYLAND_DISPLAY) — cannot open a remote desktop window",
+        )
+        .to_string());
+    }
+    for client in freerdp::CLIENTS {
+        // Unknown version (or a client that does not answer): assume the older
+        // dialect, whose flag is accepted by both.
+        let dialect = freerdp::probe_dialect(client).unwrap_or(freerdp::Dialect::V2);
+        let mut command = Command::new(client);
+        command
+            .args(freerdp::args(account, dialect))
+            // An AppImage would otherwise hand its own library directory down to
+            // the client, which then loads our bundled glib/OpenSSL and breaks.
+            .env_remove("LD_LIBRARY_PATH")
+            .env_remove("LD_PRELOAD")
+            .env_remove("APPDIR")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
         let Ok(mut child) = command.spawn() else {
             continue;
         };
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write as _;
-            // /from-stdin reads user name, password and domain, one per line.
-            let _ = writeln!(stdin, "{}", account.user);
-            let _ = writeln!(stdin, "{}", account.password);
-            let _ = writeln!(stdin, "{}", account.domain);
+        write_credentials(&mut child, account);
+        if let Some(stderr) = early_exit(&mut child) {
+            // The client's own words go to the log, not into the UI: FreeRDP
+            // prefixes every line with a timestamp and an internal module name,
+            // which tells the user nothing. Everything else about the failure
+            // (that it exited, and which binary it was) still reaches them, so a
+            // broken connection is never announced as a started session.
+            tracing::warn!("{client} exited right away: {stderr}");
+            return Err(format!(
+                "{} ({client})",
+                t(
+                    "RDP 客户端启动失败，详情见日志",
+                    "the RDP client failed to start — see the log for details"
+                )
+            ));
         }
+        // Detached reaper: `Child` does not wait on drop, so without this every
+        // connect would leave a zombie behind for as long as meatshell runs.
+        // The stderr pipe is drained in the same thread — a full pipe would
+        // block the client.
+        let stderr = child.stderr.take();
+        std::thread::spawn(move || {
+            if let Some(mut pipe) = stderr {
+                let _ = std::io::copy(&mut pipe, &mut std::io::sink());
+            }
+            let _ = child.wait();
+        });
         return Ok(format!("{}:{} ({client})", account.host, account.port));
     }
-    Err(t(
-        "未找到系统 RDP 客户端，请安装 FreeRDP（xfreerdp）后重试",
-        "no system RDP client found — install FreeRDP (xfreerdp) and try again",
-    )
+    Err(if freerdp::in_flatpak_sandbox() {
+        t(
+            "Flatpak 版自带 FreeRDP 客户端，找不到说明安装损坏，请重新安装 meatshell 的 Flatpak 包",
+            "the Flatpak bundle ships its own FreeRDP client — it is missing, so please reinstall the meatshell Flatpak",
+        )
+    } else {
+        t(
+            "未找到 FreeRDP 客户端；请先安装：Debian/Ubuntu `sudo apt install freerdp3-x11`，Fedora `sudo dnf install freerdp`，Arch `sudo pacman -S freerdp`，macOS `brew install freerdp`",
+            "no FreeRDP client found; install it first: Debian/Ubuntu `sudo apt install freerdp3-x11`, Fedora `sudo dnf install freerdp`, Arch `sudo pacman -S freerdp`, macOS `brew install freerdp`",
+        )
+    }
     .to_string())
 }
 

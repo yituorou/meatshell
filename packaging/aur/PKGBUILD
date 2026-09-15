@@ -14,6 +14,9 @@ license=('MIT' 'Apache-2.0')
 provides=('meatshell')
 conflicts=('meatshell')
 depends=('fontconfig' 'freetype2' 'libxkbcommon' 'gtk3' 'hicolor-icon-theme')
+# RDP sessions hand the account to FreeRDP's `xfreerdp3`, which is not linked
+# into the binary and therefore cannot be a hard dependency.
+optdepends=('freerdp: RDP remote desktop sessions')
 # The released binary is already stripped (Cargo.toml: strip = "symbols").
 options=('!strip')
 source_x86_64=("meatshell-${pkgver}-x86_64.tar.gz::${url}/releases/download/v${pkgver}/meatshell-v${pkgver}-linux-x86_64.tar.gz")

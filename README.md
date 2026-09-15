@@ -97,7 +97,7 @@ open /Applications/meatshell.app
 - [x] SSH 端口转发 / 隧道：本地 -L / 远程 -R / 动态 -D（SOCKS5）
 - [x] 快捷命令 + 命令输入框（可群发到所有会话）+ 命令历史
 - [x] 串口 / Telnet 会话
-- [x] RDP 远程桌面：只保存主机 / 端口 / 用户名 / 密码 / 域，分辨率可选全屏 / 常见分辨率 / 自定义，连接时调用系统自带远程桌面客户端（Windows 用 `mstsc`，Linux / macOS 用 FreeRDP 的 `xfreerdp`）
+- [x] RDP 远程桌面：只保存主机 / 端口 / 用户名 / 密码 / 域，分辨率可选全屏 / 常见分辨率 / 自定义，连接时交给远程桌面客户端（Windows 用系统自带 `mstsc`；Linux / macOS 用 FreeRDP 的 `xfreerdp3` / `xfreerdp`，需自行安装，Flatpak 版已内置）
 - [x] 出站代理（SOCKS5 / HTTP）
 - [x] 导入 `~/.ssh/config`
 - [x] 会话密码加密存储（ChaCha20-Poly1305）

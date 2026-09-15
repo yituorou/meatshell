@@ -9,7 +9,14 @@ finish-args:
   - --share=ipc
   - --share=network
   - --socket=wayland
-  - --socket=fallback-x11
+  # The RDP session type drives FreeRDP's X11 front-end (`xfreerdp3`), so the
+  # sandbox must offer an X display even on Wayland sessions — with
+  # `--socket=fallback-x11` there would be none there and the remote desktop
+  # window could not open at all. The Slint UI itself still uses Wayland when
+  # it is available.
+  - --socket=x11
+  # RDP audio redirection (the client's default backend is PulseAudio).
+  - --socket=pulseaudio
   - --device=dri
   # MeatShell uploads/downloads arbitrary user-selected files and can open
   # local terminal sessions. Keep host-home access until those paths use
@@ -19,6 +26,34 @@ finish-args:
   - --device=all
 
 modules:
+  # FreeRDP: the RDP session type hands the account to the `xfreerdp3` command
+  # line client (see src/rdp.rs). The freedesktop runtime does not ship it and
+  # the sandbox cannot reach a client installed on the host, so it is built
+  # here — the same approach GNOME Connections takes. `/app/bin` is on PATH
+  # inside the sandbox and is one of the places our client search looks in.
+  - name: freerdp
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      # Client only: no RDP server, no man pages, no SDL front-end.
+      - -DWITH_SERVER=OFF
+      - -DWITH_MANPAGES=OFF
+      - -DWITH_CLIENT_SDL=OFF
+      - -DCHANNEL_TSMF=OFF
+      # H.264 / RemoteFX GFX decoding uses the runtime's libavcodec.
+      - -DWITH_FFMPEG=ON
+    sources:
+      - type: archive
+        url: https://pub.freerdp.com/releases/freerdp-3.21.0.tar.xz
+        sha256: 38ae7d48dd4e34e868ec6401b8d8bb833237bdb8a65d11919a956d5757967389
+        x-checker-data:
+          type: anitya
+          project-id: 10442
+          url-template: https://pub.freerdp.com/releases/freerdp-$version.tar.xz
+
   - name: meatshell
     buildsystem: simple
     build-commands:

@@ -102,7 +102,7 @@ open /Applications/meatshell.app
 - [x] SSH port forwarding / tunnels: local -L / remote -R / dynamic -D (SOCKS5)
 - [x] Quick commands + command box (broadcast to all sessions) + command history
 - [x] Serial / Telnet sessions
-- [x] RDP remote desktop: stores host / port / user / password / domain with a resolution choice (full screen / common sizes / custom) and launches the system remote desktop client (`mstsc` on Windows, FreeRDP's `xfreerdp` on Linux / macOS)
+- [x] RDP remote desktop: stores host / port / user / password / domain with a resolution choice (full screen / common sizes / custom) and hands the session to a remote desktop client (`mstsc` on Windows; FreeRDP's `xfreerdp3` / `xfreerdp` on Linux / macOS — install it yourself, or use the Flatpak build, which bundles it)
 - [x] Outbound proxy (SOCKS5 / HTTP)
 - [x] Import `~/.ssh/config`
 - [x] Session passwords encrypted at rest (ChaCha20-Poly1305)

@@ -604,11 +604,11 @@ msgstr "全屏"
 msgid "Custom"
 msgstr "自定义"
 
-msgid "Full screen uses this computer's screen resolution."
-msgstr "全屏时使用本机屏幕分辨率。"
-
 msgid "Width"
 msgstr "宽度"
 
 msgid "Height"
 msgstr "高度"
+
+msgid "Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window."
+msgstr "远端桌面的分辨率；全屏连接后按 Ctrl+Alt+Enter 可切回窗口。"
