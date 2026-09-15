@@ -5,6 +5,15 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **修复停靠面板与面板间分隔条无法拖动缩放。** 停靠面板的几何现在逐行就地更新，不再在每次缩放时整体重建面板列表——此前拖拽中的手柄会在第一个事件后失去指针抓取（表现为光标变成双向箭头、但面板拖不动），分隔条也会因条目重编号而错位；只有面板数量变化（停靠 / 折叠 / 禅模式）才重建。同时把左侧、上侧的面板内侧手柄完全收进面板内，避免被面板裁剪掉一半只剩 2px 命中区。
+- **Fix docked-panel and divider resizing.** Panel geometry now updates in place instead of rebuilding the whole panel list on every size change: the handle being dragged used to lose its pointer grab after the first event (the cursor changed shape but the panel would not follow), and the renumbered items also stranded divider drags. Only a changed panel count (dock / collapse / zen) rebuilds the list. The left and top in-edge handles also sit fully inside their panel now, so the panel's clipping cannot cut their grab area down to 2px.
+
+- **新增 RDP 远程桌面会话类型（参考 FinalShell）。** 新建 / 编辑会话时可在 SSH、串口、Telnet 之外选择 RDP，填写主机、端口（默认 3389）、用户名、密码、可选域，以及分辨率——全屏（使用本机屏幕分辨率）、常见分辨率（1280×720、1366×768、1440×900、1600×900、1920×1080、2560×1440、3840×2160）或自定义宽高，窗口模式下窗口缩放时画面自动等比缩放；meatshell 只保存这些账号信息，连接时调用系统自带远程桌面客户端——Windows 用 `mstsc`（生成的临时 `.rdp` 文件把密码按 DPAPI 当前用户加密写入，因此不会弹凭据框），Linux / macOS 用 FreeRDP 的 `xfreerdp`（凭据经 stdin 传入，不出现在进程列表里）。会话在系统客户端自己的窗口中打开，不占用标签页。
+- **Add an RDP remote-desktop session type (modeled on FinalShell).** When creating or editing a session you can now pick RDP alongside SSH, serial, and Telnet, filling in host, port (3389 by default), user, password, an optional domain, and the resolution — full screen (using the local screen resolution), a common size (1280×720, 1366×768, 1440×900, 1600×900, 1920×1080, 2560×1440, 3840×2160), or a custom width/height, with the picture scaling along when a windowed session is resized. MeatShell only stores those account details: connecting launches the system remote desktop client — `mstsc` on Windows (a temporary `.rdp` file carries the password DPAPI-encrypted for the current user, so no credential prompt appears), FreeRDP's `xfreerdp` on Linux / macOS (credentials go through stdin and never show up in the process list). The session opens in the client's own window instead of a tab.
+
+- **Flatpak 版内置 FreeRDP，RDP 会话开箱可用。** 沙箱内既没有 FreeRDP 也访问不到宿主机安装的客户端，因此 Flatpak 清单把 FreeRDP 3 作为模块编译进 `/app`（与 GNOME Connections 同做法），并放开 X11 显示（`xfreerdp3` 是 X11 客户端，Wayland 会话下走 XWayland）与 PulseAudio 音频重定向。
+- **Bundle FreeRDP in the Flatpak so RDP works out of the box.** A sandbox has neither FreeRDP nor access to a client installed on the host, so the Flatpak manifest now builds FreeRDP 3 into `/app` as a module (the approach GNOME Connections takes) and grants an X11 display (`xfreerdp3` is an X11 client, so Wayland sessions go through XWayland) plus PulseAudio for audio redirection.
+
 ## [0.7.3] - 2026-09-07
 
 - **停止 Android Beta 支持。** 移除 Android 客户端源码、APK 构建和发布任务，发布流程仅保留桌面平台。

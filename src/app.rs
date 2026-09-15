@@ -3903,6 +3903,10 @@ fn wire_session_callbacks(
             w.set_dialog_stop_bits("1".into());
             w.set_dialog_parity("none".into());
             w.set_dialog_flow("none".into());
+            w.set_dialog_rdp_domain("".into());
+            w.set_dialog_rdp_resolution(RDP_RESOLUTION_DEFAULT.into());
+            w.set_dialog_rdp_width("1280".into());
+            w.set_dialog_rdp_height("720".into());
             w.set_dialog_encoding("UTF-8".into());
             w.set_dialog_vt100_drawing(false);
             w.set_dialog_disable_shell_integration(false);
@@ -4142,6 +4146,17 @@ fn wire_session_callbacks(
                 w.set_dialog_stop_bits(session.stop_bits.to_string().into());
                 w.set_dialog_parity(session.parity.clone().into());
                 w.set_dialog_flow(session.flow_control.clone().into());
+                w.set_dialog_rdp_domain(session.rdp_domain.clone().into());
+                w.set_dialog_rdp_resolution(
+                    rdp_resolution_choice(
+                        session.rdp_fullscreen,
+                        session.rdp_width,
+                        session.rdp_height,
+                    )
+                    .into(),
+                );
+                w.set_dialog_rdp_width(session.rdp_width.to_string().into());
+                w.set_dialog_rdp_height(session.rdp_height.to_string().into());
                 w.set_dialog_encoding(session.encoding.clone().into());
                 w.set_dialog_vt100_drawing(session.vt100_drawing);
                 w.set_dialog_disable_shell_integration(session.disable_shell_integration);
@@ -4507,12 +4522,18 @@ fn wire_session_callbacks(
                 _ if draft.user.trim().is_empty() => draft.host.to_string(),
                 _ => format!("{}@{}", draft.user, draft.host),
             };
-            // Telnet defaults to port 23, SSH to 22; serial ignores port.
-            let default_port = if kind == crate::config::SessionKind::Telnet {
-                23
-            } else {
-                22
+            // Telnet defaults to port 23, RDP to 3389, SSH to 22; serial ignores
+            // the port entirely.
+            let default_port = match kind {
+                crate::config::SessionKind::Telnet => 23,
+                crate::config::SessionKind::Rdp => 3389,
+                _ => 22,
             };
+            let (rdp_fullscreen, rdp_width, rdp_height) = rdp_display_settings(
+                &draft.rdp_resolution.to_string(),
+                draft.rdp_width,
+                draft.rdp_height,
+            );
             let new_session = Session {
                 id,
                 name: if draft.name.is_empty() {
@@ -4555,6 +4576,10 @@ fn wire_session_callbacks(
                 disable_shell_integration: draft.disable_shell_integration,
                 note: draft.note.to_string(),
                 jump_session_id: draft.jump_session_id.to_string(),
+                rdp_domain: draft.rdp_domain.to_string(),
+                rdp_fullscreen,
+                rdp_width,
+                rdp_height,
             };
             {
                 let mut s = store.borrow_mut();
@@ -4909,6 +4934,26 @@ fn wire_session_callbacks(
                     None => return,
                 }
             };
+            // ── RDP: hand the saved account to the system client, open no tab ──
+            // FinalShell does the same thing: meatshell stores host / port /
+            // user / password and starts the operating system's own remote
+            // desktop client (mstsc on Windows), so the session lives in a
+            // native window rather than in one of our tabs.
+            if session.kind == SessionKind::Rdp {
+                let message = match crate::rdp::launch(&session) {
+                    Ok(started) => format!(
+                        "{} {}",
+                        t("已用系统远程桌面打开", "Opened with the system remote desktop client"),
+                        started
+                    ),
+                    Err(err) => format!("{}: {err}", t("RDP 启动失败", "Failed to start RDP")),
+                };
+                tracing::info!("{message}");
+                if let Some(w) = weak.upgrade() {
+                    w.set_ssh_import_hint(message.into());
+                }
+                return;
+            }
             let tab_id = format!("term-{}", uuid::Uuid::new_v4());
             let tab_title = session.name.clone();
 
@@ -4920,6 +4965,9 @@ fn wire_session_callbacks(
                 }
                 SessionKind::Telnet => format!("telnet {}:{}", session.host, session.port),
                 SessionKind::Local => format!("local {}", session.name),
+                // RDP opens in the system client instead of a tab (see the
+                // early return above); this label only exists for completeness.
+                SessionKind::Rdp => format!("rdp {}:{}", session.host, session.port),
             };
             // Compatibility mode also suppresses the SFTP side-channel so
             // bastions that only permit one proxied PTY connection stay alive.
@@ -5562,20 +5610,23 @@ fn refresh_dock_inner(
             h: p.rect.h,
         })
         .collect();
-    let unchanged_rows = panels_model.row_count() == panels.len()
-            && (panels.is_empty()
-                || (0..panels.len()).all(|i| {
-                    panels_model.row_data(i).is_some_and(|r| {
-                        let p = &panels[i];
-                        r.kind == p.kind
-                            && r.edge == p.edge
-                            && r.x == p.x
-                            && r.y == p.y
-                            && r.w == p.w
-                            && r.h == p.h
-                    })
-                }));
-    if !unchanged_rows {
+    // Update the rows in place whenever the list keeps its shape. `set_vec`
+    // resets the repeater and rebuilds every panel component, which would
+    // destroy the resize handle a drag currently holds (and renumber the items
+    // the pointer grab points at, stranding a divider drag) — so a resize would
+    // stop following the cursor after its first event. A changing panel count
+    // (dock / collapse / zen) is the only thing that needs the reset.
+    if panels_model.row_count() == panels.len() {
+        for (i, p) in panels.into_iter().enumerate() {
+            let unchanged = panels_model.row_data(i).is_some_and(|old| {
+                old.kind == p.kind && old.edge == p.edge && old.x == p.x && old.y == p.y
+                    && old.w == p.w && old.h == p.h
+            });
+            if !unchanged {
+                panels_model.set_row_data(i, p);
+            }
+        }
+    } else {
         panels_model.set_vec(panels);
     }
     let dividers: Vec<DividerGeomInfo> = geom
@@ -6404,6 +6455,7 @@ fn wire_key_input(
             }
         });
     }
+
 
     // Propagate PTY resize to the SSH worker and vt100 parser. Pixel
     // dimensions come from Slint; we approximate col/row counts using

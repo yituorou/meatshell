@@ -12,6 +12,12 @@ rust-version = "1.75"
 [package.metadata.deb]
 extended-description = "MeatShell is a cross-platform terminal client written in Rust and Slint."
 depends = "$auto"
+# RDP sessions drive FreeRDP's `xfreerdp3` / `xfreerdp`, which is not linked
+# into the binary, so `$auto` cannot see it. Recommended rather than required:
+# RDP is one feature among many, and the package name differs per distribution
+# (freerdp3-x11 on Debian/Ubuntu 24.04+, freerdp2-x11 on older releases). The
+# Flatpak bundle builds FreeRDP in, so it needs nothing from the host.
+recommends = ["freerdp3-x11 | freerdp2-x11"]
 # 包分类和优先级
 section = "net"
 priority = "optional"

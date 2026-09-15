@@ -67,6 +67,13 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
             initial_cols,
             initial_rows,
         ),
+        SessionKind::Rdp => {
+            // RDP sessions are handed to the system remote desktop client and
+            // never get a tab (see `on_connect_session`), so this arm is only a
+            // safety net for a saved session edited into another kind.
+            tracing::warn!("RDP session cannot be hosted in a tab; not starting");
+            return;
+        }
     };
     let terminal_reply_tx = handle.commands.clone();
     let monitoring_enabled = ctx
