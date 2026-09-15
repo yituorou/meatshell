@@ -5610,20 +5610,23 @@ fn refresh_dock_inner(
             h: p.rect.h,
         })
         .collect();
-    let unchanged_rows = panels_model.row_count() == panels.len()
-            && (panels.is_empty()
-                || (0..panels.len()).all(|i| {
-                    panels_model.row_data(i).is_some_and(|r| {
-                        let p = &panels[i];
-                        r.kind == p.kind
-                            && r.edge == p.edge
-                            && r.x == p.x
-                            && r.y == p.y
-                            && r.w == p.w
-                            && r.h == p.h
-                    })
-                }));
-    if !unchanged_rows {
+    // Update the rows in place whenever the list keeps its shape. `set_vec`
+    // resets the repeater and rebuilds every panel component, which would
+    // destroy the resize handle a drag currently holds (and renumber the items
+    // the pointer grab points at, stranding a divider drag) — so a resize would
+    // stop following the cursor after its first event. A changing panel count
+    // (dock / collapse / zen) is the only thing that needs the reset.
+    if panels_model.row_count() == panels.len() {
+        for (i, p) in panels.into_iter().enumerate() {
+            let unchanged = panels_model.row_data(i).is_some_and(|old| {
+                old.kind == p.kind && old.edge == p.edge && old.x == p.x && old.y == p.y
+                    && old.w == p.w && old.h == p.h
+            });
+            if !unchanged {
+                panels_model.set_row_data(i, p);
+            }
+        }
+    } else {
         panels_model.set_vec(panels);
     }
     let dividers: Vec<DividerGeomInfo> = geom

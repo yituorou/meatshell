@@ -2348,7 +2348,9 @@ export component AppWindow inherits Window {
                 // origin (gp.x/gp.y already include any collapsed-strip band),
                 // so the value lands straight on the panel's width/height prop.
                 if gp.edge == "left" : Rectangle {
-                    x: parent.width - 2px; y: 0px;
+                    // Fully inside the panel: its `clip` would otherwise eat
+                    // half of the grab area and leave a 2px target.
+                    x: parent.width - 4px; y: 0px;
                     width: 4px; height: parent.height;
                     background: rr-l.has-hover ? Theme.accent : Theme.border-subtle;
                     rr-l := TouchArea {
@@ -2379,7 +2381,8 @@ export component AppWindow inherits Window {
                     }
                 }
                 if gp.edge == "top" : Rectangle {
-                    x: 0px; y: parent.height - 2px;
+                    // Same reasoning as the left edge: keep the whole 4px inside.
+                    x: 0px; y: parent.height - 4px;
                     width: parent.width; height: 4px;
                     background: rr-t.has-hover ? Theme.accent : Theme.border-subtle;
                     rr-t := TouchArea {
