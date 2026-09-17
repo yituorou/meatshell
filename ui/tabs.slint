@@ -39,6 +39,7 @@ component SingleTab inherits Rectangle {
     property <bool> lifted: root.dragging || root.ghost;
 
     height: 30px;
+    width: self.preferred-width;
     border-radius: Theme.radius-sm;
     border-width: active ? 2px : 0px;
     border-color: active ? Theme.accent : transparent;
@@ -109,7 +110,6 @@ component SingleTab inherits Rectangle {
     }
 
     HorizontalLayout {
-        width: parent.width - (info.kind != "welcome" ? 28px : 0px);
         padding-left: 10px;
         padding-right: 4px;
         spacing: 8px;
@@ -131,18 +131,20 @@ component SingleTab inherits Rectangle {
                 : (info.title_len > 12 ? 10px * Theme.ui-scale : Theme.fs-sm);
             vertical-alignment: center;
             overflow: elide;
-            horizontal-stretch: 1;
+            horizontal-stretch: 0;
         }
 
-    }
+        if info.kind != "welcome" && !ghost : Rectangle {
+            width: 20px;
+            height: parent.height;
 
-    // Keep close pinned to the far right even when the title is very short.
-    if info.kind != "welcome" && !ghost : IconButton {
-        glyph: "×";
-        size: 20px;
-        x: parent.width - self.width - 6px;
-        y: (parent.height - self.height) / 2;
-        clicked => { root.closed(); }
+            IconButton {
+                glyph: "×";
+                size: 20px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.closed(); }
+            }
+        }
     }
 
 }
@@ -226,12 +228,6 @@ export component TabBar inherits Rectangle {
 
     height: 36px;
     background: Theme.bg-panel-alt;
-
-    // Width of a tab, from its title length. Shared by the strip's slots and the
-    // drag ghost so the two agree pixel-for-pixel.
-    pure function tab-width(len: int) -> length {
-        return clamp(100px, 64px + len * 7px * Theme.ui-scale, 320px);
-    }
 
     // --- Drag-to-reorder state (#408) --------------------------------------
     // Nothing here touches the model: the slots stay exactly where they are for
@@ -388,7 +384,9 @@ export component TabBar inherits Rectangle {
                 // tab inside it is what slides. A layout child cannot have its `x`
                 // set (the layout owns it), hence this wrapper.
                 for tab[i] in tabs : Rectangle {
-                    width: root.tab-width(tab.title_len);
+                    // The strip lays out slots, not the tab visuals. Give each slot
+                    // the tab's intrinsic width so successive tabs cannot overlap.
+                    width: tab-view.preferred-width;
                     horizontal-stretch: 0;
                     // Index in the list with the dragged tab removed.
                     property <int> shifted-index: i < root.drag-from ? i : i - 1;
@@ -424,7 +422,7 @@ export component TabBar inherits Rectangle {
                         }
                     }
 
-                    SingleTab {
+                    tab-view := SingleTab {
                         x: root.slot-shift(i, parent.passed);
                         width: parent.width;
                         height: parent.height;
