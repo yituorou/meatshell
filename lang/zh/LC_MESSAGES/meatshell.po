@@ -584,3 +584,31 @@ msgstr "添加触发器"
 
 msgid "When expected text appears, send the response automatically. Responses are stored encrypted."
 msgstr "出现期望文本时自动发送回复。回复内容会加密保存。"
+
+msgid "DOMAIN\\user or user@domain"
+msgstr "域名\\用户名 或 user@domain"
+
+msgid "Domain (optional)"
+msgstr "域（可选）"
+
+
+
+
+
+msgid "Resolution"
+msgstr "分辨率"
+
+msgid "Full screen"
+msgstr "全屏"
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "Width"
+msgstr "宽度"
+
+msgid "Height"
+msgstr "高度"
+
+msgid "Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window."
+msgstr "远端桌面的分辨率；全屏连接后按 Ctrl+Alt+Enter 可切回窗口。"
