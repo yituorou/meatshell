@@ -1,5 +1,7 @@
 use super::super::*;
 
+mod anchor_focus;
+
 #[test]
 fn windows_process_key_ctrl_release_keeps_physical_side() {
     use i_slint_backend_winit::winit::event::ElementState;

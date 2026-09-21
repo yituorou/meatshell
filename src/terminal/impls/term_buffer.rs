@@ -68,6 +68,21 @@ impl TermBuffer {
         self.mouse_tracked = false;
     }
 
+    /// Return a scrolled-back viewport to the live bottom (offset 0) and drop
+    /// the banked wheel fraction, so a decaying momentum tail cannot pull the
+    /// view away from the prompt the user is typing at. Returns true only when
+    /// the view was actually scrolled back — the caller owns the repaint,
+    /// because the Slint model still shows the history rows until it
+    /// re-renders.
+    pub(crate) fn snap_to_live(&mut self) -> bool {
+        if self.view_offset == 0 {
+            return false;
+        }
+        self.view_offset = 0;
+        self.scroll_accum = 0.0;
+        true
+    }
+
     // ---- Absolute-coordinate selection helpers (#18 follow-up) -------------
     //
     // The "combined" buffer is `history` (oldest first) followed by the live

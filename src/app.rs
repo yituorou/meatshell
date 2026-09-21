@@ -5835,6 +5835,7 @@ fn wire_key_input(
     // --- Command bar (#55): run command + quick-command management ---------
     {
         let handles_rc = handles.clone();
+        let bufs_cmd = bufs.clone();
         let store_rc = store.clone();
         let weak = window.as_weak();
         window.on_run_command(
@@ -5849,6 +5850,12 @@ fn wire_key_input(
                     } else if let Some(handle) = h.get(tab_id.as_str()) {
                         handle.send_raw(bytes);
                     }
+                }
+                // A command-bar / quick command is input too: bring a
+                // scrolled-back viewport back to the live bottom so the
+                // command's output is visible as it arrives (#452).
+                if let Some(w) = weak.upgrade() {
+                    snap_to_live_bottom(&w, &bufs_cmd, tab_id.as_str());
                 }
                 if let Some(line) = history_line {
                     let mut s = store_rc.borrow_mut();
@@ -6262,11 +6269,7 @@ fn wire_key_input(
             // (DECCKM, set by nano/vim via \x1b[?1h). In that mode the terminal
             // must send \x1bOA/B/C/D instead of \x1b[A/B/C/D.
             let app_cursor = if let Some(h) = term_buf(&bufs, tab_id.as_str()) {
-                let mut b = h.lock().unwrap();
-                // Typing snaps the view back to the live bottom so the
-                // user always sees what they're entering.
-                b.view_offset = 0;
-                b.parser.screen().application_cursor()
+                h.lock().unwrap().parser.screen().application_cursor()
             } else {
                 false
             };
@@ -6496,22 +6499,37 @@ fn wire_key_input(
                 handles.borrow().contains_key(tab_id.as_str()),
             );
             if !bytes.is_empty() {
-                let h = handles.borrow();
-                if sync_input.load(std::sync::atomic::Ordering::Relaxed) {
-                    // Broadcast the same bytes to every online session (#78 pt.4).
-                    for (target_id, handle) in h.iter() {
-                        if let Some(buffer) = term_buf(&bufs, target_id) {
+                {
+                    let h = handles.borrow();
+                    if sync_input.load(std::sync::atomic::Ordering::Relaxed) {
+                        // Broadcast the same bytes to every online session (#78 pt.4).
+                        for (target_id, handle) in h.iter() {
+                            if let Some(buffer) = term_buf(&bufs, target_id) {
+                                buffer.lock().unwrap().interactive_echo_until =
+                                    std::time::Instant::now() + INTERACTIVE_ECHO_WINDOW;
+                            }
+                            handle.send_raw(bytes.clone());
+                        }
+                    } else if let Some(handle) = h.get(tab_id.as_str()) {
+                        if let Some(buffer) = term_buf(&bufs, tab_id.as_str()) {
                             buffer.lock().unwrap().interactive_echo_until =
                                 std::time::Instant::now() + INTERACTIVE_ECHO_WINDOW;
                         }
-                        handle.send_raw(bytes.clone());
+                        handle.send_raw(bytes);
                     }
-                } else if let Some(handle) = h.get(tab_id.as_str()) {
-                    if let Some(buffer) = term_buf(&bufs, tab_id.as_str()) {
-                        buffer.lock().unwrap().interactive_echo_until =
-                            std::time::Instant::now() + INTERACTIVE_ECHO_WINDOW;
-                    }
-                    handle.send_raw(bytes);
+                }
+                // ── Real input returns a scrolled-back view to the bottom ──
+                // Typing (Enter included) means the user is answering the
+                // prompt, so the live view must be back on screen at once —
+                // waiting for the remote echo would add a whole round trip on
+                // a slow link, and while the view is scrolled back that echo
+                // anchors the history view instead of following it (#306).
+                // Placed after the send so the key reaches the wire first, and
+                // gated on a non-empty encoding so bare modifiers and the IME /
+                // synthetic-Ctrl markers filtered above never steal the
+                // scrollback the user is reading.
+                if let Some(w) = ctx.weak.upgrade() {
+                    snap_to_live_bottom(&w, &bufs, tab_id.as_str());
                 }
             }
         });

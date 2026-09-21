@@ -204,6 +204,21 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
     win.window().request_redraw();
 }
 
+/// Bring a scrolled-back tab back to the live bottom, repainting it right away
+/// (#452). Used by every path that feeds input to a session — keystrokes sent
+/// to the PTY, command-bar and quick commands: the prompt or output being
+/// answered must be on screen with the input, not one remote round trip later,
+/// which is all an output-driven flush could offer on a slow link (and while
+/// scrolled back the incoming echo anchors the history view instead of
+/// following it, #306). Returns true when the view was actually scrolled back.
+pub(super) fn snap_to_live_bottom(win: &AppWindow, bufs: &TermBuffers, tab_id: &str) -> bool {
+    let snapped = with_term_buf(bufs, tab_id, |buf| buf.snap_to_live()).unwrap_or(false);
+    if snapped {
+        rebuild_tab_display(win, bufs, tab_id);
+    }
+    snapped
+}
+
 /// Refresh only the lightweight selection overlay. Dragging used to call
 /// `rebuild_tab_display` for every mouse-move event, reparsing and rebuilding
 /// all terminal spans even though the underlying screen had not changed.

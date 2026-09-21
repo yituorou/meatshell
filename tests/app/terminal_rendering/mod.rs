@@ -73,6 +73,43 @@ fn releasing_scrollback_drops_retained_history_and_replay_bytes() {
     assert_eq!(buffer.view_offset, 0);
 }
 
+#[test]
+fn snap_to_live_returns_the_viewport_to_the_bottom() {
+    let mut buffer = make_buf(3, 20, &["old-1", "old-2"], &["live"], 2);
+    buffer.scroll_accum = -2.5;
+    buffer.render();
+    let scrolled = buffer.displayed_text.clone();
+
+    // The snap reports the change so the caller knows a repaint is due: the
+    // displayed rows still belong to the scrolled view until render() runs.
+    assert!(buffer.snap_to_live());
+    assert_eq!(buffer.view_offset, 0);
+    assert_eq!(buffer.scroll_accum, 0.0, "banked wheel fraction must not re-scroll");
+
+    buffer.render();
+    assert_ne!(buffer.displayed_text, scrolled);
+    // Back to exactly what an untouched live view renders.
+    let mut live = make_buf(3, 20, &["old-1", "old-2"], &["live"], 0);
+    live.render();
+    assert_eq!(buffer.displayed_text, live.displayed_text);
+}
+
+#[test]
+fn snap_to_live_is_a_no_op_at_the_live_bottom() {
+    let mut buffer = make_buf(3, 20, &["old-1"], &["live"], 0);
+    buffer.scroll_accum = 1.5;
+    buffer.render();
+    let live = buffer.displayed_text.clone();
+
+    // Nothing moved, so nothing needs repainting (each keystroke takes this
+    // path) and a pending wheel fraction is left alone.
+    assert!(!buffer.snap_to_live());
+    assert_eq!(buffer.scroll_accum, 1.5);
+
+    buffer.render();
+    assert_eq!(buffer.displayed_text, live);
+}
+
 mod charset;
 mod colors;
 mod protocol;

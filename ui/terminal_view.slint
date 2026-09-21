@@ -641,6 +641,189 @@ export component TerminalView inherits Rectangle {
                 triggered => { root.select-autoscroll(root.autoscroll-dir); }
             }
 
+            // --- Hidden TextInput — keyboard + Chinese IME capture -----------
+            //
+            // Key design decision: return `accept` for EVERY key and forward
+            // them all via send-key.  Returning `reject` makes Slint bubble the
+            // event without inserting the character into `text`, so `edited`
+            // never fires for regular keystrokes — only IME-committed chars
+            // (which go through a separate WM_IME_CHAR path) reach `edited`.
+            //
+            // By forwarding everything in key-pressed we guarantee English and
+            // all direct-mode input reaches the PTY.  `edited` is kept as a
+            // safety net for IME commits that Windows delivers via WM_IME_CHAR
+            // rather than WM_CHAR (and therefore don't fire key-pressed).
+            //
+            // This anchor is the only item holding keyboard focus, and Slint
+            // silently drops the focus of a focused item whose geometry no
+            // longer intersects its clip rect (`ItemRc::is_visible` is a purely
+            // geometric test, checked at the top of `process_key_input` — it
+            // clears the focus and discards that key).  Parking it off-window
+            // while the view was scrolled back therefore killed the keyboard
+            // outright: the first key press after scrolling back cleared the
+            // focus and every later key was swallowed (#452).  It must always
+            // stay inside the terminal viewport.
+            //
+            // Declared BEFORE the VerticalLayout that holds scroll-clip so every
+            // pointer layer of the terminal (body-touch / body-touch-overlay,
+            // scrollbar, find bar) stays above it: a hovered TextInput forces
+            // the I-beam pointer (i-slint-core items/text.rs) and owns the hit
+            // test of its 1x1 cell, which flickered the mouse cursor while
+            // wheel-scrolling.  Clicks still reach the overlay, which focuses
+            // this input itself.
+            ime-input := TextInput {
+                // Absolute 1x1 IME anchor: it captures keyboard/IME input without
+                // participating in layout or exposing a second I-beam hit area.
+                // Following the VT cursor also places native IME candidate UI near
+                // the actual insertion point.
+                // While scrolled back through history the live cursor is hidden
+                // (cursor-row < 0): park on the viewport's first cell then — an
+                // in-view spot, so the focus survives (see above), unlike the
+                // off-window offset this used to have (#452).
+                x: root.cursor-row >= 0
+                    ? 10px + max(0, root.cursor-col) * root.cell-w
+                    : 10px;
+                y: root.cursor-row >= 0
+                    ? 8px + root.cursor-row * root.cell-h
+                    : 8px;
+                width: 1px;
+                height: 1px;
+                opacity: 0;
+                // Opacity does not suppress Slint's focused TextInput caret on
+                // every renderer. This input exists only as a keyboard/IME
+                // anchor; the terminal cursor above is the sole visible caret.
+                text-cursor-width: 0px;
+                single-line: true;
+
+                // Reset blink phase on focus gain so cursor appears immediately.
+                changed has-focus => {
+                    if (self.has-focus) { key-capture.cursor-blink = true; }
+                }
+
+                key-pressed(event) => {
+                    // Keep the caret visible while typing or moving it. Without
+                    // this reset an old blink phase can hide the cursor halfway
+                    // through a repeated arrow-key sequence (#319).
+                    key-capture.cursor-blink = true;
+                    root.diagnose-key-event(event.text,
+                        event.modifiers.control, event.modifiers.meta,
+                        event.modifiers.alt, event.modifiers.shift);
+                    // ⚠ macOS modifier naming is SWAPPED by Slint (see the winit
+                    // backend's muda.rs): `event.modifiers.control` is the **Cmd (⌘)**
+                    // key and `event.modifiers.meta` is the **physical Ctrl** key.
+                    // So `control` already gives ⌘ shortcuts on macOS for free, and
+                    // the physical Ctrl (meta on macOS) is what must reach the shell
+                    // so ^C/^X work in nano/vim (#158).
+                    // ── Cycle tabs: Ctrl+Tab / Ctrl+Shift+Tab (#294) ──
+                    // On macOS Slint reports the physical Ctrl key as `meta`.
+                    if ((Theme.is-mac ? event.modifiers.meta : event.modifiers.control)
+                            && (event.text == Key.Tab || event.text == Key.Backtab)) {
+                        root.cycle-tab(event.modifiers.shift || event.text == Key.Backtab);
+                        accept
+                    // ── Find: ⌘F / Ctrl+F (mirrors right-click → Find) ──
+                    } else if (event.modifiers.control && !event.modifiers.shift
+                            && (event.text == "f" || event.text == "F"
+                                || event.text == "\u{0006}")) {
+                        root.find-active = true;
+                        accept
+                    // ── Jump to command-history search: ⌘⇧R / Ctrl+Shift+R (#140) ──
+                    } else if (event.modifiers.control && event.modifiers.shift
+                            && (event.text == "r" || event.text == "R"
+                                || event.text == "\u{0012}")) {
+                        root.history-open = true;
+                        accept
+                    // ── New window: ⌘⇧N / Ctrl+Shift+N (#multi-window) ──
+                    // `control` is Cmd on macOS (Slint modifier swap, #158), so
+                    // this single condition gives ⌘⇧N there and Ctrl+Shift+N
+                    // elsewhere. Intercepted here — before send-key — so the
+                    // keystroke never reaches the remote shell.
+                    } else if (event.modifiers.control && event.modifiers.shift
+                            && (event.text == "n" || event.text == "N"
+                                || event.text == "\u{000e}")) {
+                        root.new-window-key();
+                        accept
+                    // ── Zen (focus) mode: Ctrl+Alt+Z toggles (#zen). Hidden
+                    // views reject it so the window-level fallback handles it.
+                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
+                            && (event.text == "z" || event.text == "Z"
+                                || event.text == "\u{001a}")) {
+                        root.zen-key();
+                        accept
+                    // ── Font zoom: Ctrl+= / Ctrl+- / Ctrl+0 (⌘ on macOS) ──
+                    // Zooms this session only; adding Alt zooms every session
+                    // in the window. Alt (not Shift) because Ctrl+Shift is the
+                    // IME-switch hotkey on Chinese Windows and gets swallowed.
+                    // A hidden (inactive tab) view that still holds focus
+                    // rejects these so the window-level fallback zooms the
+                    // visible session (#zoom).
+                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
+                            && (event.text == "=" || event.text == "+"
+                                || event.text == "-" || event.text == "\u{001f}"
+                                || event.text == "0")) {
+                        root.zoom-key(event.text == "-" || event.text == "\u{001f}" ? -1
+                            : event.text == "0" ? 0 : 1, true);
+                        accept
+                    } else if (root.visible && event.modifiers.control
+                            && (event.text == "=" || event.text == "+")) {
+                        root.zoom-key(1, false);
+                        accept
+                    } else if (root.visible && event.modifiers.control
+                            && (event.text == "-" || event.text == "\u{001f}")) {
+                        root.zoom-key(-1, false);
+                        accept
+                    } else if (root.visible && event.modifiers.control && event.text == "0") {
+                        root.zoom-key(0, false);
+                        accept
+                    // ── Copy: ⌘C (macOS, no Shift) / Ctrl+Shift+C ──
+                    } else if (event.modifiers.control
+                            && (!event.modifiers.alt || root.extra-paste-shortcuts-enabled)
+                            && (Theme.is-mac ? !event.modifiers.shift : event.modifiers.shift)
+                            && (event.text == "c" || event.text == "C"
+                                || event.text == "\u{0003}")) {
+                        root.copy-terminal-text();
+                        accept
+                    // ── Paste: ⌘V / Ctrl+V (Ctrl+Shift+V also accepted) ──
+                    } else if (event.modifiers.control
+                            && (event.text == "v" || event.text == "V"
+                                || event.text == "\u{0016}")) {
+                        root.paste-from-clipboard();
+                        // Clipboard access on Windows can deliver WM_KILLFOCUS.
+                        // Restore focus explicitly so the cursor keeps blinking.
+                        ime-input.focus();
+                        accept
+                    // ── Paste: Shift+Insert (the X11 / xterm paste convention) (#144) ──
+                    } else if (root.extra-paste-shortcuts-enabled
+                            && event.modifiers.shift && event.text == Key.Insert) {
+                        root.paste-from-clipboard();
+                        ime-input.focus();
+                        accept
+                    // ── macOS: swallow any other ⌘ combo (control == Cmd here) so it
+                    // isn't typed into the shell as a literal character. ──
+                    } else if (Theme.is-mac && event.modifiers.control) {
+                        accept
+                    // ── All other keys (printable, Ctrl+X, arrows, …) → the shell.
+                    // The control flag is the *physical* Ctrl key: `meta` on macOS,
+                    // `control` elsewhere, so ^X/^C reach the PTY everywhere (#158).
+                    // Return `accept` for everything: `reject` would drop the char.
+                    } else {
+                        root.send-key(event.text,
+                                      Theme.is-mac ? event.modifiers.meta : event.modifiers.control,
+                                      event.modifiers.alt, event.modifiers.shift);
+                        accept
+                    }
+                }
+
+                // Safety-net for IME commits delivered via WM_IME_CHAR (which
+                // may not fire key-pressed).  Guard with preedit-text == "" to
+                // skip in-progress compositions.
+                edited => {
+                    if (self.preedit-text == "" && self.text != "") {
+                        root.send-key(self.text, false, false, false);
+                        self.text = "";
+                    }
+                }
+            }
+
             VerticalLayout {
                 spacing: 0;
 
@@ -1065,177 +1248,6 @@ export component TerminalView inherits Rectangle {
                     }
                 }
 
-            }
-
-            // --- Hidden TextInput — keyboard + Chinese IME capture -----------
-            //
-            // Key design decision: return `accept` for EVERY key and forward
-            // them all via send-key.  Returning `reject` makes Slint bubble the
-            // event without inserting the character into `text`, so `edited`
-            // never fires for regular keystrokes — only IME-committed chars
-            // (which go through a separate WM_IME_CHAR path) reach `edited`.
-            //
-            // By forwarding everything in key-pressed we guarantee English and
-            // all direct-mode input reaches the PTY.  `edited` is kept as a
-            // safety net for IME commits that Windows delivers via WM_IME_CHAR
-            // rather than WM_CHAR (and therefore don't fire key-pressed).
-            ime-input := TextInput {
-                // Absolute 1x1 IME anchor: it captures keyboard/IME input without
-                // participating in layout or exposing a second I-beam hit area.
-                // Following the VT cursor also places native IME candidate UI near
-                // the actual insertion point.
-                // While scrolled back through history the live cursor is hidden
-                // (cursor-row < 0): park the anchor far off-window then, never
-                // clamp it with max(0, …). Clamping pinned this focused TextInput
-                // onto the terminal's top-left cell, and since a hovered TextInput
-                // forces the I-beam pointer (i-slint-core items/text.rs), wheel-
-                // scrolling flickered the mouse cursor between arrow and text as
-                // frames re-hit-tested under it. The park offset must dwarf any
-                // parent origin: key-capture sits ~24-48px from the window top, so
-                // a small offset like -32px still landed on the visible terminal's
-                // top-left corner.
-                x: root.cursor-row >= 0
-                    ? 10px + max(0, root.cursor-col) * root.cell-w
-                    : -1000px;
-                y: root.cursor-row >= 0
-                    ? 8px + root.cursor-row * root.cell-h
-                    : -1000px;
-                width: 1px;
-                height: 1px;
-                opacity: 0;
-                // Opacity does not suppress Slint's focused TextInput caret on
-                // every renderer. This input exists only as a keyboard/IME
-                // anchor; the terminal cursor above is the sole visible caret.
-                text-cursor-width: 0px;
-                single-line: true;
-
-                // Reset blink phase on focus gain so cursor appears immediately.
-                changed has-focus => {
-                    if (self.has-focus) { key-capture.cursor-blink = true; }
-                }
-
-                key-pressed(event) => {
-                    // Keep the caret visible while typing or moving it. Without
-                    // this reset an old blink phase can hide the cursor halfway
-                    // through a repeated arrow-key sequence (#319).
-                    key-capture.cursor-blink = true;
-                    root.diagnose-key-event(event.text,
-                        event.modifiers.control, event.modifiers.meta,
-                        event.modifiers.alt, event.modifiers.shift);
-                    // ⚠ macOS modifier naming is SWAPPED by Slint (see the winit
-                    // backend's muda.rs): `event.modifiers.control` is the **Cmd (⌘)**
-                    // key and `event.modifiers.meta` is the **physical Ctrl** key.
-                    // So `control` already gives ⌘ shortcuts on macOS for free, and
-                    // the physical Ctrl (meta on macOS) is what must reach the shell
-                    // so ^C/^X work in nano/vim (#158).
-                    // ── Cycle tabs: Ctrl+Tab / Ctrl+Shift+Tab (#294) ──
-                    // On macOS Slint reports the physical Ctrl key as `meta`.
-                    if ((Theme.is-mac ? event.modifiers.meta : event.modifiers.control)
-                            && (event.text == Key.Tab || event.text == Key.Backtab)) {
-                        root.cycle-tab(event.modifiers.shift || event.text == Key.Backtab);
-                        accept
-                    // ── Find: ⌘F / Ctrl+F (mirrors right-click → Find) ──
-                    } else if (event.modifiers.control && !event.modifiers.shift
-                            && (event.text == "f" || event.text == "F"
-                                || event.text == "\u{0006}")) {
-                        root.find-active = true;
-                        accept
-                    // ── Jump to command-history search: ⌘⇧R / Ctrl+Shift+R (#140) ──
-                    } else if (event.modifiers.control && event.modifiers.shift
-                            && (event.text == "r" || event.text == "R"
-                                || event.text == "\u{0012}")) {
-                        root.history-open = true;
-                        accept
-                    // ── New window: ⌘⇧N / Ctrl+Shift+N (#multi-window) ──
-                    // `control` is Cmd on macOS (Slint modifier swap, #158), so
-                    // this single condition gives ⌘⇧N there and Ctrl+Shift+N
-                    // elsewhere. Intercepted here — before send-key — so the
-                    // keystroke never reaches the remote shell.
-                    } else if (event.modifiers.control && event.modifiers.shift
-                            && (event.text == "n" || event.text == "N"
-                                || event.text == "\u{000e}")) {
-                        root.new-window-key();
-                        accept
-                    // ── Zen (focus) mode: Ctrl+Alt+Z toggles (#zen). Hidden
-                    // views reject it so the window-level fallback handles it.
-                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
-                            && (event.text == "z" || event.text == "Z"
-                                || event.text == "\u{001a}")) {
-                        root.zen-key();
-                        accept
-                    // ── Font zoom: Ctrl+= / Ctrl+- / Ctrl+0 (⌘ on macOS) ──
-                    // Zooms this session only; adding Alt zooms every session
-                    // in the window. Alt (not Shift) because Ctrl+Shift is the
-                    // IME-switch hotkey on Chinese Windows and gets swallowed.
-                    // A hidden (inactive tab) view that still holds focus
-                    // rejects these so the window-level fallback zooms the
-                    // visible session (#zoom).
-                    } else if (root.visible && event.modifiers.control && event.modifiers.alt
-                            && (event.text == "=" || event.text == "+"
-                                || event.text == "-" || event.text == "\u{001f}"
-                                || event.text == "0")) {
-                        root.zoom-key(event.text == "-" || event.text == "\u{001f}" ? -1
-                            : event.text == "0" ? 0 : 1, true);
-                        accept
-                    } else if (root.visible && event.modifiers.control
-                            && (event.text == "=" || event.text == "+")) {
-                        root.zoom-key(1, false);
-                        accept
-                    } else if (root.visible && event.modifiers.control
-                            && (event.text == "-" || event.text == "\u{001f}")) {
-                        root.zoom-key(-1, false);
-                        accept
-                    } else if (root.visible && event.modifiers.control && event.text == "0") {
-                        root.zoom-key(0, false);
-                        accept
-                    // ── Copy: ⌘C (macOS, no Shift) / Ctrl+Shift+C ──
-                    } else if (event.modifiers.control
-                            && (!event.modifiers.alt || root.extra-paste-shortcuts-enabled)
-                            && (Theme.is-mac ? !event.modifiers.shift : event.modifiers.shift)
-                            && (event.text == "c" || event.text == "C"
-                                || event.text == "\u{0003}")) {
-                        root.copy-terminal-text();
-                        accept
-                    // ── Paste: ⌘V / Ctrl+V (Ctrl+Shift+V also accepted) ──
-                    } else if (event.modifiers.control
-                            && (event.text == "v" || event.text == "V"
-                                || event.text == "\u{0016}")) {
-                        root.paste-from-clipboard();
-                        // Clipboard access on Windows can deliver WM_KILLFOCUS.
-                        // Restore focus explicitly so the cursor keeps blinking.
-                        ime-input.focus();
-                        accept
-                    // ── Paste: Shift+Insert (the X11 / xterm paste convention) (#144) ──
-                    } else if (root.extra-paste-shortcuts-enabled
-                            && event.modifiers.shift && event.text == Key.Insert) {
-                        root.paste-from-clipboard();
-                        ime-input.focus();
-                        accept
-                    // ── macOS: swallow any other ⌘ combo (control == Cmd here) so it
-                    // isn't typed into the shell as a literal character. ──
-                    } else if (Theme.is-mac && event.modifiers.control) {
-                        accept
-                    // ── All other keys (printable, Ctrl+X, arrows, …) → the shell.
-                    // The control flag is the *physical* Ctrl key: `meta` on macOS,
-                    // `control` elsewhere, so ^X/^C reach the PTY everywhere (#158).
-                    // Return `accept` for everything: `reject` would drop the char.
-                    } else {
-                        root.send-key(event.text,
-                                      Theme.is-mac ? event.modifiers.meta : event.modifiers.control,
-                                      event.modifiers.alt, event.modifiers.shift);
-                        accept
-                    }
-                }
-
-                // Safety-net for IME commits delivered via WM_IME_CHAR (which
-                // may not fire key-pressed).  Guard with preedit-text == "" to
-                // skip in-progress compositions.
-                edited => {
-                    if (self.preedit-text == "" && self.text != "") {
-                        root.send-key(self.text, false, false, false);
-                        self.text = "";
-                    }
-                }
             }
 
             // --- Find bar (overlay, top) ------------------------------------

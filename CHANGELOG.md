@@ -3,6 +3,11 @@
 All notable changes are documented here. 本文件记录所有重要变更。
 中英对照（中文在前，English after）.
 
+## [Unreleased]
+
+- **修复向上翻看历史后无法输入、回车也无法回到底部的问题（#452）。** 隐藏的键盘/输入法锚点（`ime-input`）在回看状态下曾被停靠到窗口外，而 Slint 会清除「几何上已被裁剪掉」的焦点项并连同该次按键一起丢弃，因此向上翻看后第一下按键就会丢掉键盘焦点，之后所有按键（包括回车）都毫无响应。现在锚点始终停在视口内，并移到终端各指针层之下（既不会被鼠标悬停，也不会抢走点击）。同时，敲击回车等真正送入终端的按键时画面会立即回到底部，不再等远端回显触发重绘（慢速链路上这是一整趟往返），命令栏与快捷命令执行时同样生效；单独按 Shift 等修饰键或已被过滤的输入法标记不会改变滚动位置。
+- **Fix typing and Enter doing nothing after scrolling back through history (#452).** The hidden keyboard/IME anchor (`ime-input`) used to be parked off-window while the view was scrolled back, and Slint clears the focus of a focused item that is clipped away — discarding that key press as well. The first key pressed after scrolling back therefore dropped the keyboard focus, and every later key, Enter included, was swallowed. The anchor now always stays inside the viewport and sits below the terminal's pointer layers, so it can neither be hovered nor steal clicks. On top of that, keys that really reach the session (Enter included) snap the viewport back to the live bottom immediately instead of waiting for the remote echo to trigger the next repaint (a full round trip on a slow link); the command bar and quick commands do the same. Bare modifiers such as Shift and filtered input-method markers leave the scroll position alone.
+
 ## [0.7.4] - 2026-09-21
 
 - **修复会话断开（`exit` 或网络中断）后终端内容被清空的问题（#451）。** 断开连接时，释放缓存曾会新建一个空白的 vt100 解析器，导致"连接已断开，按 Enter 重新连接"提示打印在一块空屏幕上，而不是追加在断开前的原有内容后面。现在断开时只释放体积较大且无上限的原始重放缓冲区与历史滚动记录，当前可见屏幕内容保持不变；重新连接和手动"清空缓存"两个场景仍会像之前一样得到全新空白屏幕。
