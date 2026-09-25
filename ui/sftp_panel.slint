@@ -1,4 +1,4 @@
-﻿import { Theme } from "theme.slint";
+import { Theme } from "theme.slint";
 import { ScrollView } from "std-widgets.slint";
 import { TabInfo } from "tabs.slint";
 
@@ -102,19 +102,43 @@ export component SftpPanel inherits Rectangle {
     in property <bool> collapsed: false;   // when true only the toolbar shows
     in property <bool> show-tree: true;    // hide the directory tree when narrow (#dock)
     in property <bool> compact: false;     // side-docked + collapsed → render nothing but a clean strip (#dock)
-    // Responsive columns: only when docked left/right (narrow, width-adjustable).
-    // Docked top/bottom the panel is wide and can only be resized vertically, so
-    // always show every column there (show-tree is true exactly in that case).
-    // When narrow, drop Size then Modified the moment keeping them would squeeze
-    // the Name column below `name-min` (names start eliding to "…"). Reserved
-    // widths: checkbox+padding+spacing 36px, Size col 76px, Modified 120px.
+    // Responsive columns: Name always keeps `name-min` so filenames stay readable.
+    // Optional columns fill whatever is left in priority order (high → low):
+    // Permissions → Type → Size → Modified → Owner → Group. The first *enabled*
+    // column that no longer fits is hidden, together with every lower-priority
+    // column — never the Name. Layout cost: chrome (checkbox + paddings + gap)
+    // 40px; each extra column costs its width plus 8px inter-column spacing.
     in-out property <length> tree-width: 160px;
     callback persist-tree-width(length);
     property <bool> tree-resizing: false;
     property <length> list-w: root.show-tree ? root.width - root.tree-width - 5px : root.width;
-    property <length> name-min: 180px;     // narrower than this → start dropping columns
-    property <bool> show-size-col: root.show-size-col-user && (root.show-tree || (root.list-w - 36px - 76px - 120px > root.name-min));
-    property <bool> show-modified-col: root.show-modified-col-user && (root.show-tree || (root.list-w - 36px - 120px > root.name-min));
+    property <length> name-min: 180px;     // guaranteed Name column width
+    property <length> chrome-w: 40px;      // checkbox + paddings + gap into Name
+    property <length> extras-w: max(0px, root.list-w - root.chrome-w - root.name-min);
+    // Per-column layout cost = visual width + 8px spacing.
+    property <length> cost-permissions: 112px;
+    property <length> cost-type: 108px;
+    property <length> cost-size: 80px;
+    property <length> cost-modified: 124px;
+    property <length> cost-owner: 92px;
+    property <length> cost-group: 92px;
+    property <bool> fit-permissions: !root.show-permissions || root.extras-w >= root.cost-permissions;
+    property <bool> show-permissions-col: root.show-permissions && root.fit-permissions;
+    property <length> used-1: root.show-permissions-col ? root.cost-permissions : 0px;
+    property <bool> fit-type: root.fit-permissions && (!root.show-type || root.extras-w - root.used-1 >= root.cost-type);
+    property <bool> show-type-col: root.show-type && root.fit-type;
+    property <length> used-2: root.used-1 + (root.show-type-col ? root.cost-type : 0px);
+    property <bool> fit-size: root.fit-type && (!root.show-size || root.extras-w - root.used-2 >= root.cost-size);
+    property <bool> show-size-col: root.show-size && root.fit-size;
+    property <length> used-3: root.used-2 + (root.show-size-col ? root.cost-size : 0px);
+    property <bool> fit-modified: root.fit-size && (!root.show-modified || root.extras-w - root.used-3 >= root.cost-modified);
+    property <bool> show-modified-col: root.show-modified && root.fit-modified;
+    property <length> used-4: root.used-3 + (root.show-modified-col ? root.cost-modified : 0px);
+    property <bool> fit-owner: root.fit-modified && (!root.show-owner || root.extras-w - root.used-4 >= root.cost-owner);
+    property <bool> show-owner-col: root.show-owner && root.fit-owner;
+    property <length> used-5: root.used-4 + (root.show-owner-col ? root.cost-owner : 0px);
+    property <bool> fit-group: root.fit-owner && (!root.show-group || root.extras-w - root.used-5 >= root.cost-group);
+    property <bool> show-group-col: root.show-group && root.fit-group;
     property <int> selected-row: -1;       // clicked/highlighted file-list row (#70)
     in property <int> selected-count;      // number of checked entries (#100)
     // Panel-level right-click context menu (#84). One menu for the whole list:
@@ -141,12 +165,7 @@ export component SftpPanel inherits Rectangle {
     // by the tree extent.  Raise the narrow threshold so the toolbar adapts
     // before buttons get clipped at the right edge (#433).
     property <bool> narrow-toolbar: root.width < (480px + (root.show-tree ? root.tree-width + 5px : 0px));
-    property <bool> show-type-col: root.show-type;
-    property <bool> show-size-col-user: root.show-size;
-    property <bool> show-modified-col-user: root.show-modified;
-    property <bool> show-permissions-col: root.show-permissions;
-    property <bool> show-owner-col: root.show-owner;
-    property <bool> show-group-col: root.show-group;
+
     property <length> column-menu-x: 8px;
     property <length> column-menu-y: 22px;
 
@@ -741,6 +760,7 @@ export component SftpPanel inherits Rectangle {
                         Rectangle { width: 16px; }
                         Rectangle {
                             horizontal-stretch: 1;
+                            min-width: root.name-min;
                             header-name-ta := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.sort-request("name"); }
@@ -880,12 +900,12 @@ export component SftpPanel inherits Rectangle {
                             drop-shadow-color: #00000060;
                             VerticalLayout {
                                 padding: 4px; spacing: 1px;
-                                SftpMenuItem { icon: root.show-type-col ? "\u{E5CA}" : ""; label: @tr("Type"); clicked => { root.toggle-column("type"); } }
-                                SftpMenuItem { icon: root.show-size-col-user ? "\u{E5CA}" : ""; label: @tr("Size"); clicked => { root.toggle-column("size"); } }
-                                SftpMenuItem { icon: root.show-modified-col-user ? "\u{E5CA}" : ""; label: @tr("Modified"); clicked => { root.toggle-column("modified"); } }
-                                SftpMenuItem { icon: root.show-permissions-col ? "\u{E5CA}" : ""; label: @tr("Permissions"); clicked => { root.toggle-column("permissions"); } }
-                                SftpMenuItem { icon: root.show-owner-col ? "\u{E5CA}" : ""; label: @tr("Owner"); clicked => { root.toggle-column("owner"); } }
-                                SftpMenuItem { icon: root.show-group-col ? "\u{E5CA}" : ""; label: @tr("Group"); clicked => { root.toggle-column("group"); } }
+                                SftpMenuItem { icon: root.show-type ? "\u{E5CA}" : ""; label: @tr("Type"); clicked => { root.toggle-column("type"); } }
+                                SftpMenuItem { icon: root.show-size ? "\u{E5CA}" : ""; label: @tr("Size"); clicked => { root.toggle-column("size"); } }
+                                SftpMenuItem { icon: root.show-modified ? "\u{E5CA}" : ""; label: @tr("Modified"); clicked => { root.toggle-column("modified"); } }
+                                SftpMenuItem { icon: root.show-permissions ? "\u{E5CA}" : ""; label: @tr("Permissions"); clicked => { root.toggle-column("permissions"); } }
+                                SftpMenuItem { icon: root.show-owner ? "\u{E5CA}" : ""; label: @tr("Owner"); clicked => { root.toggle-column("owner"); } }
+                                SftpMenuItem { icon: root.show-group ? "\u{E5CA}" : ""; label: @tr("Group"); clicked => { root.toggle-column("group"); } }
                                 SftpMenuItem { icon: "\u{E5CA}"; label: @tr("Name"); enabled: false; }
                             }
                         }
@@ -985,6 +1005,7 @@ export component SftpPanel inherits Rectangle {
 
                                     HorizontalLayout {
                                         horizontal-stretch: 1;
+                                        min-width: root.name-min;
                                         spacing: 4px;
                                         Text {
                                             text: entry.is-dir ? "\u{E2C7}" : "\u{E24D}"; // folder / insert_drive_file
