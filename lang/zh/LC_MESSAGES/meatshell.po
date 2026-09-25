@@ -501,11 +501,11 @@ msgstr "请确认"
 msgid "Confirm"
 msgstr "确认"
 
-msgid "Disable shell integration (Windows / pwsh server)"
-msgstr "禁用 shell 集成(Windows / pwsh 服务端)"
+msgid "Interactive login compatibility mode"
+msgstr "自动登录脚本兼容模式"
 
-msgid "Turn on for Windows servers: skips the cwd-follow hook and monitor that assume a POSIX shell and otherwise break the shell."
-msgstr "Windows 服务端请勾选:跳过假定 POSIX shell 的 cwd 跟随注入与资源监控,否则它们会把 shell 弄坏。"
+msgid "For auto-login scripts or non-POSIX shells: skips shell hooks and remote monitoring while keeping SFTP available."
+msgstr "适用于自动登录脚本或非 POSIX shell：跳过 Shell 注入和远程监控，但保留 SFTP。"
 
 msgid "Split right"
 msgstr "向右拆分"

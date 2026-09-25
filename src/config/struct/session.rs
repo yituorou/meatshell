@@ -246,10 +246,9 @@ pub struct Session {
     #[serde(default)]
     pub triggers: Vec<SessionTrigger>,
 
-    /// Skip the shell-integration setup (the cwd-follow PROMPT_COMMAND hook + the
-    /// remote resource monitor). Those assume a POSIX shell; on a Windows server
-    /// whose shell is pwsh/cmd the injected hook breaks the shell. Turn this on
-    /// for such servers (#140).
+    /// Skip shell-integration setup (the cwd-follow hook + remote resource
+    /// monitor). Those assume a POSIX shell and can interfere with Windows
+    /// shells or interactive auto-login scripts. SFTP remains available.
     #[serde(default)]
     pub disable_shell_integration: bool,
     /// Free-form note for this session — somewhere to stash extra info (jump-host
