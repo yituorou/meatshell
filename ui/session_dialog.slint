@@ -52,8 +52,8 @@ export struct SessionDraft {
     vt100-drawing: bool,
     // Session logging override (#265): "default" | "on" | "off".
     session-log: string,
-    // Skip the POSIX shell-integration setup (cwd-follow hook + monitor) for
-    // Windows / pwsh servers where it breaks the shell (#140).
+    // Skip shell-integration setup for Windows / pwsh servers or interactive
+    // auto-login scripts where injected commands break the shell.
     disable-shell-integration: bool,
     // Free-form note (B站 suggestion).
     note: string,
@@ -1213,9 +1213,8 @@ export component SessionDialog inherits Rectangle {
             if root.show-advanced && root.draft-kind == "ssh" : VerticalLayout {
                 spacing: 6px;
 
-                // Shell-integration toggle (#140): the cwd-follow hook + resource
-                // monitor assume a POSIX shell; on a Windows pwsh/cmd server the
-                // injected hook breaks the shell, so let the user turn it off.
+                // Interactive-login compatibility toggle (#140): shell hooks and
+                // remote monitoring can interfere with auto-login scripts.
                 HorizontalLayout {
                     spacing: 8px;
                     Rectangle {
@@ -1236,13 +1235,13 @@ export component SessionDialog inherits Rectangle {
                         }
                     }
                     Text {
-                        text: @tr("Disable shell integration (Windows / pwsh server)");
+                        text: @tr("Interactive login compatibility mode");
                         color: Theme.text-primary; font-size: Theme.fs-sm;
                         vertical-alignment: center; horizontal-stretch: 1;
                     }
                 }
                 Text {
-                    text: @tr("Turn on for Windows servers: skips the cwd-follow hook and monitor that assume a POSIX shell and otherwise break the shell.");
+                    text: @tr("For auto-login scripts or non-POSIX shells: skips shell hooks and remote monitoring while keeping SFTP available.");
                     color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
                 }
                 Rectangle { height: 6px; }

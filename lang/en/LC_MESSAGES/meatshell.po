@@ -501,11 +501,11 @@ msgstr "Please confirm"
 msgid "Confirm"
 msgstr "Confirm"
 
-msgid "Disable shell integration (Windows / pwsh server)"
-msgstr "Disable shell integration (Windows / pwsh server)"
+msgid "Interactive login compatibility mode"
+msgstr "Interactive login compatibility mode"
 
-msgid "Turn on for Windows servers: skips the cwd-follow hook and monitor that assume a POSIX shell and otherwise break the shell."
-msgstr "Turn on for Windows servers: skips the cwd-follow hook and monitor that assume a POSIX shell and otherwise break the shell."
+msgid "For auto-login scripts or non-POSIX shells: skips shell hooks and remote monitoring while keeping SFTP available."
+msgstr "For auto-login scripts or non-POSIX shells: skips shell hooks and remote monitoring while keeping SFTP available."
 
 msgid "Split right"
 msgstr "Split right"

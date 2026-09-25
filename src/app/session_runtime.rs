@@ -24,10 +24,9 @@ pub(super) fn resolve_jump(store: &Rc<RefCell<ConfigStore>>, session: &Session) 
 }
 
 pub(super) fn should_start_sftp(session: &Session) -> bool {
-    // Compatibility mode must keep the connection to a single, plain PTY.
-    // Bastions such as JumpServer/Koko can terminate an active proxied shell
-    // when the client immediately opens a second SSH connection for SFTP.
-    session.kind == SessionKind::Ssh && !session.disable_shell_integration
+    // Shell-integration compatibility must not hide SFTP. Auto-login scripts
+    // can require the shell hooks to be disabled while still using SFTP.
+    session.kind == SessionKind::Ssh
 }
 
 /// Spawn the shell (+ SFTP) workers and their event-pump threads for an
@@ -430,13 +429,13 @@ mod tests {
     use crate::config::{Session, SessionKind};
 
     #[test]
-    fn compatibility_mode_keeps_ssh_to_one_connection() {
+    fn shell_compatibility_keeps_sftp_available() {
         let mut session = Session::new_empty();
         session.kind = SessionKind::Ssh;
         assert!(should_start_sftp(&session));
 
         session.disable_shell_integration = true;
-        assert!(!should_start_sftp(&session));
+        assert!(should_start_sftp(&session));
     }
 
     #[test]
