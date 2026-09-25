@@ -116,6 +116,13 @@ impl SftpHandle {
 // Entry point
 // ---------------------------------------------------------------------------
 
+fn chmod_attributes(mode: u32) -> FileAttributes {
+    FileAttributes {
+        permissions: Some(mode),
+        ..FileAttributes::empty()
+    }
+}
+
 /// Spawn an SFTP worker on the Tokio runtime.
 ///
 /// The worker opens its own SSH connection to the same server, authenticates,
@@ -1174,10 +1181,7 @@ async fn run_sftp(
 
             SftpCommand::Chmod { path, mode } => {
                 let refresh = parent_dir(&path);
-                let attrs = FileAttributes {
-                    permissions: Some(mode),
-                    ..Default::default()
-                };
+                let attrs = chmod_attributes(mode);
                 match sftp.set_metadata(&path, attrs).await {
                     Ok(_) => {
                         let _ = events.send(SessionEvent::SftpStatus(format!(
@@ -2535,6 +2539,15 @@ mod sanitize_tests {
         assert_eq!(available_download_path(&requested), dir.join("report (2).txt"));
 
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn chmod_attributes_do_not_reset_file_size_or_timestamps() {
+        let attrs = chmod_attributes(0o640);
+        assert_eq!(attrs.permissions, Some(0o640));
+        assert_eq!(attrs.size, None);
+        assert_eq!(attrs.atime, None);
+        assert_eq!(attrs.mtime, None);
     }
 
     #[test]
