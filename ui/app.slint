@@ -1082,8 +1082,10 @@ export component AppWindow inherits Window {
     callback sftp-edit-external(string /* tab-id */, string /* path */);
     callback sftp-sort-request(string /* tab-id */, string /* key */);
     callback sftp-clear-sort(string /* tab-id */);
-    callback tunnel-add(string /* tab-id */, string /* name */, string /* kind */, string /* bind */, string /* bind-port */, string /* host */, string /* host-port */);
+    callback tunnel-add(string /* tab-id */, string /* name */, string /* kind */, string /* bind */, string /* bind-port */, string /* host */, string /* host-port */, bool /* save */, bool /* auto-start */);
     callback tunnel-stop(string /* tab-id */, string /* tunnel-id */);
+    callback tunnel-start(string /* tab-id */, string /* tunnel-id */);
+    callback tunnel-delete(string /* tab-id */, string /* tunnel-id */);
     // SFTP context-menu extensions (#69): rename / chmod / mkdir / touch share
     // one single-input prompt dialog; copy-path goes straight to the clipboard.
     in-out property <bool> sftp-prompt-open: false;
@@ -2032,10 +2034,12 @@ export component AppWindow inherits Window {
                         sftp-edit-external(path) => { root.sftp-edit-external(term.id, path); }
                         sftp-sort-request(key) => { root.sftp-sort-request(term.id, key); }
                         sftp-clear-sort() => { root.sftp-clear-sort(term.id); }
-                        tunnel-add(name, kind, bind, bind-port, host, host-port) => {
-                            root.tunnel-add(term.id, name, kind, bind, bind-port, host, host-port);
+                        tunnel-add(name, kind, bind, bind-port, host, host-port, save, auto-start) => {
+                            root.tunnel-add(term.id, name, kind, bind, bind-port, host, host-port, save, auto-start);
                         }
                         tunnel-stop(id) => { root.tunnel-stop(term.id, id); }
+                        tunnel-start(id) => { root.tunnel-start(term.id, id); }
+                        tunnel-delete(id) => { root.tunnel-delete(term.id, id); }
                         // #69 context-menu extensions → shared prompt dialog.
                         sftp-rename-request(path, name) => {
                             root.sftp-prompt-kind = "rename";

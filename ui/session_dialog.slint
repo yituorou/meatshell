@@ -5,7 +5,9 @@ import { LabeledInput, PrimaryButton, GhostButton } from "widgets.slint";
 // One SSH port-forward row shown in the session dialog (#56). `summary` is a
 // ready-to-display line like "-L 127.0.0.1:8080 → host:80".
 export struct PortFwd {
+    id: string,
     kind: string,
+    auto-start: bool,
     name: string,
     bind-addr: string,
     bind-port: string,
@@ -133,6 +135,7 @@ component PortForwardRow inherits VerticalLayout {
     callback remove(int);
 
     property <string> kind: forward.kind;
+    property <bool> auto-start: forward.auto-start;
     property <string> name: forward.name;
     property <string> bind-addr: forward.bind-addr;
     property <string> bind-port: forward.bind-port;
@@ -141,7 +144,9 @@ component PortForwardRow inherits VerticalLayout {
 
     function notify-updated() {
         root.updated(root.index, {
+            id: root.forward.id,
             kind: root.kind,
+            auto-start: root.auto-start,
             name: root.name,
             bind-addr: root.bind-addr,
             bind-port: root.bind-port,
@@ -176,6 +181,17 @@ component PortForwardRow inherits VerticalLayout {
                 vertical-alignment: center;
             }
         }
+    }
+    HorizontalLayout {
+        spacing: 6px;
+        Rectangle {
+            width: 16px; height: 16px; border-radius: 3px;
+            border-width: 1px; border-color: Theme.border-subtle;
+            background: root.auto-start ? Theme.accent : Theme.bg-root;
+            TouchArea { clicked => { root.auto-start = !root.auto-start; root.notify-updated(); } }
+            Text { text: root.auto-start ? "X" : ""; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { text: @tr("Start automatically when connecting"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
     }
     MiniInput {
         placeholder: @tr("Name (optional)");

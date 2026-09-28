@@ -181,6 +181,8 @@ async fn run_telnet(
                     }
                     Some(SessionCommand::AddTunnel { .. })
                     | Some(SessionCommand::StopTunnel(_))
+                    | Some(SessionCommand::StartTunnel(_))
+                    | Some(SessionCommand::DeleteTunnel(_))
                     | Some(SessionCommand::SetResourceMonitoring(_)) => {}
                     Some(SessionCommand::KillProcess { reply, .. }) => {
                         let _ = reply.send(crate::ssh::ProcessKillResult {

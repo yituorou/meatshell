@@ -162,6 +162,14 @@ impl SessionHandle {
         let _ = self.commands.send(SessionCommand::StopTunnel(id));
     }
 
+    pub fn start_tunnel(&self, id: String) {
+        let _ = self.commands.send(SessionCommand::StartTunnel(id));
+    }
+
+    pub fn delete_tunnel(&self, id: String) {
+        let _ = self.commands.send(SessionCommand::DeleteTunnel(id));
+    }
+
     pub fn kill_process(
         &self,
         pid: u32,

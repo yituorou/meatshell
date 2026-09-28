@@ -125,11 +125,15 @@ ureq = { version = "2", features = ["tls"] }
 # .ico embedded by winresource at link time; on macOS from the app bundle.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 
+# Keep SSH sessions alive after the main window is hidden in the system tray.
+tray-icon = { version = "0.25.1", default-features = false }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 # Native Wayland clipboard (wlr-data-control protocol) so copy/paste works on
 # Wayland sessions (KDE/wlroots) without relying on XWayland (issue #47).
 # Feature is additive over the base `arboard = "3"` dependency above.
 arboard = { version = "3", features = ["wayland-data-control"] }
+tray-icon = { version = "0.25.1", default-features = false, features = ["ksni"] }
 
 # Use jemalloc on Unix-like desktop/mobile targets. Unsupported targets keep
 # Rust's portable System allocator without pulling in platform dependencies.

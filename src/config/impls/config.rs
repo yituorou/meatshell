@@ -78,8 +78,7 @@ pub fn log_dir() -> PathBuf {
 }
 
 fn user_log_dir() -> PathBuf {
-    let config = legacy_data_dir()
-        .unwrap_or_else(|| std::env::temp_dir().join("meatshell"));
+    let config = legacy_data_dir().unwrap_or_else(|| std::env::temp_dir().join("meatshell"));
     user_log_dir_from_config(&config, cfg!(target_os = "windows"))
 }
 
@@ -490,6 +489,12 @@ impl ConfigStore {
                     // Decrypt any encrypted passwords; leave legacy plaintext
                     // values untouched (they will be encrypted on next save).
                     for session in &mut cfg.sessions {
+                        for forward in &mut session.forwards {
+                            if forward.id.is_empty() {
+                                forward.id = uuid::Uuid::new_v4().to_string();
+                                migrated = true;
+                            }
+                        }
                         if let Some(plain) = Self::try_decrypt(&key, session.password.as_str()) {
                             session.password = Secret::new(plain);
                         }
@@ -677,6 +682,11 @@ impl ConfigStore {
     }
 
     pub fn upsert(&mut self, mut session: Session) {
+        for forward in &mut session.forwards {
+            if forward.id.is_empty() {
+                forward.id = uuid::Uuid::new_v4().to_string();
+            }
+        }
         if is_reserved_session_group(session.group.trim()) {
             session.group.clear();
         }
@@ -1364,7 +1374,15 @@ impl ConfigStore {
         self.cache.sftp_tree_width = width.clamp(120.0, 420.0);
     }
     pub fn sftp_visible_columns(&self) -> Vec<String> {
-        const COLUMNS: &[&str] = &["name", "type", "size", "modified", "permissions", "owner", "group"];
+        const COLUMNS: &[&str] = &[
+            "name",
+            "type",
+            "size",
+            "modified",
+            "permissions",
+            "owner",
+            "group",
+        ];
         if self.cache.sftp_visible_columns.is_empty() {
             return COLUMNS.iter().map(|column| (*column).to_string()).collect();
         }
@@ -1381,7 +1399,15 @@ impl ConfigStore {
         columns
     }
     pub fn set_sftp_visible_columns(&mut self, columns: Vec<String>) {
-        let allowed = ["name", "type", "size", "modified", "permissions", "owner", "group"];
+        let allowed = [
+            "name",
+            "type",
+            "size",
+            "modified",
+            "permissions",
+            "owner",
+            "group",
+        ];
         let mut normalized: Vec<String> = columns
             .into_iter()
             .filter(|column| allowed.contains(&column.as_str()))
@@ -1489,7 +1515,13 @@ impl ConfigStore {
         // wins across the whole store, so a corrupt config with the same panel
         // on two edges cannot hide it from both.
         let mut seen: std::collections::HashSet<String> = Default::default();
-        for e in self.cache.dock_stacks.iter().cloned().filter_map(sanitize_edge) {
+        for e in self
+            .cache
+            .dock_stacks
+            .iter()
+            .cloned()
+            .filter_map(sanitize_edge)
+        {
             let mut edge = e;
             edge.slots.retain(|s| seen.insert(s.kind.clone()));
             if edge.slots.len() >= 2 {
@@ -1500,10 +1532,7 @@ impl ConfigStore {
     }
 
     pub fn set_dock_stacks(&mut self, stacks: Vec<DockEdgeSer>) {
-        self.cache.dock_stacks = stacks
-            .into_iter()
-            .filter_map(sanitize_edge)
-            .collect();
+        self.cache.dock_stacks = stacks.into_iter().filter_map(sanitize_edge).collect();
     }
 
     /// Whether each download prompts for a save location (default false) (#87).
@@ -2548,8 +2577,10 @@ mod log_path_tests {
     #[test]
     fn windows_user_logs_are_outside_config() {
         let base = Path::new("profile").join("meatshell").join("meatshell");
-        assert_eq!(user_log_dir_from_config(&base.join("config"), true),
-            base.join("log").join("log"));
+        assert_eq!(
+            user_log_dir_from_config(&base.join("config"), true),
+            base.join("log").join("log")
+        );
     }
 
     #[test]

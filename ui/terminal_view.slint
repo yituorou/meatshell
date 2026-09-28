@@ -411,8 +411,10 @@ export component TerminalView inherits Rectangle {
     callback sftp-edit-external(string);
     callback sftp-sort-request(string);
     callback sftp-clear-sort();
-    callback tunnel-add(string, string, string, string, string, string);
+    callback tunnel-add(string, string, string, string, string, string, bool, bool);
     callback tunnel-stop(string);
+    callback tunnel-start(string);
+    callback tunnel-delete(string);
     // Context-menu extensions (#69), forwarded up to the app shell.
     callback sftp-rename-request(string, string);
     callback sftp-chmod-request(string, string, int);
@@ -2244,10 +2246,12 @@ export component TerminalView inherits Rectangle {
             edit-external(path) => { root.sftp-edit-external(path); }
             sort-request(key)   => { root.sftp-sort-request(key); }
             clear-sort()        => { root.sftp-clear-sort(); }
-            tunnel-add(name, kind, bind, bind-port, host, host-port) => {
-                root.tunnel-add(name, kind, bind, bind-port, host, host-port);
+            tunnel-add(name, kind, bind, bind-port, host, host-port, save, auto-start) => {
+                root.tunnel-add(name, kind, bind, bind-port, host, host-port, save, auto-start);
             }
             tunnel-stop(id)     => { root.tunnel-stop(id); }
+            tunnel-start(id)    => { root.tunnel-start(id); }
+            tunnel-delete(id)   => { root.tunnel-delete(id); }
             rename-request(path, name) => { root.sftp-rename-request(path, name); }
             chmod-request(path, name, mode) => { root.sftp-chmod-request(path, name, mode); }
             copy-path(path)     => { root.sftp-copy-path(path); }

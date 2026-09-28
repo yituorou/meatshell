@@ -95,6 +95,8 @@ open /Applications/meatshell.app
 - [x] SSH（`russh`，纯 Rust）：密码 / 私钥 / 加密私钥（密码短语）
 - [x] SFTP 文件浏览 + 上传 / 下载（拖拽）+ 终端内 ZMODEM（`sz` 下载 / `rz` 多文件上传）
 - [x] SSH 端口转发 / 隧道：本地 -L / 远程 -R / 动态 -D（SOCKS5）
+  - 连接后的 Tunnel 面板可新建、停止、重新启动和删除转发；可保存到当前 SSH 会话，并选择下次连接时是否自动启用。
+- [x] 系统托盘：关闭主窗口后会话继续运行；从托盘恢复或新建窗口，选择“退出”才结束程序。
 - [x] 快捷命令 + 命令输入框（可群发到所有会话）+ 命令历史
 - [x] 串口 / Telnet 会话
 - [x] RDP 远程桌面：只保存主机 / 端口 / 用户名 / 密码 / 域，分辨率可选全屏 / 常见分辨率 / 自定义，连接时交给远程桌面客户端（Windows 用系统自带 `mstsc`；Linux / macOS 用 FreeRDP 的 `xfreerdp3` / `xfreerdp`，需自行安装，Flatpak 版已内置）

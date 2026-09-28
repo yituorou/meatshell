@@ -41,12 +41,14 @@ fn bind_target(bind_addr: &str, bind_port: u16) -> String {
 /// Open a `direct-tcpip` channel to `host:port`, recording the originating peer
 /// (some servers log / ACL on it).
 async fn open_direct(
-    handle: &Arc<Handle<ClientHandler>>,
+    handle: &Arc<tokio::sync::Mutex<Handle<ClientHandler>>>,
     host: &str,
     port: u16,
     peer: SocketAddr,
 ) -> Result<Channel<Msg>, russh::Error> {
     handle
+        .lock()
+        .await
         .channel_open_direct_tcpip(
             host.to_string(),
             port as u32,
@@ -59,7 +61,7 @@ async fn open_direct(
 /// Local forward (-L): listen locally and tunnel each connection to
 /// `target_host:target_port` reached from the SSH server's side.
 pub fn spawn_local(
-    handle: Arc<Handle<ClientHandler>>,
+    handle: Arc<tokio::sync::Mutex<Handle<ClientHandler>>>,
     bind_addr: String,
     bind_port: u16,
     target_host: String,
@@ -104,7 +106,7 @@ pub fn spawn_local(
 /// negotiates SOCKS5 (no auth, CONNECT only), then we open a `direct-tcpip`
 /// channel to the requested destination and splice.
 pub fn spawn_dynamic(
-    handle: Arc<Handle<ClientHandler>>,
+    handle: Arc<tokio::sync::Mutex<Handle<ClientHandler>>>,
     bind_addr: String,
     bind_port: u16,
     events: UnboundedSender<SessionEvent>,
@@ -138,7 +140,7 @@ pub fn spawn_dynamic(
 
 /// Handle one SOCKS5 client connection end-to-end.
 async fn socks5_serve(
-    handle: &Arc<Handle<ClientHandler>>,
+    handle: &Arc<tokio::sync::Mutex<Handle<ClientHandler>>>,
     mut inbound: TcpStream,
     peer: SocketAddr,
 ) -> std::io::Result<()> {

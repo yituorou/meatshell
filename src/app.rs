@@ -7,6 +7,9 @@
 //!   * Route Slint callbacks to the right domain module.
 mod auth_dialogs;
 pub(crate) mod core;
+mod dock_stacks;
+#[path = "app/editor_syntax.rs"]
+mod editor_syntax;
 #[cfg(windows)]
 mod jump_list;
 pub mod launch;
@@ -23,14 +26,14 @@ mod sidebar;
 mod single_instance;
 mod tab_callbacks;
 mod tab_transfer;
-mod dock_stacks;
-#[path = "app/editor_syntax.rs"]
-mod editor_syntax;
 mod terminal_ui;
+mod tray;
+mod tunnel_callbacks;
 mod webdav;
 mod window;
 
 use self::auth_dialogs::*;
+use self::dock_stacks::*;
 use self::port_forward::*;
 use self::quick_commands::*;
 use self::resource_ui::*;
@@ -41,10 +44,10 @@ use self::session_trigger::*;
 use self::sftp_callbacks::*;
 use self::sftp_ui::*;
 use self::sidebar::*;
-use self::dock_stacks::*;
 use self::tab_callbacks::*;
 use self::tab_transfer::*;
 use self::terminal_ui::*;
+use self::tunnel_callbacks::*;
 use self::webdav::*;
 use self::window::*;
 
@@ -163,7 +166,13 @@ fn session_log_spec(session: &Session) -> Option<crate::terminal::SessionLogSpec
             } else {
                 format!("{}@", session.user.trim())
             };
-            format!("{} {}{}:{}", kind.as_str(), user, session.host, session.port)
+            format!(
+                "{} {}{}:{}",
+                kind.as_str(),
+                user,
+                session.host,
+                session.port
+            )
         }
     };
     let name = if session.name.trim().is_empty() {
@@ -182,10 +191,16 @@ fn session_log_spec(session: &Session) -> Option<crate::terminal::SessionLogSpec
 /// is printed into that terminal rather than interrupting the session.
 fn apply_session_log_to_buffer(buffer: &mut TermBuffer, enabled: bool, dir: &std::path::Path) {
     if let Err(err) = buffer.apply_session_log(enabled, dir) {
-        tracing::warn!("session log: cannot create file in {}: {err}", dir.display());
+        tracing::warn!(
+            "session log: cannot create file in {}: {err}",
+            dir.display()
+        );
         let notice = format!(
             "\r\n\x1b[33m{} {} ({err})\x1b[0m\r\n",
-            t("[会话日志] 无法创建日志文件:", "[session log] could not create log file in"),
+            t(
+                "[会话日志] 无法创建日志文件:",
+                "[session log] could not create log file in"
+            ),
             dir.display()
         );
         let _ = buffer.ingest(notice.as_bytes());
@@ -249,13 +264,12 @@ use crate::ssh::{
 #[cfg(windows)]
 use crate::terminal::c0_letter_key_down;
 use crate::terminal::{
-    bare_ctrl_marker_workaround_enabled, cell_prefix, clear_pending_paste,
-    compile_output_rules, encode_command_bar_input, encode_mouse_event, encode_pasted_text,
-    is_back_tab, is_terminal_interrupt, key_to_pty_bytes, paste_requires_large_review,
-    BACK_TAB_BYTES,
+    bare_ctrl_marker_workaround_enabled, cell_prefix, clear_pending_paste, compile_output_rules,
+    encode_command_bar_input, encode_mouse_event, encode_pasted_text, is_back_tab,
+    is_terminal_interrupt, key_to_pty_bytes, paste_requires_large_review,
     should_drop_bare_ctrl_marker, store_pending_paste, take_pending_paste,
     terminal_uses_bracketed_paste, CsiState, OutputHighlightPreset, PendingPaste, RenderGates,
-    TabRenderGate, TermBuffer, TermBufferHandle, TermBuffers,
+    TabRenderGate, TermBuffer, TermBufferHandle, TermBuffers, BACK_TAB_BYTES,
 };
 #[cfg(test)]
 use crate::terminal::{
@@ -622,6 +636,7 @@ pub fn run(intent: crate::app::launch::LaunchIntent) -> Result<()> {
     crate::app::jump_list::register_new_window_task();
 
     open_window(core.clone(), false, None)?;
+    let tray_timer = tray::install(core.clone());
 
     // Publish the core to the UI thread so the IPC listener's
     // invoke_from_event_loop closures can open windows without capturing the
@@ -643,6 +658,8 @@ pub fn run(intent: crate::app::launch::LaunchIntent) -> Result<()> {
     // too: propagating with `?` would hand the runtime to the TLS destructor
     // chain, where a wedged blocking thread could hang the process forever.
     NEW_WINDOW_CORE.with(|c| *c.borrow_mut() = None);
+    tray::clear();
+    drop(tray_timer);
     if let Ok(core_owned) = Rc::try_unwrap(core) {
         if let Ok(runtime) = Arc::try_unwrap(core_owned.runtime) {
             runtime.shutdown_timeout(std::time::Duration::from_secs(2));
@@ -687,7 +704,7 @@ fn open_window(
     let last_term_size: Arc<Mutex<(u32, u32)>> = Arc::new(Mutex::new((80, 24)));
 
     // --- Build window + models ------------------------------------------
-    let window = AppWindow::new().context("failed to build Slint window")?;
+    let window = Rc::new(AppWindow::new().context("failed to build Slint window")?);
     // Cascade origin must be captured *before* registering: once registered,
     // registry.newest() is this window itself. Registration itself is deferred
     // until after the last fallible construction below, so a failed monitor
@@ -2046,28 +2063,26 @@ fn open_window(
         let dm3 = dock_dividers_model.clone();
         let da3 = da_size.clone();
         let panels_model_for_extent = dock_panels_model.clone();
-        window.on_panel_extent_drag(
-            move |_panel_index: i32, pos: f32| {
-                let panel = panels_model_for_extent.row_data(_panel_index as usize);
-                if let Some(p) = panel {
-                    let kind = p.kind.to_string();
-                    let edge = p.edge.to_string();
-                    let horizontal_edge = matches!(edge.as_str(), "left" | "right");
-                    let thickness = pos.clamp(MIN_THICK, 2600.0);
-                    if let Some(w) = weak3.upgrade() {
-                        match (kind.as_str(), horizontal_edge) {
-                            ("sidebar", true) => w.set_sidebar_width(thickness),
-                            ("sidebar", false) => w.set_sidebar_height(thickness),
-                            ("welcome", _) => w.set_welcome_sidebar_width(thickness),
-                            ("quick", true) => w.set_quick_panel_width(thickness),
-                            ("quick", false) => w.set_quick_panel_height(thickness),
-                            _ => {}
-                        }
-                        refresh_dock(&w, &ds3, &pm3, &dm3, da3.get());
+        window.on_panel_extent_drag(move |_panel_index: i32, pos: f32| {
+            let panel = panels_model_for_extent.row_data(_panel_index as usize);
+            if let Some(p) = panel {
+                let kind = p.kind.to_string();
+                let edge = p.edge.to_string();
+                let horizontal_edge = matches!(edge.as_str(), "left" | "right");
+                let thickness = pos.clamp(MIN_THICK, 2600.0);
+                if let Some(w) = weak3.upgrade() {
+                    match (kind.as_str(), horizontal_edge) {
+                        ("sidebar", true) => w.set_sidebar_width(thickness),
+                        ("sidebar", false) => w.set_sidebar_height(thickness),
+                        ("welcome", _) => w.set_welcome_sidebar_width(thickness),
+                        ("quick", true) => w.set_quick_panel_width(thickness),
+                        ("quick", false) => w.set_quick_panel_height(thickness),
+                        _ => {}
                     }
+                    refresh_dock(&w, &ds3, &pm3, &dm3, da3.get());
                 }
-            },
-        );
+            }
+        });
     }
     // Snapshot the layout and drop the RefCell guard before mutating Slint
     // models: a model change can synchronously run binding callbacks, and one
@@ -2289,6 +2304,7 @@ fn open_window(
     core.window_states.borrow_mut().insert(
         window_id,
         WindowState {
+            main_win: window.clone(),
             weak: window.as_weak(),
             handles: handles.clone(),
             bufs: bufs.clone(),
@@ -3299,6 +3315,16 @@ fn open_window(
                         }
                     }
                     WEvent::CloseRequested => {
+                        // Native close requests can come from the OS shutdown
+                        // manager. On desktop platforms with our custom X,
+                        // only that explicit button hides to the tray.
+                        if cfg!(target_os = "macos") && tray::available() {
+                            if let Some(win) = weak.upgrade() {
+                                save_layout(&win, &ev_store, &ev_ds);
+                                tray::hide_window(&ev_core, window_id, &win);
+                            }
+                            return EventResult::PreventDefault;
+                        }
                         // Confirm before closing if there are open session tabs (#88),
                         // so a stray double-click on the title-bar icon / X / Alt+F4
                         // doesn't silently drop live sessions. Installer/Restart
@@ -3424,6 +3450,11 @@ fn open_window(
         let wc_core = core.clone();
         window.on_win_close(move || {
             if let Some(w) = weak.upgrade() {
+                if tray::available() {
+                    save_layout(&w, &wc_store, &wc_ds);
+                    tray::hide_window(&wc_core, window_id, &w);
+                    return;
+                }
                 // Mirror the native-X behaviour: confirm if sessions are open.
                 if !should_block_close(wc_exit_confirmed.get(), !close_handles.borrow().is_empty())
                 {
@@ -5155,7 +5186,10 @@ fn wire_session_callbacks(
                 let message = match crate::rdp::launch(&session) {
                     Ok(started) => format!(
                         "{} {}",
-                        t("已用系统远程桌面打开", "Opened with the system remote desktop client"),
+                        t(
+                            "已用系统远程桌面打开",
+                            "Opened with the system remote desktop client"
+                        ),
                         started
                     ),
                     Err(err) => format!("{}: {err}", t("RDP 启动失败", "Failed to start RDP")),
@@ -5309,7 +5343,9 @@ fn wire_session_callbacks(
                     let settings = store.borrow();
                     (settings.session_log_enabled(), settings.session_log_dir())
                 };
-                with_term_buf(&bufs, &tab_id, |b| apply_session_log_to_buffer(b, enabled, &dir));
+                with_term_buf(&bufs, &tab_id, |b| {
+                    apply_session_log_to_buffer(b, enabled, &dir)
+                });
             }
             render_gates.lock().unwrap().insert(
                 tab_id.clone(),
@@ -5709,14 +5745,10 @@ fn panel_edge(window: &AppWindow, kind: &str) -> Option<&'static str> {
         "sidebar" => {
             (!window.get_sidebar_collapsed()).then(|| norm(window.get_sidebar_dock().as_str()))
         }
-        "welcome" => {
-            (window.get_welcome_as_sidebar() && !window.get_welcome_collapsed())
-                .then(|| norm(window.get_welcome_sidebar_dock().as_str()))
-        }
-        "quick" => {
-            (window.get_quick_panel_open() && !window.get_quick_panel_collapsed())
-                .then(|| norm(window.get_quick_panel_dock().as_str()))
-        }
+        "welcome" => (window.get_welcome_as_sidebar() && !window.get_welcome_collapsed())
+            .then(|| norm(window.get_welcome_sidebar_dock().as_str())),
+        "quick" => (window.get_quick_panel_open() && !window.get_quick_panel_collapsed())
+            .then(|| norm(window.get_quick_panel_dock().as_str())),
         _ => None,
     }
 }
@@ -5841,8 +5873,12 @@ fn refresh_dock_inner(
     if panels_model.row_count() == panels.len() {
         for (i, p) in panels.into_iter().enumerate() {
             let unchanged = panels_model.row_data(i).is_some_and(|old| {
-                old.kind == p.kind && old.edge == p.edge && old.x == p.x && old.y == p.y
-                    && old.w == p.w && old.h == p.h
+                old.kind == p.kind
+                    && old.edge == p.edge
+                    && old.x == p.x
+                    && old.y == p.y
+                    && old.w == p.w
+                    && old.h == p.h
             });
             if !unchanged {
                 panels_model.set_row_data(i, p);
@@ -5943,55 +5979,12 @@ fn wire_key_input(
     store: Rc<RefCell<ConfigStore>>,
     ctx: ConnectCtx,
 ) {
-    // Runtime SSH tunnel panel (#206). These tunnels live only for the active
-    // connection; saved session configuration remains unchanged.
-    {
-        let handles_rc = handles.clone();
-        window.on_tunnel_add(
-            move |tab_id: SharedString,
-                  name: SharedString,
-                  kind: SharedString,
-                  bind: SharedString,
-                  bind_port: SharedString,
-                  host: SharedString,
-                  host_port: SharedString| {
-                let kind = kind.to_string();
-                if kind != "local" && kind != "dynamic" {
-                    return;
-                }
-                let Ok(bind_port) = bind_port.trim().parse::<u16>() else {
-                    return;
-                };
-                let host_port = if kind == "dynamic" {
-                    0
-                } else {
-                    match host_port.trim().parse::<u16>() {
-                        Ok(p) => p,
-                        Err(_) => return,
-                    }
-                };
-                let forward = crate::config::PortForward {
-                    kind,
-                    name: name.trim().to_string(),
-                    bind_addr: bind.trim().to_string(),
-                    bind_port,
-                    host: host.trim().to_string(),
-                    host_port,
-                };
-                if let Some(handle) = handles_rc.borrow().get(tab_id.as_str()) {
-                    handle.add_tunnel(format!("runtime-{}", uuid::Uuid::new_v4()), forward);
-                }
-            },
-        );
-    }
-    {
-        let handles_rc = handles.clone();
-        window.on_tunnel_stop(move |tab_id: SharedString, tunnel_id: SharedString| {
-            if let Some(handle) = handles_rc.borrow().get(tab_id.as_str()) {
-                handle.stop_tunnel(tunnel_id.to_string());
-            }
-        });
-    }
+    wire_tunnel_callbacks(
+        window,
+        handles.clone(),
+        store.clone(),
+        ctx.tab_statuses.clone(),
+    );
 
     // --- Command bar (#55): run command + quick-command management ---------
     {
@@ -6709,7 +6702,6 @@ fn wire_key_input(
         });
     }
 
-
     // Propagate PTY resize to the SSH worker and vt100 parser. Pixel
     // dimensions come from Slint; we approximate col/row counts using
     // Consolas 13px metrics.
@@ -6845,8 +6837,7 @@ fn wire_key_input(
                             let large = paste_requires_large_review(&text);
                             // Only a bounded preview enters the UI tree. Confirm
                             // reads the full payload via take_pending_paste.
-                            let preview =
-                                store_pending_paste(&pending_paste, tab_id.clone(), text);
+                            let preview = store_pending_paste(&pending_paste, tab_id.clone(), text);
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(w) = weak.upgrade() {
                                     w.set_paste_confirm_tab(tab_id.into());

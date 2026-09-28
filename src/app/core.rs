@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use tokio::runtime::Runtime;
 
-use crate::config::ConfigStore;
 use crate::app::dock_stacks::DockStacks;
+use crate::config::ConfigStore;
 use crate::resource::{LocalSnap, NetHist, TabStatuses};
 use crate::sftp::{SftpHandles, SftpLastCwd};
 use crate::ssh::SessionHandle;
@@ -50,6 +50,8 @@ pub type TabRoutes = Arc<Mutex<HashMap<String, Arc<Mutex<TabRoute>>>>>;
 /// Slint thread exclusively.
 #[derive(Clone)]
 pub struct WindowState {
+    /// A hidden window must stay alive while the tray owns the application.
+    pub main_win: Rc<AppWindow>,
     pub weak: slint::Weak<AppWindow>,
     pub handles: Rc<RefCell<HashMap<String, SessionHandle>>>,
     pub bufs: TermBuffers,

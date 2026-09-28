@@ -123,10 +123,7 @@ async fn run_serial(
         }),
     )
     .await
-    .context(t(
-        "打开串口超时",
-        "timed out opening the serial port",
-    ))?
+    .context(t("打开串口超时", "timed out opening the serial port"))?
     .context("serial open task panicked")?
     .with_context(|| {
         format!(
@@ -227,6 +224,8 @@ async fn run_serial(
             SessionCommand::Resize(_, _) => {}
             SessionCommand::AddTunnel { .. }
             | SessionCommand::StopTunnel(_)
+            | SessionCommand::StartTunnel(_)
+            | SessionCommand::DeleteTunnel(_)
             | SessionCommand::SetResourceMonitoring(_) => {}
             SessionCommand::KillProcess { reply, .. } => {
                 let _ = reply.send(crate::ssh::ProcessKillResult {

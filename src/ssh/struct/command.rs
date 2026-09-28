@@ -14,6 +14,10 @@ pub enum SessionCommand {
     },
     /// Stop a runtime tunnel created for this connected session (#206).
     StopTunnel(String),
+    /// Restart a stopped or manually enabled saved tunnel.
+    StartTunnel(String),
+    /// Remove a tunnel row after cancelling its listener.
+    DeleteTunnel(String),
     /// Terminate one remote process on a short-lived exec channel. Supplying a
     /// password selects the privileged `sudo -S` path; the secret is never
     /// written to the interactive PTY or shell history.

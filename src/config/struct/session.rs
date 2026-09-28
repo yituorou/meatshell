@@ -264,7 +264,13 @@ pub struct Session {
 /// for dynamic it is ignored (the SOCKS client picks the destination).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PortForward {
+    /// Stable identifier for a saved rule, including across edits and deletes.
+    #[serde(default)]
+    pub id: String,
     pub kind: String,
+    /// Start this saved tunnel when the SSH connection is established.
+    #[serde(default = "default_forward_auto_start")]
+    pub auto_start: bool,
     /// Optional label to tell rules apart (#100). Empty = unnamed.
     #[serde(default)]
     pub name: String,
@@ -277,6 +283,10 @@ pub struct PortForward {
     pub host: String,
     #[serde(default)]
     pub host_port: u16,
+}
+
+fn default_forward_auto_start() -> bool {
+    true
 }
 
 /// Automatically send a response when literal terminal output is observed.
@@ -318,7 +328,11 @@ mod session_log_mode_tests {
 
     #[test]
     fn round_trips_through_strings() {
-        for mode in [SessionLogMode::Default, SessionLogMode::On, SessionLogMode::Off] {
+        for mode in [
+            SessionLogMode::Default,
+            SessionLogMode::On,
+            SessionLogMode::Off,
+        ] {
             assert_eq!(SessionLogMode::from_str(mode.as_str()), mode);
         }
     }

@@ -2,7 +2,9 @@ use super::*;
 
 pub(super) fn blank_forward_draft() -> PortFwd {
     PortFwd {
+        id: "".into(),
         kind: "local".into(),
+        auto_start: true,
         name: "".into(),
         bind_addr: "127.0.0.1".into(),
         bind_port: "".into(),
@@ -15,7 +17,9 @@ pub(super) fn forward_drafts(forwards: &[crate::config::PortForward]) -> Vec<Por
     forwards
         .iter()
         .map(|forward| PortFwd {
+            id: forward.id.clone().into(),
             kind: forward.kind.clone().into(),
+            auto_start: forward.auto_start,
             name: forward.name.clone().into(),
             bind_addr: if forward.bind_addr.trim().is_empty() {
                 "127.0.0.1".into()
@@ -85,7 +89,9 @@ pub(super) fn validated_port_forwards(
         };
 
         forwards.push(crate::config::PortForward {
+            id: draft.id.to_string(),
             kind: kind.to_string(),
+            auto_start: draft.auto_start,
             name: draft.name.trim().to_string(),
             bind_addr: if draft.bind_addr.trim().is_empty() {
                 "127.0.0.1".to_string()
