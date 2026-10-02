@@ -16,6 +16,28 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
     let command = CliCommand::parse(Some(command_name))
         .ok_or_else(|| anyhow!("unknown CLI command: {command_name}"))?;
     let value = match command {
+        CliCommand::Import => {
+            let path = args
+                .get(3)
+                .filter(|arg| !arg.starts_with("--"))
+                .ok_or_else(|| {
+                    anyhow!("usage: meatshell cli import <export.json> [--dry-run] [--json]")
+                })?;
+            for arg in &args[4..] {
+                if !matches!(arg.as_str(), "--dry-run" | "--json") {
+                    return Err(anyhow!(
+                        "unknown import option (expected --dry-run or --json)"
+                    ));
+                }
+            }
+            runtime.block_on(call_cli(
+                "import_sessions",
+                &json!({
+                    "local_path": path,
+                    "dry_run": args.iter().any(|arg| arg == "--dry-run")
+                }),
+            ))?
+        }
         CliCommand::Sessions => {
             let group = option_value(args, "--group")?;
             runtime.block_on(call_cli("list_sessions", &json!({ "group": group })))?
@@ -140,6 +162,16 @@ fn option_value<'a>(args: &'a [String], option: &str) -> Result<Option<&'a str>>
 
 fn print_human(command: CliCommand, value: &Value) {
     match command {
+        CliCommand::Import => println!(
+            "{} {} sessions, skipped {} duplicates",
+            if value.get("dry_run").and_then(Value::as_bool) == Some(true) {
+                "Would import"
+            } else {
+                "Imported"
+            },
+            value.get("added").and_then(Value::as_u64).unwrap_or(0),
+            value.get("skipped").and_then(Value::as_u64).unwrap_or(0)
+        ),
         CliCommand::Sessions => {
             if let Some(sessions) = value.get("sessions").and_then(Value::as_array) {
                 for session in sessions {
@@ -205,6 +237,7 @@ fn print_help() {
     println!(
         "MeatShell CLI\n\n\
          Usage:\n\
+           meatshell cli import <export.json> [--dry-run] [--json]\n\
            meatshell cli sessions [--group <name>] [--json]\n\
            meatshell cli session <session-id> [--json]\n\
            meatshell cli exec <session-id> [--timeout <seconds>] [--json] -- <command>\n\

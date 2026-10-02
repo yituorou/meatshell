@@ -1,5 +1,7 @@
 import { Theme } from "theme.slint";
+import { ModalScope } from "modal.slint";
 import { ScrollView } from "std-widgets.slint";
+import { ConfirmDialog } from "confirm_dialog.slint";
 
 export struct EditorFindResult {
     start: int,
@@ -27,6 +29,12 @@ export component EditorWindow inherits Window {
     in-out property <bool> editor-readonly;
     in-out property <bool> editor-dirty: false;
     in-out property <bool> editor-open: false;
+    in-out property <bool> discard-confirm-open: false;
+    public function request-close() {
+        if root.editor-dirty && !root.editor-readonly {
+            root.discard-confirm-open = true;
+        } else { root.close-editor(); }
+    }
     property <bool> editor-focus-pending: false;
     in-out property <string> editor-syntax-source;
     in-out property <string> editor-syntax-spans;
@@ -47,6 +55,7 @@ export component EditorWindow inherits Window {
     callback win-resize-se();
 
     no-frame: root.custom-titlebar;
+    in property <bool> is-mac: false;
     in property <bool> custom-titlebar: true;
     min-width: 420px;
     min-height: 280px;
@@ -67,18 +76,17 @@ export component EditorWindow inherits Window {
         background: Theme.bg-panel;
     }
 
-    editor-scope := FocusScope {
+    editor-scope := ModalScope {
+        active: root.editor-open && !root.discard-confirm-open;
+        is-mac: root.is-mac;
+        cancel-requested => { root.request-close(); }
+        focus-initial => { edit-input.focus(); }
         width: parent.width;
         height: parent.height;
         focus-on-click: false;
-        focus-on-tab-navigation: false;
         key-pressed(e) => {
             if (e.modifiers.control && (e.text == "s" || e.text == "S" || e.text == "\u{0013}")) {
                 root.save-file();
-                return accept;
-            }
-            if (e.text == Key.Escape) {
-                root.close-editor();
                 return accept;
             }
             reject
@@ -139,7 +147,7 @@ export component EditorWindow inherits Window {
                     background: close-ta.has-hover ? #e81123 : transparent;
                     close-ta := TouchArea {
                         mouse-cursor: pointer;
-                        clicked => { root.close-editor(); }
+                        clicked => { root.request-close(); }
                     }
                     Text { text: "\u{E5CD}"; font-family: "Material Icons";
                            color: close-ta.has-hover ? white : Theme.text-secondary;
@@ -367,5 +375,18 @@ export component EditorWindow inherits Window {
             edit-input.focus();
         }
     }
+    }
+    ConfirmDialog {
+        is-open <=> root.discard-confirm-open;
+        is-mac: root.is-mac;
+        dismiss-on-backdrop: false;
+        title: @tr("Discard unsaved changes?");
+        message: @tr("This file has unsaved changes. Close without saving?");
+        confirm-label: @tr("Discard and close");
+        confirm => {
+            root.discard-confirm-open = false;
+            root.close-editor();
+        }
+        cancel => { root.discard-confirm-open = false; }
     }
 }

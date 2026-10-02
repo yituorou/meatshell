@@ -14,6 +14,7 @@ mod port_forward;
 mod quick_commands;
 mod resource_ui;
 mod session_event;
+mod session_editor;
 mod session_models;
 mod session_runtime;
 mod session_trigger;
@@ -495,7 +496,7 @@ thread_local! {
 ///
 /// Windows gets its icon from the `.ico` embedded by winresource at link
 /// time; macOS from the app bundle — neither path needs runtime decoding.
-pub fn run(intent: crate::app::launch::LaunchIntent) -> Result<()> {
+pub fn run(_intent: crate::app::launch::LaunchIntent) -> Result<()> {
     // Load the renderer preference before creating any Slint window. Reuse the
     // same store for the rest of the app so startup does not read the config
     // twice merely to select a backend (#280).
@@ -515,24 +516,19 @@ pub fn run(intent: crate::app::launch::LaunchIntent) -> Result<()> {
     setup_macos_platform(config.renderer_mode());
 
     // --- Single-instance coordination -------------------------------------
-    // A second `meatshell --new-window` forwards to us and exits; we never
-    // run two GUI instances for that entry point (Chrome-style). Plain
-    // launches pass forward=false and never forward: if the endpoint is
-    // taken they run as an independent second instance. IPC failures fall
-    // through to a normal launch rather than blocking the app.
+    // All launches for one profile share the same GUI store. Independent
+    // process snapshots could otherwise overwrite each other's saved sessions.
+    // IPC failure may still fall through; ConfigStore rejects stale writes.
     let si_path = crate::app::single_instance::socket_path();
-    let instance = match crate::app::single_instance::acquire(&si_path, intent.new_window) {
+    let instance = match crate::app::single_instance::acquire(&si_path, true) {
         Ok(i) => Some(i),
         Err(e) => {
             tracing::warn!("single-instance acquire failed: {e}");
             None
         }
     };
-    if intent.new_window {
-        if let Some(crate::app::single_instance::Instance::Forwarded) = instance {
-            return Ok(());
-        }
-        // We are the primary (or IPC failed): fall through and open a window.
+    if let Some(crate::app::single_instance::Instance::Forwarded) = instance {
+        return Ok(());
     }
 
     // --- Runtime + store -------------------------------------------------
@@ -745,15 +741,18 @@ fn open_window(
     window.set_sys_filesystem_rows(ModelRc::from(sys_filesystem_model.clone()));
     let proc_win = Rc::new(ProcWindow::new().context("failed to build process window")?);
     proc_win.set_custom_titlebar(cfg!(not(target_os = "macos")));
+    proc_win.set_is_mac(cfg!(target_os = "macos"));
     proc_win.set_proc_list(ModelRc::from(proc_rows_model.clone()));
     let sys_win = Rc::new(SystemInfoWindow::new().context("failed to build system info window")?);
     let editor_win = Rc::new(EditorWindow::new().context("failed to build editor window")?);
     editor_win.set_custom_titlebar(cfg!(not(target_os = "macos")));
+    editor_win.set_is_mac(cfg!(target_os = "macos"));
     sync_editor_theme(&window, &editor_win);
     // Every fallible construction has now succeeded — register the window.
     // (cascade_origin above was captured before this point, as required.)
     let window_id = registry.register(window.as_weak());
     sys_win.set_custom_titlebar(cfg!(not(target_os = "macos")));
+    sys_win.set_is_mac(cfg!(target_os = "macos"));
     sys_win.set_metrics(ModelRc::from(sys_metrics_model.clone()));
     sys_win.set_nets(ModelRc::from(sys_net_rows_model.clone()));
     sys_win.set_disks(ModelRc::from(sys_disks_model.clone()));
@@ -2318,6 +2317,13 @@ fn open_window(
     {
         let weak = editor_win.as_weak();
         let main_weak = window.as_weak();
+        let close_request = editor_win.as_weak();
+        editor_win.window().on_close_requested(move || {
+            if let Some(editor) = close_request.upgrade() {
+                editor.invoke_request_close();
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
         editor_win.on_close_editor(move || {
             if let (Some(editor), Some(main)) = (weak.upgrade(), main_weak.upgrade()) {
                 editor.set_editor_open(false);
@@ -3082,8 +3088,8 @@ fn open_window(
                         let Some(win) = weak.upgrade() else {
                             return EventResult::Propagate;
                         };
-                        if !macos_terminal_wheel_can_target_terminal(win.get_interface_open()) {
-                            // Do not carry a partially accumulated settings gesture
+                        if !macos_terminal_wheel_can_target_terminal(win.get_modal_open()) {
+                            // Do not carry a partially accumulated modal gesture
                             // into the terminal after the modal closes.
                             macos_wheel_accum = 0.0;
                             return EventResult::Propagate;
@@ -3588,8 +3594,8 @@ fn active_sftp_path(win: &AppWindow, tab_id: &str) -> String {
 
 // The raw macOS wheel fallback runs before the usual Slint hit testing. Keep
 // modal-state routing explicit so it cannot target a terminal behind a dialog.
-fn macos_terminal_wheel_can_target_terminal(interface_open: bool) -> bool {
-    !interface_open
+fn macos_terminal_wheel_can_target_terminal(modal_open: bool) -> bool {
+    !modal_open
 }
 
 fn terminal_wheel_hit(
@@ -4069,13 +4075,53 @@ fn wire_session_callbacks(
         });
     }
 
+    let editor_test = Rc::new(RefCell::new(crate::session_test::EditorTest::default()));
+    session_editor::register(&window, store.clone(), window_id, editor_test.clone());
+    {
+        let weak = window.as_weak();
+        let active_test = editor_test.clone();
+        window.on_session_dialog_closed(move || {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
+        });
+    }
+
+    {
+        let weak = window.as_weak();
+        let active_test = editor_test.clone();
+        window.on_session_dialog_stop_test(move || {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
+        });
+    }
+
+    {
+        let weak = window.as_weak();
+        let active_test = editor_test.clone();
+        window.on_session_dialog_changed(move || {
+            if let Some(w) = weak.upgrade() {
+                let snapshot = session_editor::connection_snapshot(&w);
+                let same_snapshot = active_test.borrow().matches_snapshot(snapshot);
+                if !same_snapshot && session_editor::stop_test(&w, window_id, &active_test) {
+                    w.set_dialog_test_status("".into());
+                }
+            }
+        });
+    }
+
     // New session -> open dialog with blank draft.
     let weak = window.as_weak();
     let ef_new = edit_forwards.clone();
     let et_new = edit_triggers.clone();
     let ets_new = edit_trigger_secrets.clone();
     let store_ng = store.clone();
+    let active_test = editor_test.clone();
     window.on_new_session_clicked(move || {
+        if let Some(w) = weak.upgrade() {
+            session_editor::stop_test(&w, window_id, &active_test);
+        }
         if let Some(w) = weak.upgrade() {
             *ef_new.borrow_mut() = vec![blank_forward_draft()];
             *et_new.borrow_mut() = vec![blank_trigger_draft()];
@@ -4084,11 +4130,11 @@ fn wire_session_callbacks(
             w.set_dialog_forwards(forward_model(&ef_new.borrow()));
             w.set_dialog_triggers(trigger_model(&et_new.borrow()));
             let empty = Session::new_empty();
-            let (jump_labels, jump_ids, jump_idx) =
-                jump_candidates(&store_ng.borrow(), &empty.id, "");
+            let (jump_labels, jump_ids) = jump_candidates(&store_ng.borrow(), &empty.id);
             w.set_jump_choices(jump_labels);
             w.set_jump_ids(jump_ids);
-            w.set_dialog_jump_index(jump_idx);
+            w.set_dialog_jumps(ModelRc::default());
+            w.set_dialog_allow_secret_reveal(false);
             w.set_dialog_id(empty.id.into());
             w.set_dialog_name("".into());
             w.set_dialog_host("".into());
@@ -4303,7 +4349,11 @@ fn wire_session_callbacks(
         let ef_edit = edit_forwards.clone();
         let et_edit = edit_triggers.clone();
         let ets_edit = edit_trigger_secrets.clone();
+        let active_test = editor_test.clone();
         window.on_edit_session(move |id: SharedString| {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
             let id = id.to_string();
             let store = store.borrow();
             let Some(session) = store.get(&id) else {
@@ -4333,8 +4383,8 @@ fn wire_session_callbacks(
                 w.set_dialog_port(session.port.to_string().into());
                 w.set_dialog_user(session.user.clone().into());
                 w.set_dialog_auth(session.auth.as_str().into());
-                // Never echo the stored password back into the UI (issue #10) —
-                // leave it blank; a blank field on save keeps the existing one.
+                // Start blank; the dialog only loads saved credentials after
+                // opt-in, initially masked. Blank on save still retains them (#10).
                 w.set_dialog_password("".into());
                 w.set_dialog_key_path(session.private_key_path.clone().into());
                 w.set_dialog_key_inline("".into());
@@ -4343,11 +4393,25 @@ fn wire_session_callbacks(
                 let (proxy_type, proxy_hostport) = split_proxy(&session.proxy);
                 w.set_dialog_proxy_type(proxy_type.into());
                 w.set_dialog_proxy_hostport(proxy_hostport.into());
-                let (jump_labels, jump_ids, jump_idx) =
-                    jump_candidates(&store, &session.id, &session.jump_session_id);
+                let (jump_labels, jump_ids) = jump_candidates(&store, &session.id);
+                let route = store.resolve_jump_chain(session);
+                let ids = match route {
+                    Ok(hops) => hops.into_iter().rev().map(|hop| hop.id).collect(),
+                    Err(err) => {
+                        w.set_dialog_test_status(err.to_string().into());
+                        if session.jump_session_ids.is_empty() {
+                            // Require an explicit repair: flattening only the immediate hop
+                            // would silently discard a broken inherited route.
+                            vec![String::new(), session.jump_session_id.clone()]
+                        } else {
+                            session.jump_session_ids.clone()
+                        }
+                    }
+                };
+                w.set_dialog_jumps(session_editor::jump_rows(ids, &jump_ids));
+                w.set_dialog_allow_secret_reveal(session.allow_secret_reveal);
                 w.set_jump_choices(jump_labels);
                 w.set_jump_ids(jump_ids);
-                w.set_dialog_jump_index(jump_idx);
                 w.set_dialog_group(session.group.clone().into());
                 w.set_dialog_kind(session.kind.as_str().into());
                 w.set_dialog_serial_port(session.serial_port.clone().into());
@@ -4672,7 +4736,11 @@ fn wire_session_callbacks(
         let edit_triggers = edit_triggers.clone();
         let edit_trigger_secrets = edit_trigger_secrets.clone();
         let registry = registry.clone();
+        let active_test = editor_test.clone();
         window.on_session_dialog_submit(move |draft: SessionDraft| {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
             let id = draft.id.to_string();
             let forwards = match validated_port_forwards(&edit_forwards.borrow()) {
                 Ok(forwards) => forwards,
@@ -4693,111 +4761,24 @@ fn wire_session_callbacks(
                         return;
                     }
                 };
-            // The edit dialog never echoes the real password (issue #10): a blank
-            // field while editing means "keep the existing password" rather than
-            // "clear it".  Only overwrite when the user actually typed something.
-            let password = if draft.password.is_empty() {
-                store
-                    .borrow()
-                    .get(&id)
-                    .map(|s| s.password.clone())
-                    .unwrap_or_default()
-            } else {
-                Secret::new(draft.password.to_string())
-            };
-            let private_key_inline = if draft.private_key_inline_mode {
-                if draft.private_key_inline.is_empty() {
-                    store
-                        .borrow()
-                        .get(&id)
-                        .map(|s| s.private_key_inline.clone())
-                        .unwrap_or_default()
-                } else {
-                    Secret::new(draft.private_key_inline.to_string())
+            // Saving and testing use the same draft conversion, including blank-secret retention.
+            let existing = store.borrow().get(&id).cloned();
+            let new_session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            if let Err(err) = store.borrow().resolve_jump_chain(&new_session) {
+                if let Some(w) = weak.upgrade() {
+                    w.set_dialog_test_status(err.to_string().into());
                 }
-            } else {
-                Secret::default()
-            };
-            let private_key_path = if draft.private_key_inline_mode {
-                String::new()
-            } else {
-                draft.private_key_path.to_string().replace('\\', "/")
-            };
-            let kind = crate::config::SessionKind::from_str(&draft.kind.to_string());
-            // Auto-name: serial → port label; otherwise user@host, or just the
-            // host when no username was given (#110).
-            let auto_name = match kind {
-                crate::config::SessionKind::Serial => {
-                    format!("{} @{}", draft.serial_port, draft.baud_rate)
-                }
-                _ if draft.user.trim().is_empty() => draft.host.to_string(),
-                _ => format!("{}@{}", draft.user, draft.host),
-            };
-            // Telnet defaults to port 23, RDP to 3389, SSH to 22; serial ignores
-            // the port entirely.
-            let default_port = match kind {
-                crate::config::SessionKind::Telnet => 23,
-                crate::config::SessionKind::Rdp => 3389,
-                _ => 22,
-            };
-            let (rdp_fullscreen, rdp_width, rdp_height) = rdp_display_settings(
-                &draft.rdp_resolution.to_string(),
-                draft.rdp_width,
-                draft.rdp_height,
-            );
-            let new_session = Session {
-                id,
-                name: if draft.name.is_empty() {
-                    auto_name
-                } else {
-                    draft.name.to_string()
-                },
-                host: draft.host.to_string(),
-                port: if draft.port <= 0 {
-                    default_port
-                } else {
-                    draft.port as u16
-                },
-                user: draft.user.to_string(),
-                auth: AuthMethod::from_str(&draft.auth.to_string()),
-                password,
-                // Store the key path with forward slashes uniformly.
-                private_key_path,
-                private_key_inline,
-                proxy: draft.proxy.to_string(),
-                last_used: None,
-                group: draft.group.to_string(),
-                kind,
-                local_distribution: String::new(),
-                local_working_dir: String::new(),
-                serial_port: draft.serial_port.to_string(),
-                baud_rate: if draft.baud_rate <= 0 {
-                    115_200
-                } else {
-                    draft.baud_rate as u32
-                },
-                data_bits: draft.data_bits as u8,
-                stop_bits: draft.stop_bits as u8,
-                parity: draft.parity.to_string(),
-                flow_control: draft.flow_control.to_string(),
-                encoding: draft.encoding.to_string(),
-                vt100_drawing: draft.vt100_drawing,
-                session_log: SessionLogMode::from_str(draft.session_log.as_str()),
-                forwards,
-                triggers,
-                disable_shell_integration: draft.disable_shell_integration,
-                note: draft.note.to_string(),
-                jump_session_id: draft.jump_session_id.to_string(),
-                rdp_domain: draft.rdp_domain.to_string(),
-                rdp_fullscreen,
-                rdp_width,
-                rdp_height,
-            };
+                return;
+            }
             {
                 let mut s = store.borrow_mut();
                 s.upsert(new_session);
                 if let Err(err) = s.save() {
                     tracing::warn!("failed to save config: {err:#}");
+                    if let Some(w) = weak.upgrade() {
+                        w.set_dialog_test_status(err.to_string().into());
+                    }
+                    return;
                 }
             }
             sync_sessions_for_window(&weak, &store.borrow(), &sessions_model);
@@ -4818,7 +4799,13 @@ fn wire_session_callbacks(
         let edit_forwards = edit_forwards.clone();
         let edit_triggers = edit_triggers.clone();
         let edit_trigger_secrets = edit_trigger_secrets.clone();
+        let active_test = editor_test.clone();
         window.on_session_dialog_test(move |draft: SessionDraft| {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
+            let snapshot = weak.upgrade().map(|w| session_editor::connection_snapshot(&w)).unwrap_or_default();
+            let ticket = active_test.borrow_mut().begin(snapshot);
             let kind = draft.kind.to_string();
             if kind == "serial" {
                 let port_name = draft.serial_port.to_string();
@@ -4828,7 +4815,7 @@ fn wire_session_callbacks(
                     draft.baud_rate as u32
                 };
                 let weak_done = weak.clone();
-                runtime.spawn(async move {
+                let task = runtime.spawn(async move {
                     let message = match tokio::task::spawn_blocking(move || {
                         serialport::new(&port_name, baud)
                             .timeout(std::time::Duration::from_millis(800))
@@ -4840,12 +4827,9 @@ fn wire_session_callbacks(
                         Ok(Err(e)) => format!("{}: {e}", t("连接失败", "Connection failed")),
                         Err(e) => format!("{}: {e}", t("连接失败", "Connection failed")),
                     };
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(w) = weak_done.upgrade() {
-                            w.set_dialog_test_status(message.into());
-                        }
-                    });
+                    session_editor::finish_test(weak_done, window_id, ticket, message);
                 });
+                active_test.borrow_mut().attach(task.abort_handle());
                 return;
             }
 
@@ -4873,15 +4857,39 @@ fn wire_session_callbacks(
             let weak_done = weak.clone();
 
             if kind == "ssh" {
-                let jump = resolve_jump(&store, &session);
+                let jump = match resolve_jump(&store, &session) {
+                    Ok(jump) => jump,
+                    Err(error) => {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_dialog_test_status(error.to_string().into());
+                        }
+                        return;
+                    }
+                };
                 let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
-                runtime.spawn(async move {
+                let task = runtime.spawn(async move {
                     let mut test = Box::pin(test_session_auth(session, jump, events_tx));
+                    let mut events_open = true;
                     let result = loop {
                         tokio::select! {
                             result = &mut test => break result,
-                            event = events_rx.recv() => {
-                                let Some(event) = event else { continue };
+                            event = events_rx.recv(), if events_open => {
+                                let Some(event) = event else { events_open = false; continue };
+                                if let SessionEvent::Status(ref status) = event {
+                                    let weak_status = weak_done.clone();
+                                    let status_ticket = ticket.clone();
+                                    let status = status.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if !status_ticket.is_active() { return; }
+                                        if let Some(w) = weak_status.upgrade() {
+                                            if w.get_dialog_open()
+                                                && status_ticket.matches_snapshot(session_editor::connection_snapshot(&w))
+                                            {
+                                                w.set_dialog_test_status(status.into());
+                                            }
+                                        }
+                                    });
+                                }
                                 if matches!(
                                     event,
                                     SessionEvent::HostKeyPrompt { .. }
@@ -4889,8 +4897,13 @@ fn wire_session_callbacks(
                                         | SessionEvent::MfaPrompt { .. }
                                 ) {
                                     let weak_prompt = weak_done.clone();
+                                    let prompt_ticket = ticket.clone();
                                     let _ = slint::invoke_from_event_loop(move || {
+                                        if !prompt_ticket.is_active() { return; }
                                         let Some(w) = weak_prompt.upgrade() else { return };
+                                        if !w.get_dialog_open()
+                                            || !prompt_ticket.matches_snapshot(session_editor::connection_snapshot(&w))
+                                        { return; }
                                         match event {
                                             SessionEvent::HostKeyPrompt {
                                                 host,
@@ -4899,9 +4912,10 @@ fn wire_session_callbacks(
                                                 fingerprint,
                                                 changed,
                                                 responder,
-                                            } => enqueue_hostkey_prompt(
+                                            } => enqueue_hostkey_prompt_scoped(
                                                 &w,
                                                 window_id,
+                                                Some(prompt_ticket.id),
                                                 host,
                                                 port,
                                                 key_type,
@@ -4916,9 +4930,10 @@ fn wire_session_callbacks(
                                                 need_user,
                                                 need_password,
                                                 responder,
-                                            } => enqueue_cred_prompt(
+                                            } => enqueue_cred_prompt_scoped(
                                                 &w,
                                                 window_id,
+                                                Some(prompt_ticket.id),
                                                 session_id,
                                                 host,
                                                 user,
@@ -4932,9 +4947,10 @@ fn wire_session_callbacks(
                                                 prompt,
                                                 echo,
                                                 responder,
-                                            } => enqueue_mfa_prompt(
+                                            } => enqueue_mfa_prompt_scoped(
                                                 &w,
                                                 window_id,
+                                                Some(prompt_ticket.id),
                                                 session_id,
                                                 host,
                                                 prompt,
@@ -4952,18 +4968,15 @@ fn wire_session_callbacks(
                         Ok(()) => t("连接正常", "Connection OK").to_string(),
                         Err(e) => format!("{}: {e:#}", t("连接失败", "Connection failed")),
                     };
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(w) = weak_done.upgrade() {
-                            w.set_dialog_test_status(message.into());
-                        }
-                    });
+                    session_editor::finish_test(weak_done, window_id, ticket, message);
                 });
+                active_test.borrow_mut().attach(task.abort_handle());
                 return;
             }
 
             let host = session.host;
             let port = session.port;
-            runtime.spawn(async move {
+            let task = runtime.spawn(async move {
                 let target = format!("{host}:{port}");
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(3),
@@ -4975,19 +4988,20 @@ fn wire_session_callbacks(
                     Ok(Err(e)) => format!("{}: {e}", t("连接失败", "Connection failed")),
                     Err(_) => format!("{}: {target}", t("连接超时", "Connection timed out")),
                 };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = weak_done.upgrade() {
-                        w.set_dialog_test_status(message.into());
-                    }
-                });
+                session_editor::finish_test(weak_done, window_id, ticket, message);
             });
+            active_test.borrow_mut().attach(task.abort_handle());
         });
     }
 
     // Cancel dialog.
     {
         let weak = window.as_weak();
+        let active_test = editor_test.clone();
         window.on_session_dialog_cancel(move || {
+            if let Some(w) = weak.upgrade() {
+                session_editor::stop_test(&w, window_id, &active_test);
+            }
             if let Some(w) = weak.upgrade() {
                 w.set_dialog_open(false);
             }
@@ -7614,3 +7628,7 @@ mod log_highlight_tests;
 #[cfg(test)]
 #[path = "../tests/app/text_editor/mod.rs"]
 mod text_editor_tests;
+
+#[cfg(test)]
+#[path = "../tests/app/modal_layers.rs"]
+mod modal_layers_tests;

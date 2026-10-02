@@ -7,23 +7,37 @@ mod allocator;
 
 #[global_allocator]
 static GLOBAL: allocator::Allocator = allocator::Allocator;
+#[cfg(not(feature = "headless"))]
 mod app;
 mod automation;
 mod cli;
 mod config;
 mod i18n;
+#[cfg(not(feature = "headless"))]
 mod layout;
 mod logging;
+#[cfg(any(test, not(feature = "headless")))]
+mod session_test;
 mod mcp;
+#[cfg(not(feature = "headless"))]
 mod rdp;
+#[cfg(not(feature = "headless"))]
 mod resource;
+#[cfg(not(feature = "headless"))]
 mod session;
 mod sftp;
 mod ssh;
+#[cfg(not(feature = "headless"))]
+mod terminal;
+#[cfg(feature = "headless")]
+#[path = "terminal/headless.rs"]
 mod terminal;
 mod tunnel;
+#[cfg(not(feature = "headless"))]
 mod ui;
+#[cfg(not(feature = "headless"))]
 mod wallpaper;
+#[cfg(not(feature = "headless"))]
 mod webdav;
 
 enum StartMode {
@@ -41,11 +55,25 @@ impl StartMode {
             _ if args.iter().any(|arg| arg == "--version" || arg == "-V") => Self::Version,
             _ => Self::App,
         }
-    } 
+    }
 }
 
 fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    config::configure_profile(&mut args)?;
+    if args.iter().any(|arg| arg == "--config-info") {
+        let store = config::ConfigStore::load()?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "executable": std::env::current_exe()?,
+                "version": env!("CARGO_PKG_VERSION"),
+                "data_dir": config::data_dir(),
+                "session_count": store.sessions().len(),
+            })
+        );
+        return Ok(());
+    }
 
     let mode = StartMode::detect(&args);
     if matches!(mode, StartMode::Version) {
@@ -58,6 +86,11 @@ fn main() -> anyhow::Result<()> {
     match mode {
         StartMode::Mcp => mcp::run_stdio(),
         StartMode::Cli => cli::run(&args),
+        #[cfg(feature = "headless")]
+        StartMode::App => {
+            anyhow::bail!("headless build: use meatshell cli help or meatshell mcp serve")
+        }
+        #[cfg(not(feature = "headless"))]
         StartMode::App => {
             // macOS defaults to Slint's CPU renderer. FemtoVG and Skia remain available
             // in Settings -> Interface -> Rendering for users who prefer GPU rendering.
