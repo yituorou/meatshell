@@ -4,6 +4,20 @@ use serde_json::{json, Value};
 pub(super) fn definitions() -> Value {
     json!([
         {
+            "name": "import_sessions",
+            "description": "Preview or append sessions from a local MeatShell portable export, native JSON profile, or FinalShell export. Existing sessions/settings are preserved; duplicates are skipped. Returns counts only. Requires file-transfer permission; applying also requires server startup with --allow-config-import. Export files can contain recoverable credentials.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "local_path": { "type": "string", "minLength": 1, "description": "Export file path on the MCP server's machine (maximum 16 MiB)." },
+                    "dry_run": { "type": "boolean", "default": true, "description": "Preview only unless explicitly false." }
+                },
+                "required": ["local_path"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        },
+        {
             "name": "list_sessions",
             "description": "List saved MeatShell sessions without exposing passwords, private keys, or other secrets.",
             "inputSchema": {
@@ -102,8 +116,19 @@ pub(super) fn definitions() -> Value {
     ])
 }
 
-pub(super) async fn call_mcp(name: &str, arguments: &Value) -> Result<Value> {
-    crate::automation::call(name, arguments, crate::automation::Frontend::Mcp).await
+pub(super) async fn call_mcp(
+    name: &str,
+    arguments: &Value,
+    allow_config_import: bool,
+) -> Result<Value> {
+    crate::automation::call(
+        name,
+        arguments,
+        crate::automation::Frontend::Mcp {
+            allow_config_import,
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

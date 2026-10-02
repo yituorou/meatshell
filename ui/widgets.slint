@@ -108,6 +108,10 @@ export component LabeledInput inherits VerticalLayout {
     in property <string> placeholder;
     in-out property <string> value;
     in property <bool> password: false;
+    in property <bool> reveal-enabled: false;
+    in-out property <bool> revealed: false;
+    callback reveal() -> string;
+    changed reveal-enabled => { if !root.reveal-enabled { root.revealed = false; } }
     in property <bool> auto-focus: false;   // grab focus when shown (dialog fields)
     in property <brush> input-background: Theme.bg-root;
     in property <brush> idle-border: Theme.border-subtle;
@@ -158,25 +162,51 @@ export component LabeledInput inherits VerticalLayout {
             vertical-alignment: center;
         }
 
-        input := TextInput {
+        viewport := Rectangle {
             x: 10px;
-            y: 0px;
-            width: parent.width - 20px;
+            width: parent.width - (root.password && root.reveal-enabled ? 48px : 20px);
             height: parent.height;
-            text <=> root.value;
-            color: Theme.text-primary;
-            // A CJK-capable family — TextInput doesn't glyph-fallback reliably
-            // across machines, so typed Chinese (incl. punctuation like 、) can
-            // render as tofu without an explicit font (#54).
-            font-family: Theme.ui-font-family;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-            single-line: true;
-            input-type: root.password ? InputType.password : InputType.text;
-            accepted => { root.accepted(); }
-            key-pressed(e) => {
-                if (e.text == Key.Escape) { root.canceled(); accept }
-                else { reject }   // let TextInput handle normal typing
+            clip: true;
+            input := TextInput {
+                property <length> scroll-x: 0px;
+                x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll-x));
+                width: max(parent.width - self.text-cursor-width, self.preferred-width);
+                height: parent.height;
+                text <=> root.value;
+                color: Theme.text-primary;
+                // A CJK-capable family — TextInput doesn't glyph-fallback reliably
+                // across machines, so typed Chinese (incl. punctuation like 、) can
+                // render as tofu without an explicit font (#54).
+                font-family: Theme.ui-font-family;
+                font-size: Theme.fs-md;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: root.password && !root.revealed ? InputType.password : InputType.text;
+                // Keep the selection's active end inside the clipped viewport,
+                // including when a mouse drag extends beyond either edge.
+                cursor-position-changed(pos) => {
+                    if pos.x + self.scroll-x < 0px {
+                        self.scroll-x = -pos.x;
+                    } else if pos.x + self.scroll-x > parent.width - self.text-cursor-width {
+                        self.scroll-x = parent.width - pos.x - self.text-cursor-width;
+                    }
+                }
+                accepted => { root.accepted(); }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.canceled(); accept }
+                    else { reject }   // let TextInput handle normal typing
+                }
+            }
+        }
+        if root.password && root.reveal-enabled : IconButton {
+            x: parent.width - 34px;
+            y: 2px;
+            glyph: root.revealed ? "\u{E8F4}" : "\u{E8F5}";
+            font-family: "Material Icons";
+            tooltip: root.revealed ? @tr("Hide secret") : @tr("Show secret");
+            clicked => {
+                if !root.revealed && root.value == "" { root.value = root.reveal(); }
+                root.revealed = !root.revealed;
             }
         }
     }

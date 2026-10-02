@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { ModalLayer } from "modal.slint";
 import { GhostButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
 
@@ -33,56 +34,30 @@ component DangerButton inherits Rectangle {
 // (a dark card over a dimmed backdrop, like SessionDialog).  Purely
 // presentational: it emits `confirm` / `cancel` and the caller decides what
 // to do.  Used for the irreversible SFTP delete (#28).
-export component ConfirmDialog inherits Rectangle {
-    in-out property <bool> is-open: false;
+export component ConfirmDialog inherits ModalLayer {
     in property <string> title: @tr("Please confirm");
     in property <string> message;
     in property <string> detail;                  // optional, e.g. the file path
     in property <string> confirm-label: @tr("Confirm");
     // Opt in per call site: destructive confirmations must not become
     // keyboard-confirmable merely because they share this component.
-    in property <bool> confirm-on-enter: false;
+    // ModalLayer defaults confirm-on-enter to false.
     // Long AI prompts and other large multi-line pastes need a review surface
     // comparable to the system-information window, with fixed footer actions.
     in property <bool> large-detail: false;
     // Temporarily hide this modal behind a higher-priority prompt without
     // discarding its state (for example, app-exit confirmation).
-    in property <bool> covered: false;
+    // ModalLayer hides covered dialogs while preserving their state.
     // Whether clicking the dimmed backdrop dismisses (cancels) the dialog. Off for
     // security prompts (e.g. host-key trust) so an accidental click outside the card
     // doesn't count as "reject" and abort the connection (#152).
-    in property <bool> dismiss-on-backdrop: true;
+    dismiss-on-backdrop: true;
     callback confirm();
     callback cancel();
 
-    visible: is-open && !covered;
     background: #000000aa;
-
-    confirm-key-scope := FocusScope {
-        focus-on-click: false;
-        focus-on-tab-navigation: false;
-        property <bool> active: root.visible && root.confirm-on-enter;
-        changed active => {
-            if (self.active) {
-                self.focus();
-            }
-        }
-        key-pressed(event) => {
-            if (root.confirm-on-enter && event.text == Key.Return) {
-                root.confirm();
-                accept
-            } else {
-                reject
-            }
-        }
-    }
-
-    // Backdrop click cancels — unless disabled for a must-decide prompt.
-    TouchArea {
-        width: 100%;
-        height: 100%;
-        clicked => { if (root.dismiss-on-backdrop) { root.cancel(); } }
-    }
+    cancel-requested => { root.cancel(); }
+    confirm-requested => { root.confirm(); }
 
     Rectangle {
         width: root.large-detail ? min(parent.width - 40px, 1160px) : 380px;

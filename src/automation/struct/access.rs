@@ -5,6 +5,22 @@
 /// depend on whether the MCP server itself is enabled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Frontend {
-    Mcp,
+    Mcp { allow_config_import: bool },
     Cli,
+}
+
+impl Frontend {
+    pub(crate) fn is_mcp(self) -> bool {
+        matches!(self, Self::Mcp { .. })
+    }
+
+    pub(crate) fn allows_config_import(self) -> bool {
+        matches!(
+            self,
+            Self::Cli
+                | Self::Mcp {
+                    allow_config_import: true
+                }
+        )
+    }
 }

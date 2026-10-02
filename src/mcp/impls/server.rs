@@ -16,6 +16,7 @@ pub(crate) fn run_stdio() -> Result<()> {
         .enable_all()
         .build()
         .context("create MCP runtime")?;
+    let allow_config_import = std::env::args().any(|arg| arg == "--allow-config-import");
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -24,7 +25,7 @@ pub(crate) fn run_stdio() -> Result<()> {
             continue;
         }
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => runtime.block_on(handle(request)),
+            Ok(request) => runtime.block_on(handle(request, allow_config_import)),
             Err(error) => Some(error_response(Value::Null, -32700, &error.to_string())),
         };
         if let Some(response) = response {
@@ -36,7 +37,7 @@ pub(crate) fn run_stdio() -> Result<()> {
     Ok(())
 }
 
-async fn handle(request: Value) -> Option<Value> {
+async fn handle(request: Value, allow_config_import: bool) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request.get("method").and_then(Value::as_str);
     if id.is_none() {
@@ -51,7 +52,7 @@ async fn handle(request: Value) -> Option<Value> {
             id,
             json!({ "tools": super::tools::definitions() }),
         )),
-        Some("tools/call") => Some(call_tool(id, &params).await),
+        Some("tools/call") => Some(call_tool(id, &params, allow_config_import).await),
         Some(_) => Some(error_response(id, -32601, "method not found")),
         None => Some(error_response(id, -32600, "invalid request")),
     }
@@ -78,7 +79,7 @@ fn initialize(params: &Value) -> Value {
     })
 }
 
-async fn call_tool(id: Value, params: &Value) -> Value {
+async fn call_tool(id: Value, params: &Value, allow_config_import: bool) -> Value {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, -32602, "missing tool name");
     };
@@ -86,7 +87,7 @@ async fn call_tool(id: Value, params: &Value) -> Value {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    match super::tools::call_mcp(name, &arguments).await {
+    match super::tools::call_mcp(name, &arguments, allow_config_import).await {
         Ok(value) => success_response(
             id,
             json!({
@@ -127,12 +128,15 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_negotiates_a_supported_version() {
-        let response = handle(json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": { "protocolVersion": "2025-06-18" }
-        }))
+        let response = handle(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": { "protocolVersion": "2025-06-18" }
+            }),
+            false,
+        )
         .await
         .unwrap();
         assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
@@ -141,23 +145,29 @@ mod tests {
 
     #[tokio::test]
     async fn notifications_do_not_receive_responses() {
-        assert!(handle(json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }))
+        assert!(handle(
+            json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            }),
+            false
+        )
         .await
         .is_none());
     }
 
     #[tokio::test]
     async fn lists_tools() {
-        let response = handle(json!({
-            "jsonrpc": "2.0",
-            "id": "tools",
-            "method": "tools/list"
-        }))
+        let response = handle(
+            json!({
+                "jsonrpc": "2.0",
+                "id": "tools",
+                "method": "tools/list"
+            }),
+            false,
+        )
         .await
         .unwrap();
-        assert_eq!(response["result"]["tools"].as_array().unwrap().len(), 7);
+        assert_eq!(response["result"]["tools"].as_array().unwrap().len(), 8);
     }
 }
