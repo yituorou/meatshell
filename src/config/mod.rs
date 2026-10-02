@@ -4,6 +4,7 @@ mod structs;
 mod config;
 #[path = "impls/finalshell.rs"]
 mod finalshell;
+mod jump_chain;
 
 pub(crate) use config::*;
 pub(crate) use structs::*;

@@ -4,6 +4,7 @@
 // models with AppWindow, much like ProcWindow shares the process table.
 
 import { Theme } from "theme.slint";
+import { ModalScope } from "modal.slint";
 import { DiskInfo } from "sidebar.slint";
 
 export struct SysMetricRow {
@@ -173,6 +174,7 @@ export component SystemInfoWindow inherits Window {
     in-out property <color> wp-tint <=> Theme.wp-tint;
     default-font-family: Theme.ui-font-family;
 
+    in property <bool> is-mac: false;
     in property <bool> custom-titlebar;
     no-frame: root.custom-titlebar;
     in property <string> host;
@@ -208,6 +210,10 @@ export component SystemInfoWindow inherits Window {
     }
     Rectangle { width: parent.width; height: parent.height; background: Theme.bg-root.with-alpha(0.92); }
 
+    ModalScope {
+        active: true;
+        is-mac: root.is-mac;
+        cancel-requested => { root.close(); }
     VerticalLayout {
         spacing: 0;
 
@@ -333,5 +339,6 @@ export component SystemInfoWindow inherits Window {
         Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
         Rectangle { x: parent.width - 9px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
         Rectangle { x: parent.width - 5px; y: parent.height - 9px; width: 2px; height: 2px; background: Theme.text-muted; }
+    }
     }
 }

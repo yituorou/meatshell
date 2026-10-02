@@ -1,0 +1,96 @@
+// Window-local modal identities. AppWindow defines their priority in one place.
+export enum ModalKind {
+    none, shortcuts, about, settings, quick-commands, session, batch-import,
+    group, tab-rename, command-group, sftp-prompt, permissions, paste-confirm,
+    delete-confirm, host-key, credentials, mfa, exit-confirm
+}
+
+// Keyboard behavior only: callers retain ownership of cancellation/confirmation.
+export component ModalScope inherits FocusScope {
+    in property <bool> active: false;
+    in property <bool> is-mac: false;
+    in property <bool> confirm-on-enter: false;
+    in property <bool> confirm-on-space: false;
+    callback cancel-requested();
+    callback confirm-requested();
+    callback focus-initial();
+    enabled: root.active;
+    focus-on-click: false;
+    focus-on-tab-navigation: true;
+    property <bool> focus-pending: false;
+    init => { root.focus-pending = root.active; }
+    changed active => { root.focus-pending = root.active; }
+    Timer {
+        interval: 0ms;
+        running: root.focus-pending;
+        triggered => {
+            root.focus-pending = false;
+            if root.active { root.focus(); root.focus-initial(); }
+        }
+    }
+    // Slint maps macOS Command to the logical control modifier.
+    // Capture cancellation before a child TextInput can consume Escape.
+    // PopupWindow traversal stops at the popup: its own Escape goes first.
+    capture-key-pressed(event) => {
+        if root.active && (event.text == Key.Escape
+            || (root.is-mac && event.text == "." && event.modifiers.control
+                && !event.modifiers.alt && !event.modifiers.shift && !event.modifiers.meta)) {
+            root.cancel-requested();
+            accept
+        } else if root.active && root.has-focus
+            && (event.text == Key.Backtab || (event.text == Key.Tab && event.modifiers.shift)) {
+            // Start reverse traversal from the end, never behind the modal.
+            tab-end.focus();
+            reject
+        } else { reject }
+    }
+    // Confirmation is opt-in and runs only if the focused child did not handle it.
+    key-pressed(event) => {
+        if !root.active { reject }
+        else if (root.confirm-on-enter && event.text == Key.Return)
+            || (root.confirm-on-space && event.text == " ") {
+            root.confirm-requested();
+            accept
+        } else if event.text == Key.Tab || event.text == Key.Backtab {
+            reject // let Slint move focus among the dialog's children
+        } else { accept }
+    }
+    key-released(event) => { root.active ? accept : reject }
+    @children
+    // A boundary in the tab order keeps traversal inside the active dialog.
+    // Programmatic focus here is reserved for reverse traversal above.
+    tab-end := FocusScope {
+        enabled: root.active;
+        focus-on-click: false;
+        focus-gained(reason) => {
+            if reason == FocusReason.tab-navigation { root.focus(); }
+        }
+    }
+}
+
+// Content and appearance remain in the caller; all interaction enters one scope.
+export component ModalLayer inherits Rectangle {
+    in-out property <bool> is-open: false;
+    in property <bool> covered: false;
+    in property <bool> is-mac: false;
+    in property <bool> dismiss-on-backdrop: false;
+    in property <bool> confirm-on-enter: false;
+    in property <bool> confirm-on-space: false;
+    callback cancel-requested();
+    callback confirm-requested();
+    visible: root.is-open && !root.covered;
+    background: #00000080;
+    TouchArea {
+        clicked => { if root.dismiss-on-backdrop { root.cancel-requested(); } }
+        scroll-event(event) => { accept }
+    }
+    ModalScope {
+        active: root.visible;
+        is-mac: root.is-mac;
+        confirm-on-enter: root.confirm-on-enter;
+        confirm-on-space: root.confirm-on-space;
+        cancel-requested => { root.cancel-requested(); }
+        confirm-requested => { root.confirm-requested(); }
+        @children
+    }
+}

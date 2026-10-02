@@ -1,6 +1,7 @@
 import { Theme } from "theme.slint";
-import { ComboBox } from "std-widgets.slint";
-import { LabeledInput, PrimaryButton, GhostButton } from "widgets.slint";
+import { ModalLayer } from "modal.slint";
+import { ComboBox, CheckBox } from "std-widgets.slint";
+import { LabeledInput, PrimaryButton, GhostButton, IconButton } from "widgets.slint";
 
 // One SSH port-forward row shown in the session dialog (#56). `summary` is a
 // ready-to-display line like "-L 127.0.0.1:8080 → host:80".
@@ -18,6 +19,11 @@ export struct TriggerDraft {
     response: string,
     append-enter: bool,
     repeat: bool,
+}
+
+export struct JumpHop {
+    id: string,
+    choice: int,
 }
 
 export struct SessionDraft {
@@ -57,9 +63,9 @@ export struct SessionDraft {
     disable-shell-integration: bool,
     // Free-form note (B站 suggestion).
     note: string,
-    // Id of another saved SSH session to use as a jump host / bastion, or "" for
-    // a direct connection (#211).
-    jump-session-id: string,
+    // Explicit first-hop-first route, owned by this session (#211).
+    jumps: [JumpHop],
+    allow-secret-reveal: bool,
 }
 
 // A single segment in a segmented selector (auth toggle, baud presets, …).
@@ -377,12 +383,13 @@ component GroupCombo inherits VerticalLayout {
 }
 
 // Read-only dropdown picking an SSH jump host from a fixed list of saved
-// sessions (#211). Index-based: `choices[0]` is the "no jump host" entry, and
+// sessions (#211). Index-based: `choices[0]` is the unselected entry, and
 // `selected-index` maps into the parallel `ids` list held by the caller.
 component JumpCombo inherits VerticalLayout {
     in property <string> label;
-    in property <[string]> choices;      // display labels; index 0 = "no jump host"
+    in property <[string]> choices;      // display labels; index 0 = unselected
     in-out property <int> selected-index: 0;
+    callback selected(int);
     spacing: 4px;
 
     Text {
@@ -448,7 +455,7 @@ component JumpCombo inherits VerticalLayout {
                         background: c-ta.has-hover ? Theme.bg-hover : transparent;
                         c-ta := TouchArea {
                             mouse-cursor: pointer;
-                            clicked => { root.selected-index = idx; jump-popup.close(); }
+                            clicked => { root.selected-index = idx; jump-popup.close(); root.selected(idx); }
                         }
                         Text {
                             x: 10px;
@@ -466,11 +473,66 @@ component JumpCombo inherits VerticalLayout {
     }
 }
 
+// A fixed-height row keeps the drop position independent of text length.
+export component JumpRow inherits Rectangle {
+    in property <JumpHop> hop;
+    in property <int> index;
+    in property <int> count;
+    in property <[string]> choices;
+    callback selected(int);
+    callback remove();
+    callback move(int);
+    property <length> grab-y;
+    property <int> drop-index: root.index;
+    height: 58px;
+    border-radius: Theme.radius-sm;
+    background: handle.pressed ? Theme.bg-active : transparent;
+    HorizontalLayout {
+        spacing: 6px;
+        Rectangle {
+            width: 26px;
+            Text {
+                text: "≡"; color: Theme.text-secondary;
+                vertical-alignment: center; horizontal-alignment: center;
+            }
+            handle := TouchArea {
+                mouse-cursor: MouseCursor.move;
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                        root.grab-y = self.mouse-y;
+                        root.drop-index = root.index;
+                    } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                        if root.drop-index != root.index { root.move(root.drop-index); }
+                    } else if e.kind == PointerEventKind.cancel { root.drop-index = root.index; }
+                }
+                moved => {
+                    if self.pressed {
+                        root.drop-index = clamp(root.index + round((self.mouse-y - root.grab-y) / 64px), 0, root.count - 1);
+                    }
+                }
+            }
+        }
+        JumpCombo {
+            horizontal-stretch: 1;
+            label: handle.pressed && root.drop-index != root.index
+                ? @tr("Move to hop") + " " + (root.drop-index + 1)
+                : @tr("Hop") + " " + (root.index + 1)
+                    + (root.hop.choice == 0 && root.hop.id != "" ? " (" + @tr("Unavailable") + ")" : "");
+            choices: root.choices;
+            selected-index: root.hop.choice;
+            selected(choice) => { root.selected(choice); }
+        }
+        VerticalLayout {
+            padding-top: 22px;
+            IconButton { glyph: "×"; fg: Theme.danger; clicked => { root.remove(); } }
+        }
+    }
+}
+
 // Modal dialog for creating / editing a session (SSH / Serial / Telnet).
 // The dialog is purely presentational — it stores values in mutable
 // properties and emits `submit` / `cancel` callbacks up to the main window.
-export component SessionDialog inherits Rectangle {
-    in-out property <bool> is-open: false;
+export component SessionDialog inherits ModalLayer {
     in-out property <bool> is-editing: false;
     in-out property <string> draft-id;
     in-out property <string> draft-name;
@@ -489,11 +551,32 @@ export component SessionDialog inherits Rectangle {
     in-out property <string> draft-proxy-hostport;
     in-out property <string> draft-group;
     in property <[string]> session-groups;   // existing groups for the dropdown (#179)
-    // SSH jump host picker (#211): parallel label/id lists (index 0 = "none")
-    // plus the selected index. The id is resolved on submit via `jump-ids`.
+    // Saved SSH candidates and the ordered route for this session (#211).
     in property <[string]> jump-choices;
-    in property <[string]> jump-ids;
-    in-out property <int> draft-jump-index: 0;
+    in property <[JumpHop]> jumps;
+    in-out property <bool> allow-secret-reveal: false;
+    property <bool> password-revealed: false;
+    property <bool> key-revealed: false;
+    callback reveal-secret(bool /* private key */) -> string;
+    // Opted-in credentials are loaded masked. Never overwrite an unsaved edit.
+    function load-saved-credentials() {
+        if root.is-open && root.allow-secret-reveal {
+            if root.draft-password == "" { root.draft-password = root.reveal-secret(false); }
+            if root.draft-key-inline-mode && root.draft-key-inline == "" {
+                root.draft-key-inline = root.reveal-secret(true);
+            }
+        }
+    }
+    changed allow-secret-reveal => {
+        root.password-revealed = false;
+        root.key-revealed = false;
+        root.load-saved-credentials();
+    }
+    changed draft-key-inline-mode => { root.load-saved-credentials(); }
+    callback add-jump();
+    callback update-jump(int, int);
+    callback delete-jump(int);
+    callback move-jump(int, int);
     in-out property <string> draft-serial-port;
     in-out property <string> draft-baud: "115200";
     in-out property <string> draft-data-bits: "8";
@@ -528,20 +611,24 @@ export component SessionDialog inherits Rectangle {
     callback delete-trigger(int /* index */);
     callback pick-key-file();   // open a native file picker for the private key
 
-    visible: is-open;
+    cancel-requested => { root.cancel(); }
     background: #00000080;
 
     // Clear the host-required flag each time the dialog opens (#110).
     changed is-open => {
         if (self.is-open) {
             self.host-missing = false;
+            self.password-revealed = false;
+            self.key-revealed = false;
+            root.load-saved-credentials();
+        } else {
+            root.draft-password = "";
+            root.draft-key-inline = "";
+            root.password-revealed = false;
+            root.key-revealed = false;
         }
     }
 
-    // Swallow clicks on the backdrop
-    TouchArea {
-        width: 100%; height: 100%;
-    }
 
     Rectangle {
         width: 440px;
@@ -619,6 +706,9 @@ export component SessionDialog inherits Rectangle {
         }
 
         Flickable {
+            // Keep mouse grabs with text selections and jump handles. Wheel
+            // scrolling still works, as in the terminal tab strip (#408).
+            interactive: false;
             width: 100%;
             vertical-stretch: 1;
             viewport-width: self.width;
@@ -771,8 +861,13 @@ export component SessionDialog inherits Rectangle {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: root.draft-auth == "keyboard-interactive" ? @tr("Password / first answer") : @tr("Password");
-                placeholder: root.is-editing ? @tr("Leave blank to keep the current password") : "••••••••";
+                placeholder: root.is-editing
+                    ? (root.allow-secret-reveal ? @tr("Enter a new password") : @tr("Leave blank to keep the current password"))
+                    : "••••••••";
                 password: true;
+                reveal-enabled: root.allow-secret-reveal;
+                revealed <=> root.password-revealed;
+                reveal => { root.reveal-secret(false) }
                 value <=> root.draft-password;
             }
 
@@ -861,6 +956,17 @@ export component SessionDialog inherits Rectangle {
                 }
                 if root.draft-key-inline-mode : VerticalLayout {
                     spacing: 4px;
+                    if root.allow-secret-reveal : IconButton {
+                        glyph: root.key-revealed ? "\u{E8F4}" : "\u{E8F5}";
+                        font-family: "Material Icons";
+                        tooltip: root.key-revealed ? @tr("Hide secret") : @tr("Show secret");
+                        clicked => {
+                            if !root.key-revealed && root.draft-key-inline == "" {
+                                root.draft-key-inline = root.reveal-secret(true);
+                            }
+                            root.key-revealed = !root.key-revealed;
+                        }
+                    }
                     Rectangle {
                         height: 118px;
                         horizontal-stretch: 1;
@@ -868,7 +974,9 @@ export component SessionDialog inherits Rectangle {
                         border-width: 1px;
                         border-color: keytext.has-focus ? Theme.accent : Theme.border-strong;
                         background: Theme.bg-elevated;
+                        clip: true;
                         keytext := TextInput {
+                            input-type: root.key-revealed ? InputType.text : InputType.password;
                             x: 10px;
                             y: 8px;
                             width: parent.width - 20px;
@@ -906,10 +1014,29 @@ export component SessionDialog inherits Rectangle {
                 idle-border: Theme.border-strong;
                 label: @tr("Key passphrase");
                 placeholder: root.is-editing
-                    ? @tr("Leave blank to keep the current passphrase")
+                    ? (root.allow-secret-reveal ? @tr("Enter a key passphrase") : @tr("Leave blank to keep the current passphrase"))
                     : @tr("Leave blank if the key isn't encrypted");
                 password: true;
+                reveal-enabled: root.allow-secret-reveal;
+                revealed <=> root.password-revealed;
+                reveal => { root.reveal-secret(false) }
                 value <=> root.draft-password;
+            }
+
+            if root.draft-kind == "ssh" || root.draft-kind == "rdp" : CheckBox {
+                text: @tr("Allow viewing saved credentials in this session");
+                checked <=> root.allow-secret-reveal;
+                toggled => {
+                    root.password-revealed = false;
+                    root.key-revealed = false;
+                }
+            }
+
+            if root.allow-secret-reveal && (root.draft-kind == "ssh" || root.draft-kind == "rdp") : Text {
+                text: @tr("Credentials start hidden. Click the eye to view. Save to remember this option.");
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                wrap: word-wrap;
             }
 
             // ── RDP-only fields ─────────────────────────────────────────────
@@ -925,8 +1052,13 @@ export component SessionDialog inherits Rectangle {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: @tr("Password");
-                placeholder: root.is-editing ? @tr("Leave blank to keep the current password") : "••••••••";
+                placeholder: root.is-editing
+                    ? (root.allow-secret-reveal ? @tr("Enter a new password") : @tr("Leave blank to keep the current password"))
+                    : "••••••••";
                 password: true;
+                reveal-enabled: root.allow-secret-reveal;
+                revealed <=> root.password-revealed;
+                reveal => { root.reveal-secret(false) }
                 value <=> root.draft-password;
             }
 
@@ -1194,18 +1326,29 @@ export component SessionDialog inherits Rectangle {
                 }
             }
 
-            // ── SSH jump host / bastion (SSH only) (#211) ───────────────────
-            if root.show-advanced && root.draft-kind == "ssh" : VerticalLayout {
-                spacing: 4px;
-                JumpCombo {
-                    label: @tr("Jump host (optional)");
+            // Each row is one actual hop. Reordering never rewrites saved hops.
+            if root.draft-kind == "ssh" : VerticalLayout {
+                spacing: 6px;
+                Text { text: @tr("Jump chain (optional)"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+                Text {
+                    text: @tr("Local → hops below → target. First hop connects first.");
+                    color: Theme.text-muted; font-size: Theme.fs-xs;
+                    wrap: word-wrap;
+                }
+                for hop[i] in root.jumps : JumpRow {
+                    hop: hop; index: i; count: root.jumps.length;
                     choices: root.jump-choices;
-                    selected-index <=> root.draft-jump-index;
+                    selected(choice) => { root.update-jump(i, choice); }
+                    remove => { root.delete-jump(i); }
+                    move(to) => { root.move-jump(i, to); }
+                }
+                GhostButton {
+                    text: @tr("+ Add jump host");
+                    clicked => { if root.jumps.length < 16 { root.add-jump(); } }
                 }
                 Text {
-                    text: @tr("Tunnel this connection through another saved SSH session.");
-                    color: Theme.text-muted;
-                    font-size: Theme.fs-xs;
+                    text: @tr("Target") + ": " + root.draft-user + "@" + root.draft-host + ":" + root.draft-port;
+                    color: Theme.text-secondary; font-size: Theme.fs-sm; overflow: elide;
                 }
             }
 
@@ -1339,8 +1482,8 @@ export component SessionDialog inherits Rectangle {
                             session-log: root.draft-session-log,
                             disable-shell-integration: root.draft-disable-shell-integration,
                             note: root.draft-note,
-                            jump-session-id: (root.draft-jump-index > 0 && root.draft-jump-index < root.jump-ids.length)
-                                ? root.jump-ids[root.draft-jump-index] : "",
+                            jumps: root.jumps,
+                            allow-secret-reveal: root.allow-secret-reveal,
                         });
                     }
                 }
@@ -1397,8 +1540,8 @@ export component SessionDialog inherits Rectangle {
                             session-log: root.draft-session-log,
                             disable-shell-integration: root.draft-disable-shell-integration,
                             note: root.draft-note,
-                            jump-session-id: (root.draft-jump-index > 0 && root.draft-jump-index < root.jump-ids.length)
-                                ? root.jump-ids[root.draft-jump-index] : "",
+                            jumps: root.jumps,
+                            allow-secret-reveal: root.allow-secret-reveal,
                         });
                     }
                 }

@@ -895,7 +895,7 @@ pub fn spawn_session(
     runtime: &tokio::runtime::Handle,
     tab_id: String,
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     initial_cols: u32,
     initial_rows: u32,
 ) -> (SessionHandle, UnboundedReceiver<SessionEvent>) {
@@ -1012,10 +1012,10 @@ fn start_runtime_forward(
 /// already failed (#86).
 async fn connect_ssh(
     session: &Session,
-    jump: Option<&Session>,
+    jump: &[Session],
     config: Arc<client::Config>,
     events: &UnboundedSender<SessionEvent>,
-) -> Result<(Handle<ClientHandler>, Option<Handle<ClientHandler>>)> {
+) -> Result<(Handle<ClientHandler>, Vec<Handle<ClientHandler>>)> {
     // Remote (-R) forwards are serviced inside the handler when the server opens
     // channels back, so it needs the bind-port → local-target map up front (the
     // handler is moved into `connect`) (#56).
@@ -1037,7 +1037,7 @@ async fn connect_ssh(
     // a direct-tcpip channel through it to this host and run the SSH handshake
     // over that tunnel. The returned jump handle must be kept alive for the whole
     // session (the tunnel lives on it) (#211).
-    if let Some(j) = jump {
+    if let Some(j) = jump.first() {
         let _ = events.send(SessionEvent::Status(format!(
             "{} {}@{} → {}",
             t("经跳板机连接", "via jump host"),
@@ -1046,10 +1046,10 @@ async fn connect_ssh(
             addr
         )));
         let (handle, jump_handle) =
-            connect_target_via_jump(j, &session.host, session.port, config, handler, events)
+            connect_target_via_jump(jump, &session.host, session.port, config, handler, events)
                 .await
                 .with_context(|| format!("connect {} via jump failed", addr))?;
-        return Ok((handle, Some(jump_handle)));
+        return Ok((handle, jump_handle));
     }
 
     // Connect directly, or tunnel through a SOCKS5 / HTTP proxy (issue #7).
@@ -1072,7 +1072,7 @@ async fn connect_ssh(
             .await
             .with_context(|| format!("connect {} failed", addr))?,
     };
-    Ok((handle, None))
+    Ok((handle, Vec::new()))
 }
 
 /// Outcome of authenticating an SSH session, so callers can distinguish a user
@@ -1090,9 +1090,9 @@ pub(crate) enum AuthResult {
 /// both `handle` and `jump_handle` in place so the caller keeps the live tunnel.
 pub(crate) async fn authenticate_session(
     handle: &mut Handle<ClientHandler>,
-    jump_handle: &mut Option<Handle<ClientHandler>>,
+    jump_handle: &mut Vec<Handle<ClientHandler>>,
     session: &Session,
-    jump: Option<&Session>,
+    jump: &[Session],
     config: Arc<client::Config>,
     events: &UnboundedSender<SessionEvent>,
 ) -> Result<AuthResult> {
@@ -1164,30 +1164,32 @@ pub(crate) async fn authenticate_session(
 
 /// Connect + authenticate a jump/bastion session, open a `direct-tcpip` channel
 /// to `target_host:target_port`, and run the target's SSH handshake over it.
-/// Returns the target handle plus the jump handle, which the caller MUST keep
-/// alive for as long as the target session lives (the tunnel rides on it) (#211).
+/// Returns the target handle plus all ancestor handles, outermost first. Keep
+/// every ancestor alive until the target session closes; close in reverse order.
 pub(crate) async fn connect_target_via_jump<H>(
-    jump: &Session,
+    chain: &[Session],
     target_host: &str,
     target_port: u16,
     config: Arc<client::Config>,
     handler: H,
     events: &UnboundedSender<SessionEvent>,
-) -> Result<(Handle<H>, Handle<ClientHandler>)>
+) -> Result<(Handle<H>, Vec<Handle<ClientHandler>>)>
 where
     H: client::Handler + 'static,
     H::Error: std::error::Error + Send + Sync + 'static,
 {
-    // Single hop: the jump session itself never goes through another jump.
+    let (jump, ancestors) = chain.split_first().context("empty SSH jump chain")?;
+    // Connect to this hop through its ancestors. Keep every transport alive,
+    // including replacement transports created by keyboard-interactive fallback.
     // `Box::pin` breaks the async recursion (connect_ssh → jump → connect_ssh).
-    let (mut jhandle, mut no_nested) = Box::pin(connect_ssh(jump, None, config.clone(), events))
+    let (mut jhandle, mut ancestors_alive) = Box::pin(connect_ssh(jump, ancestors, config.clone(), events))
         .await
         .with_context(|| format!("connect jump host {}:{} failed", jump.host, jump.port))?;
     match authenticate_session(
         &mut jhandle,
-        &mut no_nested,
+        &mut ancestors_alive,
         jump,
-        None,
+        ancestors,
         config.clone(),
         events,
     )
@@ -1216,7 +1218,8 @@ where
     let handle = client::connect_stream(config, channel.into_stream(), handler)
         .await
         .with_context(|| format!("SSH handshake to {target_host}:{target_port} via jump"))?;
-    Ok((handle, jhandle))
+    ancestors_alive.push(jhandle);
+    Ok((handle, ancestors_alive))
 }
 
 // Key-exchange algorithms offered to the server, strongest first. This is the
@@ -1281,18 +1284,18 @@ fn ssh_client_config() -> Arc<client::Config> {
 /// the normal host-key, missing-credential, and MFA UI (#276).
 pub async fn test_session_auth(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     events: UnboundedSender<SessionEvent>,
 ) -> Result<()> {
     let config = ssh_client_config();
     let (mut handle, mut jump_handle) =
-        connect_ssh(&session, jump.as_ref(), config.clone(), &events).await?;
+        connect_ssh(&session, &jump, config.clone(), &events).await?;
 
     let auth = authenticate_session(
         &mut handle,
         &mut jump_handle,
         &session,
-        jump.as_ref(),
+        &jump,
         config,
         &events,
     )
@@ -1307,7 +1310,7 @@ pub async fn test_session_auth(
     let _ = handle
         .disconnect(Disconnect::ByApplication, "connection test complete", "")
         .await;
-    if let Some(jump_handle) = jump_handle {
+    for jump_handle in jump_handle.into_iter().rev() {
         let _ = jump_handle
             .disconnect(Disconnect::ByApplication, "connection test complete", "")
             .await;
@@ -1333,7 +1336,27 @@ pub struct CommandExecution {
 /// this headless path has no UI in which to ask the user.
 pub async fn execute_command(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
+    command: &str,
+    timeout: std::time::Duration,
+    max_output_bytes: usize,
+) -> Result<CommandExecution> {
+    // A hop which accepts TCP but never completes SSH must not bypass the
+    // caller's timeout. Bound the entire route, authentication and command.
+    match tokio::time::timeout(timeout, execute_command_inner(
+        session, jump, command, timeout, max_output_bytes,
+    )).await {
+        Ok(result) => result,
+        Err(_) => Ok(CommandExecution {
+            stdout: String::new(), stderr: String::new(), exit_code: None,
+            timed_out: true, truncated: false,
+        }),
+    }
+}
+
+async fn execute_command_inner(
+    session: Session,
+    jump: Vec<Session>,
     command: &str,
     timeout: std::time::Duration,
     max_output_bytes: usize,
@@ -1342,13 +1365,13 @@ pub async fn execute_command(
     drop(event_rx);
     let config = ssh_client_config();
     let (mut handle, mut jump_handle) =
-        connect_ssh(&session, jump.as_ref(), config.clone(), &events).await?;
+        connect_ssh(&session, &jump, config.clone(), &events).await?;
 
     match authenticate_session(
         &mut handle,
         &mut jump_handle,
         &session,
-        jump.as_ref(),
+        &jump,
         config,
         &events,
     )
@@ -1410,7 +1433,7 @@ pub async fn execute_command(
     let _ = handle
         .disconnect(Disconnect::ByApplication, "command complete", "")
         .await;
-    if let Some(jump_handle) = jump_handle {
+    for jump_handle in jump_handle.into_iter().rev() {
         let _ = jump_handle
             .disconnect(Disconnect::ByApplication, "command complete", "")
             .await;
@@ -1427,7 +1450,7 @@ fn append_bounded(target: &mut Vec<u8>, data: &[u8], limit: usize, truncated: &m
 
 async fn run_session(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     mut commands: UnboundedReceiver<SessionCommand>,
     events: UnboundedSender<SessionEvent>,
     initial_cols: u32,
@@ -1445,7 +1468,7 @@ async fn run_session(
     let config = ssh_client_config();
 
     let (mut handle, mut jump_handle) =
-        connect_ssh(&session, jump.as_ref(), config.clone(), &events).await?;
+        connect_ssh(&session, &jump, config.clone(), &events).await?;
     tracing::info!(
         "[SESSION_START] id={} stage=transport-ready elapsed_ms={}",
         session.id,
@@ -1460,7 +1483,7 @@ async fn run_session(
         &mut handle,
         &mut jump_handle,
         &session,
-        jump.as_ref(),
+        &jump,
         config.clone(),
         &events,
     )

@@ -18,8 +18,9 @@ import { Theme } from "theme.slint";
 import { Sidebar, DiskInfo } from "sidebar.slint";
 import { TabBar, TabInfo } from "tabs.slint";
 import { Welcome, SessionInfo } from "welcome.slint";
-import { SessionDialog, SessionDraft, PortFwd, TriggerDraft } from "session_dialog.slint";
+import { SessionDialog, SessionDraft, PortFwd, TriggerDraft, JumpHop } from "session_dialog.slint";
 import { ConfirmDialog } from "confirm_dialog.slint";
+import { ModalLayer, ModalKind } from "modal.slint";
 import { LabeledInput, PrimaryButton, GhostButton, DockExpandButton, IconButton, ToolStrip } from "widgets.slint";
 import { TerminalView, TermSpan, TermMatch, QuickCmd, QuickDockPanel } from "terminal_view.slint";
 import { SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
@@ -31,7 +32,7 @@ import { InterfacePanel, OutputRuleItem, WslProfileInfo } from "interface_panel.
 export { ProcWindow, SystemInfoWindow, EditorWindow }
 import { ComboBox, SpinBox, LineEdit, Button, ScrollView, CheckBox, Palette } from "std-widgets.slint";
 
-export { SessionInfo, SessionDraft, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo }
+export { SessionInfo, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo }
 
 // --- TerminalState ---------------------------------------------------------
 // Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
@@ -904,10 +905,16 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-group;
     // Existing group names (from Rust) for the dialog's group dropdown (#179).
     in property <[string]> session-groups;
-    // SSH jump host picker (#211): parallel label/id lists + selected index.
+    // SSH route editor (#211): candidates and ordered rows.
     in property <[string]> jump-choices;
     in property <[string]> jump-ids;
-    in-out property <int> dialog-jump-index: 0;
+    in-out property <[JumpHop]> dialog-jumps;
+    in-out property <bool> dialog-allow-secret-reveal: false;
+    callback reveal-session-secret(bool) -> string;
+    callback add-jump();
+    callback update-jump(int, int);
+    callback delete-jump(int);
+    callback move-jump(int, int);
     in-out property <string> dialog-kind: "ssh";
     in-out property <string> dialog-serial-port;
     in-out property <string> dialog-baud: "115200";
@@ -933,6 +940,37 @@ export component AppWindow inherits Window {
     in-out property <bool> confirm-delete-batch: false;   // delete checked entries (#100)
     in-out property <string> confirm-delete-tab;
     in-out property <string> confirm-delete-path;
+
+    // One priority policy per AppWindow. Rendering and keyboard ownership both
+    // use this value; lower layers retain drafts while covered.
+    out property <ModalKind> active-modal:
+        root.confirm-close-open ? ModalKind.exit-confirm :
+        root.mfa-prompt-open ? ModalKind.mfa :
+        root.cred-prompt-open ? ModalKind.credentials :
+        root.hostkey-prompt-open ? ModalKind.host-key :
+        root.confirm-delete-open ? ModalKind.delete-confirm :
+        root.paste-confirm-open ? ModalKind.paste-confirm :
+        root.qcg-open ? ModalKind.command-group :
+        root.sftp-prompt-open ? ModalKind.sftp-prompt :
+        root.chmod-open ? ModalKind.permissions :
+        root.tab-rename-open ? ModalKind.tab-rename :
+        root.group-dialog-open ? ModalKind.group :
+        root.batch-import-open ? ModalKind.batch-import :
+        root.dialog-open ? ModalKind.session :
+        root.quick-cmd-manage-open ? ModalKind.quick-commands :
+        root.interface-open ? ModalKind.settings :
+        root.about-open ? ModalKind.about :
+        root.shortcuts-open ? ModalKind.shortcuts : ModalKind.none;
+    out property <bool> modal-open: root.active-modal != ModalKind.none;
+    changed active-modal => {
+        if !root.modal-open {
+            shortcut-scope.focus();
+            root.terminal-focus-sequence += 1;
+        } else {
+            root.settings-open = false;
+            root.download-open = false;
+        }
+    }
 
     // --- Callbacks up to Rust ---------------------------------------------
     callback new-session-clicked();
@@ -3525,11 +3563,15 @@ export component AppWindow inherits Window {
     }
 
     // --- Group create / rename dialog (#41) -------------------------------
-        if root.group-dialog-open : Rectangle {
+        if root.group-dialog-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.group;
+        cancel-requested => { root.group-dialog-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.group-dialog-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -3614,11 +3656,15 @@ export component AppWindow inherits Window {
     // --- Rename-session dialog ----------------------------------------------
     // Tab context menu → Rename: a display-name override for one open session.
     // Submitting an empty name restores the saved session name.
-    if root.tab-rename-open : Rectangle {
+    if root.tab-rename-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.tab-rename;
+        cancel-requested => { root.tab-rename-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.tab-rename-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -3683,11 +3729,15 @@ export component AppWindow inherits Window {
     }
 
     // --- Quick-command manage dialog (#55) --------------------------------
-        if root.quick-cmd-manage-open : Rectangle {
+        if root.quick-cmd-manage-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.quick-commands;
+        cancel-requested => { root.quick-cmd-manage-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.quick-cmd-manage-open = false; } }
+        dismiss-on-backdrop: true;
 
         qcm-card := Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4086,11 +4136,15 @@ export component AppWindow inherits Window {
     }
 
     // --- Quick-command group name dialog (#55): new / rename --------------
-        if root.qcg-open : Rectangle {
+        if root.qcg-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.command-group;
+        cancel-requested => { root.qcg-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.qcg-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4151,11 +4205,15 @@ export component AppWindow inherits Window {
     }
 
     // --- SFTP prompt dialog (#69): rename / chmod / mkdir / touch ----------
-        if root.sftp-prompt-open : Rectangle {
+        if root.sftp-prompt-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.sftp-prompt;
+        cancel-requested => { root.sftp-prompt-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.sftp-prompt-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4230,28 +4288,19 @@ export component AppWindow inherits Window {
     }
 
     // --- Confirm-before-close dialog (#88) --------------------------------
-    if root.confirm-close-open : Rectangle {
+    if root.confirm-close-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.exit-confirm;
+        cancel-requested => { root.confirm-close-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000088;
-        TouchArea { clicked => { root.confirm-close-open = false; } }
-        // Grab the keyboard so the terminal beneath stops receiving input, and
-        // make the dialog operable without the mouse: Enter/Space close, Esc
-        // cancels (so X → Space closes, X → Esc backs out) (#140-3).
-        FocusScope {
-            init => { self.focus(); }
-            key-pressed(e) => {
-                if (e.text == Key.Escape) {
-                    root.confirm-close-open = false;
-                    accept
-                } else if (e.text == Key.Return || e.text == " ") {
-                    root.confirm-close-yes();
-                    accept
-                } else {
-                    accept   // modal: swallow everything else
-                }
-            }
-        }
+        dismiss-on-backdrop: true;
+        // Keep the existing explicit Enter/Space confirmation opt-in (#140-3).
+        confirm-on-enter: true;
+        confirm-on-space: true;
+        confirm-requested => { root.confirm-close-yes(); }
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4297,11 +4346,15 @@ export component AppWindow inherits Window {
     }
 
     // --- Visual chmod dialog (#84): Owner/Group/Other × Read/Write/Execute --
-    if root.chmod-open : Rectangle {
+    if root.chmod-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.permissions;
+        cancel-requested => { root.chmod-open = false; }
         width: parent.width;
         height: parent.height;
         background: #00000080;
-        TouchArea { clicked => { root.chmod-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4388,12 +4441,15 @@ export component AppWindow inherits Window {
 
 
     // --- Keyboard shortcuts dialog (#103) ---------------------------------
-    Rectangle {
+    ModalLayer {
         width: parent.width;
         height: parent.height;
-        visible: root.shortcuts-open;
+        is-open: root.shortcuts-open;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.shortcuts;
+        cancel-requested => { root.shortcuts-open = false; }
         background: #00000080;
-        TouchArea { clicked => { root.shortcuts-open = false; } }
+        dismiss-on-backdrop: true;
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -4487,12 +4543,15 @@ export component AppWindow inherits Window {
     }
 
     // --- About dialog (centered on the window, with dim backdrop) ---------
-    Rectangle {
+    ModalLayer {
         width: parent.width;
         height: parent.height;
-        visible: root.about-open;
+        is-open: root.about-open;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.about;
+        cancel-requested => { root.about-open = false; }
         background: #00000080;            // dim backdrop
-        TouchArea { clicked => { root.about-open = false; } }
+        dismiss-on-backdrop: true;
 
         // Landscape card: logo on the left, a short intro + repo link on the right.
         Rectangle {
@@ -4614,6 +4673,8 @@ export component AppWindow inherits Window {
         height: parent.height;
         is-open <=> root.dialog-open;
         is-editing <=> root.dialog-editing;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.session;
         draft-id <=> root.dialog-id;
         draft-name <=> root.dialog-name;
         draft-host <=> root.dialog-host;
@@ -4629,8 +4690,13 @@ export component AppWindow inherits Window {
         draft-group <=> root.dialog-group;
         session-groups: root.session-groups;
         jump-choices: root.jump-choices;
-        jump-ids: root.jump-ids;
-        draft-jump-index <=> root.dialog-jump-index;
+        jumps: root.dialog-jumps;
+        allow-secret-reveal <=> root.dialog-allow-secret-reveal;
+        reveal-secret(key) => { root.reveal-session-secret(key) }
+        add-jump => { root.add-jump(); }
+        update-jump(row, choice) => { root.update-jump(row, choice); }
+        delete-jump(row) => { root.delete-jump(row); }
+        move-jump(from, to) => { root.move-jump(from, to); }
         draft-kind <=> root.dialog-kind;
         draft-serial-port <=> root.dialog-serial-port;
         draft-baud <=> root.dialog-baud;
@@ -4667,6 +4733,8 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         is-open <=> root.confirm-delete-open;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.delete-confirm;
         title: @tr("Confirm delete");
         message: root.confirm-delete-batch
             ? (root.lang-en ? "Delete the checked items? This cannot be undone."
@@ -4693,7 +4761,8 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         is-open <=> root.paste-confirm-open;
-        covered: root.confirm-close-open;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.paste-confirm;
         dismiss-on-backdrop: false;
         confirm-on-enter: true;
         title: root.lang-en ? "Confirm multi-line paste" : "确认多行粘贴";
@@ -4723,6 +4792,8 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         is-open <=> root.hostkey-prompt-open;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.host-key;
         dismiss-on-backdrop: false;
         title: root.hostkey-title;
         message: root.hostkey-message;
@@ -4733,11 +4804,15 @@ export component AppWindow inherits Window {
     }
 
     // Batch-import connections from pasted text (#150).
-    if root.batch-import-open : Rectangle {
+    if root.batch-import-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.batch-import;
+        cancel-requested => { root.batch-import-open = false; }
         width: parent.width;
         height: parent.height;
         background: #000000aa;
-        TouchArea { clicked => { root.batch-import-open = false; } }   // backdrop closes
+        dismiss-on-backdrop: true;   // backdrop closes
         Rectangle {
             width: 540px;
             height: 440px;
@@ -4819,11 +4894,15 @@ export component AppWindow inherits Window {
     }
 
     // Connect-time credential prompt (#110). Backdrop / Cancel abort the connect.
-    if root.cred-prompt-open : Rectangle {
+    if root.cred-prompt-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.credentials;
+        cancel-requested => { root.cred-reject(); }
         width: parent.width;
         height: parent.height;
         background: #000000aa;
-        TouchArea { clicked => { root.cred-reject(); } }
+        dismiss-on-backdrop: true;
         Rectangle {
             width: 360px;
             height: cred-card.preferred-height;
@@ -4889,11 +4968,15 @@ export component AppWindow inherits Window {
     // MFA / keyboard-interactive prompt (#86-MFA). A bastion (JumpServer with MFA
     // forced on) challenges for a verification code mid-login; backdrop / Cancel
     // abort the connect.
-    if root.mfa-prompt-open : Rectangle {
+    if root.mfa-prompt-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.mfa;
+        cancel-requested => { root.mfa-cancel(); }
         width: parent.width;
         height: parent.height;
         background: #000000aa;
-        TouchArea { clicked => { root.mfa-cancel(); } }
+        dismiss-on-backdrop: true;
         Rectangle {
             width: 360px;
             height: mfa-card.preferred-height;
@@ -4959,22 +5042,17 @@ export component AppWindow inherits Window {
     // dragged outside the parent. The dim backdrop + a focus-grabbing scope make
     // it modal: no mouse or keyboard input reaches the app while it's open. The
     // card itself is draggable by its title bar but clamped inside the window.
-    if root.interface-open : Rectangle {
+    if root.interface-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        covered: root.active-modal != ModalKind.settings;
+        cancel-requested => { root.interface-open = false; }
         width: 100%;
         height: 100%;
         background: #00000080;            // dim backdrop
-        // Grab focus and swallow keys so nothing leaks to the terminal beneath;
-        // Esc closes the panel (#140-3).
-        FocusScope {
-            init => { self.focus(); }
-            key-pressed(e) => {
-                if (e.text == Key.Escape) { root.interface-open = false; }
-                accept
-            }
-            key-released(e) => { accept }
-        }
-        // Modal: clicking the backdrop does nothing (only the ✕ closes it).
-        TouchArea { scroll-event(e) => { accept } }
+        // ModalLayer owns keyboard focus and blocks backdrop scrolling (#140-3).
+        // Keep backdrop dismissal disabled for settings.
+        dismiss-on-backdrop: false;
 
         Rectangle {
             x: root.ifd-x;

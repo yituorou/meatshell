@@ -12,7 +12,7 @@ use crate::ssh::SessionEvent;
 
 pub(super) async fn list(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     path: String,
     timeout: Duration,
 ) -> Result<Value> {
@@ -85,7 +85,7 @@ pub(super) async fn list(
 
 pub(super) async fn read_text(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     path: String,
     timeout: Duration,
 ) -> Result<Value> {
@@ -147,7 +147,7 @@ pub(super) async fn read_text(
 
 pub(super) async fn transfer(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     command: SftpCommand,
     upload: bool,
     timeout: Duration,

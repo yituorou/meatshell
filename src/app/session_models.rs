@@ -91,18 +91,15 @@ pub(super) fn session_groups_model(store: &ConfigStore) -> ModelRc<SharedString>
 }
 
 /// Build the jump-host picker's parallel label/id lists for the session dialog
-/// (#211). Index 0 is always the "no jump host" entry (empty id); the rest are
+/// (#211). Index 0 is the unselected placeholder (empty id); the rest are
 /// the saved SSH sessions except `exclude_id` (a session can't jump through
-/// itself). Returns `(labels, ids, selected_index)` where `selected_index`
-/// points at `current_jump_id` (0 if unset / dangling).
+/// itself). Each row resolves its own selection in these parallel lists.
 pub(super) fn jump_candidates(
     store: &ConfigStore,
     exclude_id: &str,
-    current_jump_id: &str,
-) -> (ModelRc<SharedString>, ModelRc<SharedString>, i32) {
-    let mut labels: Vec<SharedString> = vec![t("无（直接连接）", "None (direct)").into()];
+) -> (ModelRc<SharedString>, ModelRc<SharedString>) {
+    let mut labels: Vec<SharedString> = vec![t("请选择跳板机", "Select a jump host").into()];
     let mut ids: Vec<SharedString> = vec!["".into()];
-    let mut selected: i32 = 0;
     for s in store.sessions() {
         if s.kind != SessionKind::Ssh || s.id == exclude_id {
             continue;
@@ -114,18 +111,14 @@ pub(super) fn jump_candidates(
                 format!("{}@{}", s.user, s.host)
             }
         } else {
-            format!("{} ({}@{})", s.name, s.user, s.host)
+            format!("{} ({}@{}:{})", s.name, s.user, s.host, s.port)
         };
-        if s.id == current_jump_id {
-            selected = ids.len() as i32;
-        }
         labels.push(label.into());
         ids.push(s.id.clone().into());
     }
     (
         ModelRc::from(Rc::new(VecModel::from(labels))),
         ModelRc::from(Rc::new(VecModel::from(ids))),
-        selected,
     )
 }
 
@@ -412,8 +405,8 @@ pub(super) fn wsl_available() -> bool {
 // ---------------------------------------------------------------------------
 
 /// Build the effective session represented by the dialog. When editing, blank
-/// secret fields retain their saved values because real passwords and pasted
-/// private keys are deliberately never echoed back into the UI (#10, #276).
+/// secret fields retain their saved values. Stored secrets only enter the UI
+/// after opting in and clicking the eye button (#10, #276).
 pub(super) fn session_from_draft(
     draft: &SessionDraft,
     existing: Option<&Session>,
@@ -436,17 +429,20 @@ pub(super) fn session_from_draft(
     } else {
         Secret::default()
     };
+    // Store key paths with forward slashes uniformly; inline mode clears the path.
     let private_key_path = if draft.private_key_inline_mode {
         String::new()
     } else {
         draft.private_key_path.to_string().replace('\\', "/")
     };
     let kind = SessionKind::from_str(&draft.kind.to_string());
+    // Auto-name: serial uses the device; otherwise user@host or just host (#110).
     let auto_name = match kind {
         SessionKind::Serial => format!("{} @{}", draft.serial_port, draft.baud_rate),
         _ if draft.user.trim().is_empty() => draft.host.to_string(),
         _ => format!("{}@{}", draft.user, draft.host),
     };
+    // Telnet defaults to 23, RDP to 3389, SSH to 22; serial ignores the port.
     let default_port = match kind {
         SessionKind::Telnet => 23,
         SessionKind::Rdp => 3389,
@@ -498,7 +494,13 @@ pub(super) fn session_from_draft(
         triggers,
         disable_shell_integration: draft.disable_shell_integration,
         note: draft.note.to_string(),
-        jump_session_id: draft.jump_session_id.to_string(),
+        jump_session_id: String::new(),
+        jump_session_ids: if kind == SessionKind::Ssh {
+            draft.jumps.iter().map(|hop| hop.id.to_string()).collect()
+        } else {
+            Vec::new()
+        },
+        allow_secret_reveal: draft.allow_secret_reveal,
         rdp_domain: draft.rdp_domain.to_string(),
         rdp_fullscreen,
         rdp_width,

@@ -1891,11 +1891,20 @@ impl ConfigStore {
     }
 }
 
+/// Isolated fixture for controller tests; never resolves the user's profile.
+#[cfg(test)]
+pub(crate) fn fixture_store(path: PathBuf, sessions: Vec<Session>) -> ConfigStore {
+    let mut store = tests::temp_store();
+    store.path = path;
+    store.cache.sessions = sessions;
+    store
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn temp_store() -> ConfigStore {
+    pub(super) fn temp_store() -> ConfigStore {
         let path = std::env::temp_dir().join(format!("ms-test-{}.json", Uuid::new_v4()));
         ConfigStore {
             path,
