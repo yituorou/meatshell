@@ -20,8 +20,9 @@ jobs:
       AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
       AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-    # Release and manual-dispatch events are the only supported triggers.
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release != null }}
+    # Fork releases are GitHub-only. Never publish a fork/prerelease into the
+    # upstream-owned AUR package, even if a fork happens to configure secrets.
+    if: ${{ github.repository == 'yituorou/meatshell' && (github.event_name == 'workflow_dispatch' || (github.event.release != null && !github.event.release.prerelease)) }}
     steps:
       - uses: actions/checkout@v4
 

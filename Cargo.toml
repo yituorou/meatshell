@@ -1,13 +1,13 @@
 [package]
 name = "meatshell"
-version = "0.7.4"
+version = "0.7.4-remote.1"
 edition = "2021"
 authors = ["meatshell contributors"]
 description = "A lightweight FinalShell-style SSH/terminal client written in Rust + Slint"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/your/meatshell"
 readme = "README.md"
-rust-version = "1.75"
+rust-version = "1.88"
 
 [package.metadata.deb]
 extended-description = "MeatShell is a cross-platform terminal client written in Rust and Slint."
@@ -26,7 +26,12 @@ assets = [
     ["assets/meatshell.desktop", "usr/share/applications/", "644"],
     ["assets/icon@512.png", "usr/share/icons/hicolor/512x512/apps/meatshell.png", "644"],
     ["THIRD_PARTY_NOTICES.md", "usr/share/doc/meatshell/", "644"],
+    ["docs/REMOTE_MCP.md", "usr/share/doc/meatshell/", "644"],
 ]
+
+[features]
+# Cloud/server CLI and MCP build without compiling the desktop UI.
+headless = []
 
 [dependencies]
 # Keep all desktop platforms on the native text layout patched below.
@@ -54,7 +59,7 @@ directories = "5"
 chrono = { version = "0.4", features = ["serde"] }
 sysinfo = "0.33"
 uuid = { version = "1", features = ["v4", "serde"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "time", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "time", "fs", "signal"] }
 # Pinned to 0.49: RUSTSEC-2026-0154 (an unbounded-allocation DoS in russh's
 # ssh-AGENT frame parsing) is fixed only in >= 0.60.3, which drags in pre-release
 # crypto crates (ed25519-dalek 3.0.0-pre, aes-gcm 0.11.0-rc, 鈥?. meatshell never
@@ -100,6 +105,8 @@ cbc = "0.1"
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
+# OS locks serialize configuration writes across GUI and automation processes.
+fs2 = "0.4.3"
 # FinalShell connection exports derive a DES key with MD5 using java.util.Random.
 des = "0.8"
 md5 = "0.7"
@@ -143,6 +150,24 @@ jemallocator = "0.5"
 # import library at link time when using the MSVC toolchain (#224).
 [target.'cfg(target_os = "macos")'.dependencies]
 slint = { version = "=1.16.1", default-features = false, features = ["renderer-skia"] }
+
+# Official MCP HTTP transport and externally issued OAuth JWT verification.
+[dependencies.rmcp]
+version = "=2.2.0"
+default-features = false
+features = ["server", "transport-streamable-http-server"]
+
+[dependencies.axum]
+version = "0.8"
+
+[dependencies.jsonwebtoken]
+version = "9.3"
+
+[dependencies.tokio-util]
+version = "0.7"
+
+[dependencies.url]
+version = "2"
 
 [build-dependencies]
 slint-build = "=1.16.1"

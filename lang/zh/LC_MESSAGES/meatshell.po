@@ -613,6 +613,36 @@ msgstr "高度"
 msgid "Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window."
 msgstr "远端桌面的分辨率；全屏连接后按 Ctrl+Alt+Enter 可切回窗口。"
 
+msgid "Hide secret"
+msgstr "隐藏凭据"
+
+msgid "Show secret"
+msgstr "查看凭据"
+
+msgid "Jump chain (optional)"
+msgstr "跳板机链路（可选）"
+
+msgid "Local → hops below → target. First hop connects first."
+msgstr "本机 → 下列跳板机 → 目标。按实际连接顺序排列，第一项最先连接。"
+
+msgid "+ Add jump host"
+msgstr "+ 添加跳板机"
+
+msgid "Target"
+msgstr "目标"
+
+msgid "Move to hop"
+msgstr "移至跳板"
+
+msgid "Hop"
+msgstr "跳板"
+
+msgid "Allow viewing saved credentials in this session"
+msgstr "允许在此会话中查看已保存的凭据"
+
+msgid "Unavailable"
+msgstr "不可用"
+
 msgid "Session log"
 msgstr "会话日志"
 
@@ -627,3 +657,27 @@ msgstr "从不记录"
 
 msgid "Saves this session's terminal output as timestamped plain text. Keystrokes are not recorded. The folder is set in Settings → Session log."
 msgstr "将此会话的终端输出保存为带时间戳的纯文本，不记录按键。日志目录在「设置 → 会话日志」中设置。"
+
+msgid "Discard unsaved changes?"
+msgstr "放弃未保存的修改？"
+
+msgid "This file has unsaved changes. Close without saving?"
+msgstr "此文件有未保存的修改。确定不保存并关闭吗？"
+
+msgid "Discard and close"
+msgstr "放弃并关闭"
+
+msgid "Enter a new password"
+msgstr "输入新密码"
+
+msgid "Enter a key passphrase"
+msgstr "输入私钥口令"
+
+msgid "Credentials start hidden. Click the eye to view. Save to remember this option."
+msgstr "凭据默认隐藏，点击眼睛查看。保存后会记住此选项。"
+
+msgid "Save session"
+msgstr "保存会话"
+
+msgid "Create session"
+msgstr "创建会话"

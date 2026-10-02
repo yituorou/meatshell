@@ -184,6 +184,43 @@ meatshell cli download <session-id> /tmp/result.txt ./downloads
 Get `<session-id>` from `meatshell cli sessions`. A download requires an existing
 local destination directory and will not overwrite a file with the same name.
 
+### Import saved sessions without the GUI
+
+For a cloud/server build that omits the desktop UI, run `cargo build --locked --features headless`.
+The same binary supports CLI/MCP and the same SSH/SFTP implementation; launching without
+a subcommand returns a usage error. The default build still includes the desktop UI.
+This option avoids compiling the generated application UI; the current Cargo dependency
+graph still includes Slint, so normal platform build dependencies may still be required.
+
+Use the JSON file produced by MeatShell's **Export** action directly:
+
+```bash
+meatshell --data-dir /absolute/path/to/profile cli import ./meatshell-connections.json --dry-run --json
+meatshell --data-dir /absolute/path/to/profile cli import ./meatshell-connections.json --json
+```
+
+Import appends sessions and skips only equivalent configurations (ignoring local IDs
+and last-used timestamps). Different names, groups, credentials, proxies and jump routes
+remain separate profiles even on the same endpoint. Existing sessions and settings are never replaced. Imported
+jump-host references are remapped to the new IDs, including forward references and
+references to skipped duplicates. `--dry-run` validates and reports counts without
+changing saved sessions; normal profile initialization may create the directory/key.
+
+The limit is 16 MiB. MeatShell portable exports (`meatshell_export: 1`, including
+`enc:exp:v1:` credentials), FinalShell exports, and native JSON profiles are supported.
+Native profiles import sessions only. Machine-local `enc:v1:` credentials require the
+matching profile key; undecryptable secrets and invalid jump chains reject the entire
+import. A key-file path is preserved but its file is not copied: make that key available
+on the destination separately. Portable export encryption is reversible with a built-in
+key, so treat an export as a credential-bearing file and keep it private.
+
+MCP exposes `import_sessions` with `local_path` and optional `dry_run` (default `true`).
+It returns only `added`, `skipped`, and `dry_run`. The existing MCP enable/file-transfer
+permissions apply. To permit writes, explicitly start the server with
+`meatshell --data-dir /absolute/path/to/profile mcp serve --allow-config-import`, then
+call with `dry_run: false`. Do not enable this flag for untrusted MCP clients. Importing
+does not trust SSH host keys; connection verification is still required.
+
 ### MCP
 
 First open **Settings → Interface → MCP** in MeatShell:
@@ -322,3 +359,10 @@ tag, and pushes the current branch plus the tag. See
 ## License
 
 Dual-licensed under MIT OR Apache-2.0.
+
+
+## Authenticated remote MCP / 带认证的远程 MCP
+
+Run the new opt-in Streamable HTTP service with an external OAuth 2.1 provider,
+HTTPS reverse proxy and an explicitly selected private profile. Existing GUI, CLI
+and stdio MCP remain unchanged. See [deployment, authentication and security limits](docs/REMOTE_MCP.md).

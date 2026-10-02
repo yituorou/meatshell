@@ -1,3 +1,16 @@
+## 0.7.4-remote.1 (fork prerelease)
+
+- Add opt-in authenticated Streamable HTTP MCP `/mcp`, using the official Rust
+  MCP SDK and externally issued RS256 OAuth access tokens
+- Require exact issuer/resource audience, expiry/not-before, scope, explicit
+  subject allowlist, private profile selection, and public-only pinned JWKS
+- Add principal-bound sessions, request/stream limits, discovery metadata,
+  strict origins/hosts, and cancellation of target/jump SSH and SFTP workers
+- Keep default desktop GUI, CLI, stdio MCP, host-key checks and all local tool gates
+- Include the existing fork history: multi-hop SSH, safe profile/config storage,
+  CLI/MCP imports/headless mode, session editor fixes and bounded connection stages
+- Add synthetic loopback tests and external IdP/HTTPS deployment documentation
+
 # Changelog / 更新日志
 
 All notable changes are documented here. 本文件记录所有重要变更。

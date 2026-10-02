@@ -7,30 +7,42 @@ use zeroize::Zeroize;
 /// independent copy that is likewise zeroed on its own drop, and `Debug` is
 /// redacted so a password can never be logged by accident.
 #[derive(Clone, Default)]
-pub struct Secret(pub(crate) String);
+pub struct Secret {
+    value: String,
+    // Nonserialized provenance: only raw local-profile deserialization can mark
+    // a value as ciphertext. Successfully decoded or newly entered values are
+    // plaintext even if their literal content begins with `enc:v1:`.
+    local_ciphertext: bool,
+}
 
 impl Secret {
     pub fn new(s: impl Into<String>) -> Self {
-        Secret(s.into())
+        Self {
+            value: s.into(),
+            local_ciphertext: false,
+        }
     }
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.value
     }
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.value.is_empty()
+    }
+    pub(crate) fn is_local_ciphertext(&self) -> bool {
+        self.local_ciphertext
     }
 }
 
 impl Drop for Secret {
     fn drop(&mut self) {
-        self.0.zeroize();
+        self.value.zeroize();
     }
 }
 
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Never reveal the contents in logs / debug output.
-        f.write_str(if self.0.is_empty() {
+        f.write_str(if self.value.is_empty() {
             "Secret(\"\")"
         } else {
             "Secret(***)"
@@ -40,12 +52,17 @@ impl std::fmt::Debug for Secret {
 
 impl Serialize for Secret {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&self.0)
+        s.serialize_str(&self.value)
     }
 }
 
 impl<'de> Deserialize<'de> for Secret {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(Secret(String::deserialize(d)?))
+        let value = String::deserialize(d)?;
+        let local_ciphertext = value.starts_with("enc:v1:");
+        Ok(Self {
+            value,
+            local_ciphertext,
+        })
     }
 }

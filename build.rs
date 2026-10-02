@@ -1,4 +1,9 @@
 fn main() {
+    // The headless adapter reuses production SSH/CLI/MCP modules but never
+    // instantiates AppWindow, avoiding its generated UI code on small servers.
+    if std::env::var_os("CARGO_FEATURE_HEADLESS").is_some() {
+        return;
+    }
     // Some MinGW-w64 distributions (winlibs' "MCF" builds, which thread through
     // mcfgthread) need the mcfgthread import library on the link line, otherwise
     // libgcc_eh.a's emutls.o is left with undefined `_MCF_*` symbols and the

@@ -7,6 +7,7 @@
 // a model shared with the main window, so the table stays live.
 
 import { Theme } from "theme.slint";
+import { ModalScope, ModalLayer } from "modal.slint";
 import { LabeledInput, GhostButton } from "widgets.slint";
 
 // One row in the process table. Lives here (not app.slint) so both the main
@@ -87,6 +88,7 @@ export component ProcWindow inherits Window {
     default-font-family: Theme.ui-font-family;
     // Frameless + self-drawn titlebar on Windows/Linux (Rust sets this true),
     // native frame elsewhere — mirrors AppWindow's approach (#119).
+    in property <bool> is-mac: false;
     in property <bool> custom-titlebar;
     no-frame: root.custom-titlebar;
     in property <[ProcRow]> proc-list;       // top remote processes by CPU
@@ -148,6 +150,10 @@ export component ProcWindow inherits Window {
         background: Theme.bg-panel;
     }
 
+    ModalScope {
+        active: !root.terminate-dialog-open;
+        is-mac: root.is-mac;
+        cancel-requested => { root.close(); }
     VerticalLayout {
         spacing: 0;
 
@@ -335,18 +341,17 @@ export component ProcWindow inherits Window {
         }
     }
 
-    if root.terminate-dialog-open : Rectangle {
+    if root.terminate-dialog-open : ModalLayer {
+        is-open: true;
+        is-mac: root.is-mac;
+        cancel-requested => {
+            root.root-password = "";
+            root.terminate-dialog-open = false;
+        }
         width: parent.width;
         height: parent.height;
         background: #000000aa;
-        TouchArea {
-            clicked => {
-                if (!root.action-busy) {
-                    root.root-password = "";
-                    root.terminate-dialog-open = false;
-                }
-            }
-        }
+        dismiss-on-backdrop: !root.action-busy;
         Rectangle {
             width: 420px;
             height: terminate-card.preferred-height;
@@ -460,5 +465,6 @@ export component ProcWindow inherits Window {
                     background: Theme.text-muted; }
         Rectangle { x: parent.width - 5px;  y: parent.height - 9px;  width: 2px; height: 2px;
                     background: Theme.text-muted; }
+    }
     }
 }

@@ -616,6 +616,36 @@ msgstr "Height"
 msgid "Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window."
 msgstr "Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window."
 
+msgid "Hide secret"
+msgstr "Hide secret"
+
+msgid "Show secret"
+msgstr "Show secret"
+
+msgid "Jump chain (optional)"
+msgstr "Jump chain (optional)"
+
+msgid "Local → hops below → target. First hop connects first."
+msgstr "Local → hops below → target. First hop connects first."
+
+msgid "+ Add jump host"
+msgstr "+ Add jump host"
+
+msgid "Target"
+msgstr "Target"
+
+msgid "Move to hop"
+msgstr "Move to hop"
+
+msgid "Hop"
+msgstr "Hop"
+
+msgid "Allow viewing saved credentials in this session"
+msgstr "Allow viewing saved credentials in this session"
+
+msgid "Unavailable"
+msgstr "Unavailable"
+
 msgid "Session log"
 msgstr "Session log"
 
@@ -630,3 +660,27 @@ msgstr "Never record"
 
 msgid "Saves this session's terminal output as timestamped plain text. Keystrokes are not recorded. The folder is set in Settings → Session log."
 msgstr "Saves this session's terminal output as timestamped plain text. Keystrokes are not recorded. The folder is set in Settings → Session log."
+
+msgid "Discard unsaved changes?"
+msgstr "Discard unsaved changes?"
+
+msgid "This file has unsaved changes. Close without saving?"
+msgstr "This file has unsaved changes. Close without saving?"
+
+msgid "Discard and close"
+msgstr "Discard and close"
+
+msgid "Enter a new password"
+msgstr "Enter a new password"
+
+msgid "Enter a key passphrase"
+msgstr "Enter a key passphrase"
+
+msgid "Credentials start hidden. Click the eye to view. Save to remember this option."
+msgstr "Credentials start hidden. Click the eye to view. Save to remember this option."
+
+msgid "Save session"
+msgstr "Save session"
+
+msgid "Create session"
+msgstr "Create session"

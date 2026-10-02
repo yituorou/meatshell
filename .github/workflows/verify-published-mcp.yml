@@ -1,0 +1,44 @@
+name: Verify published Windows MCP
+
+on:
+  push:
+    branches: ["feat/authenticated-remote-mcp"]
+    paths: [".github/workflows/verify-published-mcp.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c81e786019e7dc7e24397442291977a78dd291b4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install synthetic fixture dependencies
+        run: python -m pip install cryptography==50.0.2 paramiko==5.0.0
+      - name: Download and verify the published ZIP
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $asset = 'meatshell-v0.7.4-remote.1-windows-x86_64.zip'
+          gh release download v0.7.4-remote.1 --repo '${{ github.repository }}' --pattern $asset --dir package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash "package/$asset" -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne '6a9fb4618b3f356f527a0efcbd539d6690089a1f4f1260a5ecd82b8be8a05e34') { throw 'Published ZIP hash mismatch' }
+          Expand-Archive "package/$asset" package/extracted
+      - name: Test the published Windows HTTP, CLI and stdio binary
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem package/extracted -Recurse -Filter meatshell.exe | Select-Object -First 1).FullName
+          python tests/remote_mcp_e2e.py --exe "$exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/config_import_e2e.py --exe "$exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/ssh_jump_chain_e2e.py --exe "$exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

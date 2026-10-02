@@ -161,17 +161,17 @@ fn friendly_sftp_error(err: &anyhow::Error) -> String {
 pub fn spawn_sftp(
     runtime: &tokio::runtime::Handle,
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     events: UnboundedSender<SessionEvent>,
 ) -> SftpHandle {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let self_tx = cmd_tx.clone();
     let events_err = events.clone();
-    let join = runtime.spawn(async move {
+    let join = runtime.spawn(crate::ssh::inherit_automation_cancellation(async move {
         if let Err(err) = run_sftp(session, jump, cmd_rx, self_tx, events).await {
             let _ = events_err.send(SessionEvent::SftpStatus(friendly_sftp_error(&err)));
         }
-    });
+    }));
     SftpHandle {
         commands: cmd_tx,
         join,
@@ -251,7 +251,7 @@ async fn sync_tree_dir(
 
 async fn run_sftp(
     session: Session,
-    jump: Option<Session>,
+    jump: Vec<Session>,
     mut commands: UnboundedReceiver<SftpCommand>,
     self_tx: UnboundedSender<SftpCommand>,
     events: UnboundedSender<SessionEvent>,
@@ -297,8 +297,8 @@ async fn run_sftp(
     let mut _jump_keepalive;
     // Tunnel through an SSH jump host (#211), the same proxy as the shell (#7),
     // or connect directly.
-    let mut handle = match &jump {
-        Some(j) => {
+    let mut handle = match jump.as_slice() {
+        j if !j.is_empty() => {
             let (h, jh) = crate::ssh::connect_target_via_jump(
                 j,
                 &session.host,
@@ -309,28 +309,18 @@ async fn run_sftp(
             )
             .await
             .with_context(|| format!("sftp connect {} via jump failed", addr))?;
-            _jump_keepalive = Some(jh);
+            _jump_keepalive = jh;
             h
         }
-        None => {
-            _jump_keepalive = None;
-            match crate::ssh::proxy::resolve(&session.proxy) {
-                Some(p) => {
-                    let stream = crate::ssh::proxy::connect(&p, &session.host, session.port)
-                        .await
-                        .with_context(|| format!("sftp proxy connect {} failed", addr))?;
-                    client::connect_stream(config.clone(), stream, sftp_handler(&session, &events))
-                        .await
-                        .with_context(|| format!("sftp connect {} failed", addr))?
-                }
-                None => client::connect(
-                    config.clone(),
-                    addr.as_str(),
-                    sftp_handler(&session, &events),
-                )
-                .await
-                .with_context(|| format!("sftp connect {} failed", addr))?,
-            }
+        _ => {
+            _jump_keepalive = Vec::new();
+            crate::ssh::connect_direct_ssh(
+                &session,
+                config.clone(),
+                sftp_handler(&session, &events),
+                &events,
+            )
+            .await?
         }
     };
 
@@ -344,17 +334,21 @@ async fn run_sftp(
     // --- Authenticate (same method as the shell session) -------------------
     let authed = match session.auth {
         AuthMethod::Password => {
-            let mut ok = handle
-                .authenticate_password(&user, password.as_str())
-                .await
-                .context("sftp password auth failed")?;
+            let mut ok = crate::ssh::network_stage(
+                &format!(
+                    "SFTP password authentication at {}:{}",
+                    session.host, session.port
+                ),
+                handle.authenticate_password(&user, password.as_str()),
+            )
+            .await?;
             if !ok {
                 // Match the shell session's fallback: russh can hang if a second
                 // auth method is attempted on the same failed handle, so reconnect
                 // before trying keyboard-interactive (#86, #186).
-                let _ = handle.disconnect(Disconnect::ByApplication, "", "").await;
-                handle = match &jump {
-                    Some(j) => {
+                crate::ssh::disconnect_ssh(&handle, "authentication fallback").await;
+                handle = match jump.as_slice() {
+                    j if !j.is_empty() => {
                         let (h, jh) = crate::ssh::connect_target_via_jump(
                             j,
                             &session.host,
@@ -365,35 +359,18 @@ async fn run_sftp(
                         )
                         .await
                         .with_context(|| format!("sftp reconnect {} via jump failed", addr))?;
-                        _jump_keepalive = Some(jh);
+                        _jump_keepalive = jh;
                         h
                     }
-                    None => {
-                        _jump_keepalive = None;
-                        match crate::ssh::proxy::resolve(&session.proxy) {
-                            Some(p) => {
-                                let stream =
-                                    crate::ssh::proxy::connect(&p, &session.host, session.port)
-                                        .await
-                                        .with_context(|| {
-                                            format!("sftp proxy reconnect {} failed", addr)
-                                        })?;
-                                client::connect_stream(
-                                    config.clone(),
-                                    stream,
-                                    sftp_handler(&session, &events),
-                                )
-                                .await
-                                .with_context(|| format!("sftp reconnect {} failed", addr))?
-                            }
-                            None => client::connect(
-                                config.clone(),
-                                addr.as_str(),
-                                sftp_handler(&session, &events),
-                            )
-                            .await
-                            .with_context(|| format!("sftp reconnect {} failed", addr))?,
-                        }
+                    _ => {
+                        _jump_keepalive = Vec::new();
+                        crate::ssh::connect_direct_ssh(
+                            &session,
+                            config.clone(),
+                            sftp_handler(&session, &events),
+                            &events,
+                        )
+                        .await?
                     }
                 };
                 ok = crate::ssh::keyboard_interactive_auth(
@@ -430,10 +407,14 @@ async fn run_sftp(
             let hash = keypair.algorithm().is_rsa().then_some(HashAlg::Sha256);
             let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(keypair), hash)
                 .context("invalid private key")?;
-            handle
-                .authenticate_publickey(&user, key_with_hash)
-                .await
-                .context("sftp publickey auth failed")?
+            crate::ssh::network_stage(
+                &format!(
+                    "SFTP public-key authentication at {}:{}",
+                    session.host, session.port
+                ),
+                handle.authenticate_publickey(&user, key_with_hash),
+            )
+            .await?
         }
     };
 
@@ -442,17 +423,21 @@ async fn run_sftp(
     }
 
     // --- Open the sftp subsystem channel -----------------------------------
-    let channel = handle
-        .channel_open_session()
-        .await
-        .context("open sftp channel")?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .context("request sftp subsystem")?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .context("sftp handshake")?;
+    let channel = crate::ssh::network_stage(
+        &format!("open SFTP channel at {}:{}", session.host, session.port),
+        handle.channel_open_session(),
+    )
+    .await?;
+    crate::ssh::network_stage(
+        &format!("request SFTP subsystem at {}:{}", session.host, session.port),
+        channel.request_subsystem(true, "sftp"),
+    )
+    .await?;
+    let sftp = crate::ssh::network_stage(
+        &format!("SFTP handshake at {}:{}", session.host, session.port),
+        SftpSession::new(channel.into_stream()),
+    )
+    .await?;
     // Share the session + connection so transfers can run on their own task,
     // leaving the command loop free to list/switch directories meanwhile (#116-2).
     let sftp = std::sync::Arc::new(sftp);
@@ -531,8 +516,16 @@ async fn run_sftp(
         let _ = events.send(SessionEvent::SftpTreeUpdate(nodes));
     }
 
+    // Own every transfer task. Dropping/aborting the worker cancels transfers
+    // too, rather than leaving detached writes alive after an MCP cancellation.
+    let mut transfers = tokio::task::JoinSet::new();
+
     // --- Command loop -------------------------------------------------------
-    while let Some(cmd) = commands.recv().await {
+    loop {
+        let cmd = tokio::select! {
+            command = commands.recv() => match command { Some(command) => command, None => break },
+            _ = transfers.join_next(), if !transfers.is_empty() => continue,
+        };
         match cmd {
             SftpCommand::Close => break,
 
@@ -645,7 +638,7 @@ async fn run_sftp(
                     .unwrap()
                     .insert(file_id.clone(), cancel.clone());
                 let cancels_done = cancels.clone();
-                tokio::spawn(async move {
+                transfers.spawn(async move {
                     // A directory target → recursively mirror the whole tree (#50).
                     let is_dir = sftp
                         .metadata(&remote)
@@ -770,7 +763,7 @@ async fn run_sftp(
                 let cancel = Arc::new(AtomicBool::new(false));
                 cancels.lock().unwrap().insert(id.clone(), cancel.clone());
                 let cancels_done = cancels.clone();
-                tokio::spawn(async move {
+                transfers.spawn(async move {
                     let n = names.len();
                     let tmp = format!("/tmp/meatshell-{}.tar", Uuid::new_v4());
                     // Name the archive after the first item's stem, per the user:
@@ -871,7 +864,7 @@ async fn run_sftp(
                     .unwrap()
                     .insert(up_id.clone(), cancel.clone());
                 let cancels_done = cancels.clone();
-                tokio::spawn(async move {
+                transfers.spawn(async move {
                     // A directory source → recursively upload the whole tree (#50).
                     let is_dir = tokio::fs::metadata(&local)
                         .await
@@ -1009,7 +1002,7 @@ async fn run_sftp(
                 let sftp = sftp.clone();
                 let handle = handle.clone();
                 let events = events.clone();
-                tokio::spawn(async move {
+                transfers.spawn(async move {
                     let filename = base_name(&remote);
                     let remote_dir = parent_dir(&remote);
                     let id = Uuid::new_v4().to_string();
@@ -1051,7 +1044,7 @@ async fn run_sftp(
                 let sftp = sftp.clone();
                 let handle = handle.clone();
                 let events = events.clone();
-                tokio::spawn(async move {
+                transfers.spawn(async move {
                     let label = format!("{} {}", remotes.len(), t("项", "items"));
                     let _ = events.send(SessionEvent::SftpStatus(format!(
                         "{} {}...",
@@ -1352,9 +1345,9 @@ async fn run_sftp(
         }
     }
 
-    let _ = handle
-        .disconnect(Disconnect::ByApplication, "bye", "")
-        .await;
+    transfers.abort_all();
+    while transfers.join_next().await.is_some() {}
+    crate::ssh::disconnect_ssh(&handle, "bye").await;
     Ok(())
 }
 
@@ -2404,6 +2397,13 @@ struct SftpClientHandler {
     host: String,
     port: u16,
     events: UnboundedSender<SessionEvent>,
+    host_key_wait: crate::ssh::HostKeyWait,
+}
+
+impl crate::ssh::HandshakeHandler for SftpClientHandler {
+    fn host_key_wait(&self) -> &crate::ssh::HostKeyWait {
+        &self.host_key_wait
+    }
 }
 
 fn sftp_handler(session: &Session, events: &UnboundedSender<SessionEvent>) -> SftpClientHandler {
@@ -2411,6 +2411,7 @@ fn sftp_handler(session: &Session, events: &UnboundedSender<SessionEvent>) -> Sf
         host: session.host.clone(),
         port: session.port,
         events: events.clone(),
+        host_key_wait: crate::ssh::HostKeyWait::default(),
     }
 }
 
@@ -2423,8 +2424,14 @@ impl Handler for SftpClientHandler {
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
         Ok(
-            crate::ssh::verify_host_key(&self.host, self.port, server_public_key, &self.events)
-                .await,
+            crate::ssh::verify_host_key(
+                &self.host,
+                self.port,
+                server_public_key,
+                &self.events,
+                &self.host_key_wait,
+            )
+            .await,
         )
     }
 

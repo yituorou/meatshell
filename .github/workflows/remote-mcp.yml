@@ -1,0 +1,97 @@
+name: Remote MCP checks and headless Linux
+
+on:
+  push:
+    branches: ["feat/authenticated-remote-mcp"]
+    tags: ["v*-remote.*"]
+  pull_request:
+    paths:
+      - "src/mcp/**"
+      - "src/automation/**"
+      - "src/ssh/**"
+      - "src/sftp/**"
+      - "tests/remote_mcp_e2e.py"
+      - "tests/tls_proxy_fixture.py"
+      - "Cargo.*"
+      - ".github/workflows/remote-mcp.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: remote-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and synthetic test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake python3-cryptography python3-paramiko \
+            libfontconfig1-dev libfreetype6-dev \
+            libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgtk-3-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: remote-mcp-linux
+      - name: Unit and cancellation tests
+        run: cargo test --locked --features headless --bin meatshell
+      - name: Build optimized headless service
+        run: cargo build --locked --release --features headless
+      - name: Download checksum-pinned Caddy for loopback TLS regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/meatshell-caddy"
+          curl --fail --location --retry 3 \
+            https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/meatshell-caddy/caddy.tar.gz"
+          echo "527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9  $RUNNER_TEMP/meatshell-caddy/caddy.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/meatshell-caddy/caddy.tar.gz" -C "$RUNNER_TEMP/meatshell-caddy" caddy
+          "$RUNNER_TEMP/meatshell-caddy/caddy" version
+      - name: Synthetic HTTP authentication and import regressions
+        run: |
+          python3 tests/remote_mcp_e2e.py --exe target/release/meatshell
+          python3 tests/remote_mcp_e2e.py --exe target/release/meatshell --caddy "$RUNNER_TEMP/meatshell-caddy/caddy"
+          python3 tests/remote_mcp_e2e.py --exe target/release/meatshell --caddy "$RUNNER_TEMP/meatshell-caddy/caddy" --protocol-version 2025-11-25
+          python3 tests/config_import_e2e.py --exe target/release/meatshell
+          python3 tests/ssh_jump_chain_e2e.py --exe target/release/meatshell
+          python3 tests/ssh_jump_chain_e2e.py --exe target/release/meatshell --stage-timeouts
+      - name: Stage portable headless package
+        shell: bash
+        run: |
+          set -eu
+          VERSION="$(target/release/meatshell --version | cut -d' ' -f2)"
+          STAGE="meatshell-v${VERSION}-linux-x86_64-headless"
+          mkdir -p "$STAGE/docs"
+          cp target/release/meatshell "$STAGE/"
+          cp README.md README.en.md THIRD_PARTY_NOTICES.md "$STAGE/"
+          cp docs/REMOTE_MCP.md "$STAGE/docs/"
+          printf 'Headless CLI/MCP service; no desktop GUI.\nSource: %s\nVersion: %s\n' "$GITHUB_SHA" "$VERSION" > "$STAGE/BUILD_INFO.txt"
+          tar -czf "$STAGE.tar.gz" "$STAGE"
+          sha256sum "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"
+          echo "ASSET=$STAGE.tar.gz" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-headless
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+      - name: Attach tested headless service to fork release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
