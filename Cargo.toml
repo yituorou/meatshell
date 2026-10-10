@@ -114,6 +114,9 @@ des = "0.8"
 md5 = "0.7"
 # Enumerate installed system fonts for the Interface (font) settings picker.
 fontdb = "0.16"
+# Read a font's cmap to find glyphs the terminal font lacks and pick a system
+# fallback font for them (#461). Same version fontdb 0.16 already pulls in.
+ttf-parser = "0.20"
 # Cross-platform serial port access for the Serial session type (#14, #17).
 # Opens COM3 / /dev/ttyUSB0 etc.; on Linux the default `libudev` feature is
 # used for port enumeration (CI installs libudev-dev).
@@ -181,6 +184,8 @@ version = "2"
 
 [build-dependencies]
 slint-build = "=1.16.1"
+# Precomputes the bundled terminal font's glyph coverage table (#461).
+ttf-parser = "0.20"
 
 # Embeds assets/meatshell.ico into the .exe so Explorer / taskbar / shortcuts
 # show the app icon. Windows-only; ignored on other targets.

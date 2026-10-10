@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use super::glyph_fallback::{active_glyph_fallback, GlyphFallback};
 use crate::terminal::{CompiledOutputRule, HistSpan, OutputHighlightPreset};
 use crate::ui::TermSpan;
 
@@ -394,8 +395,19 @@ fn twemoji_image(grapheme: &str) -> Option<slint::Image> {
 /// Split a styled terminal run only at complete Unicode grapheme boundaries.
 /// Ordinary graphemes remain grouped into large Text spans; emoji with a
 /// Twemoji asset become image spans so color survives Slint's monochrome font
-/// rasterizers. Columns still come from terminal cells, not image pixels.
+/// rasterizers. Graphemes the terminal font has no glyph for (e.g. `➜`, #461)
+/// become single-grapheme spans drawn with a system fallback font. Columns
+/// still come from terminal cells, not image or glyph pixels.
 pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<TermSpan> {
+    render_term_span_with(span, row, is_dark, active_glyph_fallback().as_deref())
+}
+
+fn render_term_span_with(
+    span: &HistSpan,
+    row: i32,
+    is_dark: bool,
+    glyph_fallback: Option<&GlyphFallback>,
+) -> Vec<TermSpan> {
     use unicode_segmentation::UnicodeSegmentation as _;
     use unicode_width::UnicodeWidthStr as _;
 
@@ -405,6 +417,27 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
     }
 
     let (fg, bg) = vt_span_colors(span.fg, span.bg, span.bold, span.inverse, is_dark);
+    let make = |text: slint::SharedString,
+                col: i32,
+                cells: i32,
+                font: slint::SharedString,
+                emoji_image: Option<slint::Image>| {
+        let emoji = emoji_image.is_some();
+        TermSpan {
+            cjk: !emoji && font.is_empty() && contains_cjk(&text),
+            text,
+            fg: fg.clone(),
+            bg: bg.clone(),
+            bold: span.bold,
+            underline: span.underline,
+            row,
+            col,
+            cells,
+            font,
+            emoji,
+            emoji_image: emoji_image.unwrap_or_default(),
+        }
+    };
     let mut result = Vec::new();
     let mut col = span.col;
     let mut remaining_cells = span.cells.max(0);
@@ -422,37 +455,26 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
         };
         remaining_cells = remaining_cells.saturating_sub(cells);
 
-        if let Some(emoji_image) = twemoji_image(grapheme) {
+        let emoji_image = twemoji_image(grapheme);
+        // CJK keeps its existing UI-font path (#54); only other symbols the
+        // terminal font lacks are routed to a fallback family.
+        let fallback_font = if emoji_image.is_none() && !contains_cjk(grapheme) {
+            glyph_fallback.and_then(|fallback| fallback.font_for(grapheme))
+        } else {
+            None
+        };
+
+        if emoji_image.is_some() || fallback_font.is_some() {
             if !plain.is_empty() {
-                let plain_cjk = contains_cjk(&plain);
-                result.push(TermSpan {
-                    text: std::mem::take(&mut plain).into(),
-                    fg: fg.clone(),
-                    bg: bg.clone(),
-                    bold: span.bold,
-                    underline: span.underline,
-                    row,
-                    col: plain_col,
-                    cells: plain_cells,
-                    cjk: plain_cjk,
-                    emoji: false,
-                    emoji_image: slint::Image::default(),
-                });
+                let text = std::mem::take(&mut plain).into();
+                result.push(make(text, plain_col, plain_cells, "".into(), None));
                 plain_cells = 0;
             }
-            result.push(TermSpan {
-                text: "".into(),
-                fg: fg.clone(),
-                bg: bg.clone(),
-                bold: span.bold,
-                underline: span.underline,
-                row,
-                col,
-                cells,
-                cjk: false,
-                emoji: true,
-                emoji_image,
-            });
+            let (text, font) = match fallback_font {
+                Some(family) => ((*grapheme).into(), family.clone()),
+                None => ("".into(), "".into()),
+            };
+            result.push(make(text, col, cells, font, emoji_image));
             plain_col = col + cells;
         } else {
             if plain.is_empty() {
@@ -465,20 +487,7 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
     }
 
     if !plain.is_empty() {
-        let cjk = contains_cjk(&plain);
-        result.push(TermSpan {
-            text: plain.into(),
-            fg,
-            bg,
-            bold: span.bold,
-            underline: span.underline,
-            row,
-            col: plain_col,
-            cells: plain_cells,
-            cjk,
-            emoji: false,
-            emoji_image: slint::Image::default(),
-        });
+        result.push(make(plain.into(), plain_col, plain_cells, "".into(), None));
     }
     result
 }
@@ -861,4 +870,71 @@ fn idx_to_rgb_bg(i: u8, is_dark: bool) -> (u8, u8, u8) {
         return ANSI16_LIGHT_BG[i as usize];
     }
     idx_to_rgb(i, false, is_dark)
+}
+
+#[cfg(test)]
+mod glyph_fallback_tests {
+    use super::*;
+    use crate::terminal::{Coverage, GlyphFallback};
+
+    fn run(text: &str, col: i32, cells: i32) -> HistSpan {
+        HistSpan {
+            text: text.to_string(),
+            fg: vt100::Color::Idx(2),
+            bg: vt100::Color::Default,
+            bold: true,
+            inverse: false,
+            underline: false,
+            col,
+            cells,
+        }
+    }
+
+    fn symbols() -> GlyphFallback {
+        GlyphFallback::new(
+            Coverage::bundled(),
+            vec![(
+                "Segoe UI Symbol".into(),
+                Coverage::from_codepoints(vec!['➜' as u32, '✔' as u32]),
+            )],
+        )
+    }
+
+    #[test]
+    fn missing_prompt_arrow_gets_its_own_fallback_span() {
+        // #461: PS1 like `➜ ~/src` — the arrow must use a font that has it,
+        // while the rest stays in the terminal font at the same columns.
+        let fallback = symbols();
+        let spans = render_term_span_with(&run("➜ ~/src", 0, 7), 1, true, Some(&fallback));
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].text.as_str(), "➜");
+        assert_eq!(spans[0].font.as_str(), "Segoe UI Symbol");
+        assert_eq!((spans[0].col, spans[0].cells), (0, 1));
+        assert!(spans[0].bold);
+        assert_eq!(spans[1].text.as_str(), " ~/src");
+        assert!(spans[1].font.is_empty());
+        assert_eq!((spans[1].col, spans[1].cells), (1, 6));
+        assert_eq!(spans[0].fg, spans[1].fg);
+    }
+
+    #[test]
+    fn covered_text_and_cjk_are_not_split() {
+        let fallback = symbols();
+        let spans = render_term_span_with(&run("a→b", 0, 3), 0, true, Some(&fallback));
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].font.is_empty());
+
+        let spans = render_term_span_with(&run("中文", 0, 4), 0, true, Some(&fallback));
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].cjk);
+        assert!(spans[0].font.is_empty());
+    }
+
+    #[test]
+    fn without_fallback_table_output_is_unchanged() {
+        let spans = render_term_span_with(&run("➜ ~", 0, 3), 0, true, None);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text.as_str(), "➜ ~");
+        assert!(spans[0].font.is_empty());
+    }
 }

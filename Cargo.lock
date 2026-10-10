@@ -3741,6 +3741,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
+ "ttf-parser 0.20.0",
  "twemoji-assets",
  "unicode-segmentation",
  "unicode-width",

@@ -27,6 +27,7 @@ export struct TermSpan {
     col: int,
     cells: int,
     cjk: bool,   // contains CJK chars → render with the CJK-capable font (#54)
+    font: string, // non-empty: system fallback family for a glyph the terminal font lacks (#461)
     emoji: bool,
     emoji-image: image,
 }
@@ -909,7 +910,10 @@ export component TerminalView inherits Rectangle {
                                 // CJK spans use the CJK-capable UI font: the mono
                                 // terminal font lacks CJK glyphs and Slint tofu's
                                 // *isolated* CJK punctuation (、。,) on fallback (#54).
-                                font-family: span.cjk ? Theme.ui-font-family : Theme.term-font-family;
+                                // A non-empty span.font names a system font that
+                                // has a glyph the terminal font lacks (`➜`, #461).
+                                font-family: span.font != "" ? span.font
+                                    : span.cjk ? Theme.ui-font-family : Theme.term-font-family;
                                 font-size: root.term-font-size-px * 1px;
                                 font-weight: (Theme.term-font-bold || span.bold) ? 700 : 400;
                             }

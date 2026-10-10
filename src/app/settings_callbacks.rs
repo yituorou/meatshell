@@ -34,6 +34,7 @@ pub(super) fn apply_saved_appearance(ctx: &WinCtx) {
     {
         let s = store.borrow();
         let fam = s.font_family().to_string();
+        refresh_glyph_fallback(&fam, window, bufs);
         if !fam.is_empty() {
             window.set_term_font_family(fam.into());
         }
@@ -576,6 +577,7 @@ pub(super) fn wire_terminal_settings(ctx: &WinCtx) {
     {
         let weak = window.as_weak();
         let store = store.clone();
+        let bufs = bufs.clone();
         window.on_set_term_font(move |family: SharedString| {
             {
                 let mut s = store.borrow_mut();
@@ -583,6 +585,8 @@ pub(super) fn wire_terminal_settings(ctx: &WinCtx) {
                 let _ = s.save();
             }
             if let Some(w) = weak.upgrade() {
+                // The new font covers a different glyph set (#461).
+                refresh_glyph_fallback(family.as_str(), &w, &bufs);
                 w.set_term_font_family(family);
             }
         });
