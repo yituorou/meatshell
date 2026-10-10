@@ -137,6 +137,11 @@ pub(super) fn wire_tab_callbacks(
             if id == "welcome" {
                 return;
             }
+
+            if let Some(h) = crate::app::term_buf(&bufs, id.as_str()) {
+                h.lock().unwrap().release_history_keep_screen();
+            }
+
             tab_titles.borrow_mut().remove(&id);
             if let Some(handle) = handles.borrow_mut().remove(&id) {
                 handle.close();
