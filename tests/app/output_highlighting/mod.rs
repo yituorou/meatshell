@@ -7,6 +7,7 @@ fn plain_run(text: &str, col: i32) -> HistSpan {
         bg: vt100::Color::Default,
         bold: false,
         inverse: false,
+        underline: false,
         col,
         cells: text.chars().count() as i32,
     }

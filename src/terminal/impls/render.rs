@@ -38,11 +38,28 @@ pub(crate) fn char_after_cell_end(prefix: &[usize], target: usize) -> usize {
     char_count
 }
 
-fn cell_attrs(
-    screen: &vt100::Screen,
-    row: u16,
-    column: u16,
-) -> (String, vt100::Color, vt100::Color, bool, bool, bool) {
+struct CellAttrs {
+    contents: String,
+    fg: vt100::Color,
+    bg: vt100::Color,
+    bold: bool,
+    wide: bool,
+    inverse: bool,
+    underline: bool,
+}
+
+impl CellAttrs {
+    /// Attributes that must match for two cells to share one rendered run.
+    fn same_style(&self, other: &CellAttrs) -> bool {
+        self.fg == other.fg
+            && self.bg == other.bg
+            && self.bold == other.bold
+            && self.inverse == other.inverse
+            && self.underline == other.underline
+    }
+}
+
+fn cell_attrs(screen: &vt100::Screen, row: u16, column: u16) -> CellAttrs {
     match screen.cell(row, column) {
         Some(cell) => {
             let contents = cell.contents();
@@ -53,23 +70,25 @@ fn cell_attrs(
             } else {
                 contents.to_string()
             };
-            (
+            CellAttrs {
                 contents,
-                cell.fgcolor(),
-                cell.bgcolor(),
-                cell.bold(),
-                cell.is_wide(),
-                cell.inverse(),
-            )
+                fg: cell.fgcolor(),
+                bg: cell.bgcolor(),
+                bold: cell.bold(),
+                wide: cell.is_wide(),
+                inverse: cell.inverse(),
+                underline: cell.underline(),
+            }
         }
-        None => (
-            " ".to_string(),
-            vt100::Color::Default,
-            vt100::Color::Default,
-            false,
-            false,
-            false,
-        ),
+        None => CellAttrs {
+            contents: " ".to_string(),
+            fg: vt100::Color::Default,
+            bg: vt100::Color::Default,
+            bold: false,
+            wide: false,
+            inverse: false,
+            underline: false,
+        },
     }
 }
 
@@ -78,16 +97,16 @@ pub(crate) fn build_row(screen: &vt100::Screen, row: u16, columns: u16) -> Line 
     let mut runs = Vec::new();
     let mut column = 0u16;
     while column < columns {
-        let (contents, foreground, background, bold, wide, inverse) =
-            cell_attrs(screen, row, column);
-        if wide {
-            plain.push_str(&contents);
+        let first = cell_attrs(screen, row, column);
+        if first.wide {
+            plain.push_str(&first.contents);
             runs.push(HistSpan {
-                text: contents,
-                fg: foreground,
-                bg: background,
-                bold,
-                inverse,
+                text: first.contents,
+                fg: first.fg,
+                bg: first.bg,
+                bold: first.bold,
+                inverse: first.inverse,
+                underline: first.underline,
                 col: column as i32,
                 cells: 2,
             });
@@ -96,36 +115,34 @@ pub(crate) fn build_row(screen: &vt100::Screen, row: u16, columns: u16) -> Line 
         }
 
         let start_column = column;
-        let mut text = contents.clone();
-        plain.push_str(&contents);
+        let mut text = first.contents.clone();
+        plain.push_str(&first.contents);
         column += 1;
         while column < columns {
-            let (next, next_fg, next_bg, next_bold, next_wide, next_inverse) =
-                cell_attrs(screen, row, column);
-            if next_wide
-                || next_fg != foreground
-                || next_bg != background
-                || next_bold != bold
-                || next_inverse != inverse
-            {
+            let next = cell_attrs(screen, row, column);
+            if next.wide || !next.same_style(&first) {
                 break;
             }
-            plain.push_str(&next);
-            text.push_str(&next);
+            plain.push_str(&next.contents);
+            text.push_str(&next.contents);
             column += 1;
         }
 
         let cells = (column - start_column) as i32;
+        // Plain default blanks need no element. An underlined blank is NOT
+        // invisible: apps draw input fields as `ESC[4m` + spaces (#444).
         let invisible_default_blank = text.chars().all(|character| character == ' ')
-            && matches!(background, vt100::Color::Default)
-            && !inverse;
+            && matches!(first.bg, vt100::Color::Default)
+            && !first.inverse
+            && !first.underline;
         if !invisible_default_blank {
             runs.push(HistSpan {
                 text,
-                fg: foreground,
-                bg: background,
-                bold,
-                inverse,
+                fg: first.fg,
+                bg: first.bg,
+                bold: first.bold,
+                inverse: first.inverse,
+                underline: first.underline,
                 col: start_column as i32,
                 cells,
             });

@@ -25,7 +25,8 @@ pub(crate) fn highlight_plain_output(
             && matches!(run.fg, vt100::Color::Default)
             && matches!(run.bg, vt100::Color::Default)
             && !run.bold
-            && !run.inverse;
+            && !run.inverse
+            && !run.underline;
         let max_chars = SEARCH_COLS.saturating_sub(run.col) as usize;
         let Some((start, end, ansi_index)) = eligible
             .then(|| output_highlight_marker(&run.text, max_chars, preset))
@@ -111,6 +112,7 @@ fn custom_rule_eligible(run: &HistSpan) -> bool {
         && matches!(run.bg, vt100::Color::Default)
         && !run.bold
         && !run.inverse
+        && !run.underline
 }
 
 fn style_custom_matches(
@@ -428,6 +430,7 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
                     fg: fg.clone(),
                     bg: bg.clone(),
                     bold: span.bold,
+                    underline: span.underline,
                     row,
                     col: plain_col,
                     cells: plain_cells,
@@ -442,6 +445,7 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
                 fg: fg.clone(),
                 bg: bg.clone(),
                 bold: span.bold,
+                underline: span.underline,
                 row,
                 col,
                 cells,
@@ -467,6 +471,7 @@ pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<
             fg,
             bg,
             bold: span.bold,
+            underline: span.underline,
             row,
             col: plain_col,
             cells: plain_cells,
@@ -489,6 +494,7 @@ mod color_emoji_tests {
             bg: vt100::Color::Default,
             bold: false,
             inverse: false,
+            underline: false,
             col: 4,
             cells,
         }

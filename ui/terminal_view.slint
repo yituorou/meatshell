@@ -22,6 +22,7 @@ export struct TermSpan {
     fg: color,
     bg: color,
     bold: bool,
+    underline: bool, // SGR 4; drawn across every cell, blanks included (#444)
     row: int,
     col: int,
     cells: int,
@@ -919,6 +920,16 @@ export component TerminalView inherits Rectangle {
                                 height: parent.height;
                                 source: span.emoji-image;
                                 image-fit: contain;
+                            }
+                            // SGR 4 underline. A cell-wide rule rather than a
+                            // font decoration, so underlined *spaces* (input
+                            // fields, login forms) show it too, like PuTTY (#444).
+                            if span.underline : Rectangle {
+                                x: 0px;
+                                height: max(1px, floor(root.cell-h / 14px) * 1px);
+                                y: parent.height - self.height - max(1px, floor(root.cell-h / 10px) * 1px);
+                                width: parent.width;
+                                background: span.fg;
                             }
                         }
 

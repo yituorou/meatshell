@@ -132,6 +132,9 @@ pub(crate) struct HistSpan {
     pub(crate) bg: vt100::Color,
     pub(crate) bold: bool,
     pub(crate) inverse: bool,
+    /// SGR 4. Kept per run so underlined blanks (input-field placeholders,
+    /// login-form lines) still draw their underline (#444).
+    pub(crate) underline: bool,
     pub(crate) col: i32,
     pub(crate) cells: i32,
 }
