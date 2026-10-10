@@ -3,6 +3,20 @@
 All notable changes are documented here. 本文件记录所有重要变更。
 中英对照（中文在前，English after）.
 
+## [0.7.7] - 2026-10-11
+
+- **Telnet 与串口会话支持按会话设置字符编码（#435）。** 此前编码选项（#338）仅对 SSH 生效，通过 Telnet 或串口连接的 GBK 设备始终按 UTF-8 解码而显示乱码。现在 Telnet 与串口会按会话所选编码解码输出、编码输入，多字节字符跨读取被拆分时也不再显示为替换字符。会话编辑器在 SSH / Telnet（高级选项）和串口（主设置区）中提供编码选择，并新增 GB18030、EUC-JP 及西里尔 / 中欧等编码。
+- **Per-session character encoding for Telnet and serial sessions (#435).** The encoding option (#338) only applied to SSH, so GBK equipment reached over Telnet or a serial line always decoded as UTF-8 and showed garbled text. Telnet and serial now decode output and encode input with the session's encoding, and multibyte characters split across reads no longer turn into replacement characters. The session editor offers the encoding picker for SSH / Telnet (Advanced) and serial (main section), with more encodings including GB18030, EUC-JP and Cyrillic / Central European code pages.
+
+- **修复终端字体缺失的符号显示为空白的问题（#461）。** 内置的 Meatshell Mono 不含 ➜、✔、✗ 等符号，而 Slint 不会逐字形回退，导致自定义 PS1 提示符中出现空白。现在终端字体缺失的字符会改用第一个包含该字符的系统字体绘制（Windows 为 Segoe UI Symbol，其他平台使用相应字体）；已覆盖的文本、中日韩字符与 emoji 的渲染和对齐保持不变。
+- **Draw symbols missing from the terminal font with a system fallback (#461).** The bundled Meatshell Mono has no glyphs for ➜, ✔, ✗ and similar symbols, and Slint does not fall back per glyph, so custom PS1 prompts showed blank cells. Characters the terminal font lacks are now drawn with the first installed system font that has them (Segoe UI Symbol on Windows, platform equivalents elsewhere); covered text, CJK and emoji keep their existing rendering and alignment.
+
+- **支持显示终端下划线（SGR 4），包括带下划线的空格（#444）。** 下划线现在以覆盖整个单元格宽度的横线绘制，输入框、登录表单等使用下划线空格的界面能像 PuTTY 一样正确显示。
+- **Render terminal underline (SGR 4), including underlined spaces (#444).** Underlines are now drawn as a cell-wide rule, so input fields, login forms and other screens built from underlined spaces display like they do in PuTTY.
+
+- **修复断开 / 重连时保留终端历史的若干问题。** 后台标签页或侧栏隐藏时断开连接，历史记录不再被误清除，只有关闭标签页时才清除；在 vim 等备用屏幕中断线后重连，新会话的输出不再叠加到旧画面上。（感谢 @nilxbit，#491）
+- **Fix issues with keeping terminal history across disconnects and reconnects.** History is no longer cleared when a session disconnects in a background tab or with the sidebar hidden; it is only cleared when the tab is closed. Reconnecting after a disconnect inside vim or another alternate-screen program no longer draws the new session's output over the old screen. (Thanks @nilxbit, #491)
+
 ## [0.7.6] - 2026-10-10
 
 - **修复 macOS 0.7.5 启动即闪退的问题（#486）。** 0.7.5 新增的系统托盘依赖 muda 0.20，而 Slint 的 macOS 菜单栏使用 muda 0.18，两者注册了同名但内存布局不同的 Objective-C 类 `MudaMenuItem`，创建托盘菜单时程序崩溃。macOS 上暂时停用系统托盘，关闭窗口的行为恢复为 0.7.5 之前；Windows 与 Linux 托盘不受影响。
