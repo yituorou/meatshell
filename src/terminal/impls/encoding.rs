@@ -59,6 +59,40 @@ mod tests {
     }
 
     #[test]
+    fn every_session_dialog_label_is_a_known_encoding() {
+        // Keep in sync with EncodingPicker in ui/session_dialog.slint (#435):
+        // a typo there would silently decode as UTF-8.
+        let dialog = include_str!("../../../ui/session_dialog.slint");
+        let start = dialog
+            .find("component EncodingPicker")
+            .expect("EncodingPicker component");
+        let model = &dialog[start..];
+        let model = &model[model.find("model: [").unwrap() + 8..];
+        let model = &model[..model.find(']').unwrap()];
+        let labels: Vec<&str> = model
+            .split(',')
+            .map(|label| label.trim().trim_matches('"'))
+            .filter(|label| !label.is_empty())
+            .collect();
+        assert!(labels.contains(&"GBK") && labels.contains(&"GB18030"));
+        for label in labels {
+            assert!(
+                Encoding::for_label(label.as_bytes()).is_some(),
+                "unknown encoding label in session dialog: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn gbk_device_prompt_decodes_across_serial_sized_reads() {
+        // A switch banner in GBK arriving one byte at a time (slow serial).
+        let bytes = TerminalEncoding::new("GBK").encode("<交换机>显示 版本".as_bytes());
+        let mut decoder = TerminalEncoding::new("GBK");
+        let text: String = bytes.chunks(1).map(|b| decoder.decode(b)).collect();
+        assert_eq!(text, "<交换机>显示 版本");
+    }
+
+    #[test]
     fn unknown_label_falls_back_to_utf8() {
         let mut codec = TerminalEncoding::new("not-a-real-charset");
         assert_eq!(codec.decode("你好".as_bytes()), "你好");

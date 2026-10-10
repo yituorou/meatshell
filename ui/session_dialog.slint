@@ -601,6 +601,34 @@ component SerialPortCombo inherits VerticalLayout {
     }
 }
 
+// Terminal character encoding picker (#338, #435). Shared by SSH/Telnet (in
+// the Advanced section) and serial (main section: serial has no Advanced).
+// Values are encoding_rs / WHATWG labels; unknown labels fall back to UTF-8.
+component EncodingPicker inherits VerticalLayout {
+    in-out property <string> value: "UTF-8";
+    spacing: 4px;
+    Text {
+        text: @tr("Terminal character encoding");
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+    ComboBox {
+        model: [
+            "UTF-8", "GBK", "GB18030", "Big5", "Shift_JIS", "EUC-JP", "EUC-KR",
+            "Windows-1252", "ISO-8859-1", "ISO-8859-2", "Windows-1251", "KOI8-R",
+            "Windows-1250", "Windows-1256", "Windows-874",
+        ];
+        current-value: root.value;
+        selected(value) => { root.value = value; }
+    }
+    Text {
+        text: @tr("Use GBK for servers configured for GB2312 or GBK output.");
+        color: Theme.text-muted;
+        font-size: Theme.fs-xs;
+    }
+    Rectangle { height: 6px; }
+}
+
 // A fixed-height row keeps the drop position independent of text length.
 export component JumpRow inherits Rectangle {
     in property <JumpHop> hop;
@@ -1385,6 +1413,12 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
+            // Serial has no Advanced section; console gear (switches, PLCs)
+            // often talks GBK, so the encoding lives here for it (#435).
+            if root.draft-kind == "serial" : EncodingPicker {
+                value <=> root.draft-encoding;
+            }
+
             // ── Advanced (collapsed by default): proxy + port forwarding ────
             // Not offered for serial (nothing to configure) or RDP (its extras
             // live in the main section, and the SSH-only parts do not apply).
@@ -1413,25 +1447,9 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
-            // ── Terminal character encoding (SSH only) (#338) ───────────────
-            if root.show-advanced && root.draft-kind == "ssh" : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: @tr("Terminal character encoding");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                }
-                ComboBox {
-                    model: ["UTF-8", "GBK", "Big5", "Shift_JIS", "EUC-KR", "Windows-1252"];
-                    current-value: root.draft-encoding;
-                    selected(value) => { root.draft-encoding = value; }
-                }
-                Text {
-                    text: @tr("Use GBK for servers configured for GB2312 or GBK output.");
-                    color: Theme.text-muted;
-                    font-size: Theme.fs-xs;
-                }
-                Rectangle { height: 6px; }
+            // ── Terminal character encoding (SSH / Telnet) (#338, #435) ─────
+            if root.show-advanced && (root.draft-kind == "ssh" || root.draft-kind == "telnet") : EncodingPicker {
+                value <=> root.draft-encoding;
             }
 
             // ── VT100 line drawing (all session kinds) (#376) ───────────────

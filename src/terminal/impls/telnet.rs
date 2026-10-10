@@ -154,6 +154,10 @@ async fn run_telnet(
 
     let mut state = TnState::Data;
     let mut buf = [0u8; 4096];
+    // Per-session character set (#435): GBK console gear, Big5, etc. The
+    // decoder is stateful so a multibyte char split across reads survives.
+    let mut decoder = crate::terminal::TerminalEncoding::new(&session.encoding);
+    let encoder = crate::terminal::TerminalEncoding::new(&session.encoding);
 
     loop {
         tokio::select! {
@@ -162,6 +166,7 @@ async fn run_telnet(
                     Some(SessionCommand::RawInput(bytes)) => {
                         // Never log keystroke bytes — they can be passwords (#15).
                         tracing::debug!("telnet write len={} bytes", bytes.len());
+                        let bytes = encoder.encode(&bytes);
                         // Escape IAC (0xFF) in user data per RFC 854.
                         let mut out = Vec::with_capacity(bytes.len());
                         for b in bytes {
@@ -205,8 +210,10 @@ async fn run_telnet(
                             let _ = wr.flush().await;
                         }
                         if !data.is_empty() {
-                            let text = String::from_utf8_lossy(&data).into_owned();
-                            let _ = events.send(SessionEvent::Output(text));
+                            let text = decoder.decode(&data);
+                            if !text.is_empty() {
+                                let _ = events.send(SessionEvent::Output(text));
+                            }
                         }
                     }
                     Err(e) => {

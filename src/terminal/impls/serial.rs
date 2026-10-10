@@ -154,6 +154,10 @@ async fn run_serial(
     let running = Arc::new(AtomicBool::new(true));
     let reader_running = running.clone();
     let reader_events = events.clone();
+    // Per-session character set (#435): many consoles (switches, PLCs) emit
+    // GBK. Stateful, so a multibyte char split across 50 ms reads survives.
+    let mut decoder = crate::terminal::TerminalEncoding::new(&session.encoding);
+    let encoder = crate::terminal::TerminalEncoding::new(&session.encoding);
     let reader_handle = std::thread::spawn(move || {
         let mut port = port;
         let mut buf = [0u8; 4096];
@@ -161,7 +165,10 @@ async fn run_serial(
             match port.read(&mut buf) {
                 Ok(0) => {}
                 Ok(n) => {
-                    let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let text = decoder.decode(&buf[..n]);
+                    if text.is_empty() {
+                        continue;
+                    }
                     if reader_events.send(SessionEvent::Output(text)).is_err() {
                         break;
                     }
@@ -185,6 +192,7 @@ async fn run_serial(
             SessionCommand::RawInput(bytes) => {
                 // Never log keystroke bytes — they can be passwords (#15).
                 tracing::debug!("serial write len={} bytes", bytes.len());
+                let bytes = encoder.encode(&bytes);
                 let w = writer.clone();
                 // Hardware flow control with a stopped peer wedges write_all
                 // forever; the timeout keeps Close serviceable so the task
