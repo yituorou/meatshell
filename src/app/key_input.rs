@@ -445,31 +445,37 @@ pub(super) fn wire_key_input(
                         if let Some(h) = term_buf(&ctx.bufs, tab_id.as_str()) {
                             let mut b = h.lock().unwrap();
 
-                            let (is_alt, rows, cols, cursor_row) = {
+                            let is_alt = b.parser.screen().alternate_screen();
+
+                            if is_alt {
+                                b.ingest("\x1b[?1049l".to_string().as_bytes());
+                            }
+
+                            let (rows, cols) = b.parser.screen().size();
+                            let cursor_row = b.parser.screen().cursor_position().0;
+
+                            let curr: Vec<crate::terminal::Line> = {
                                 let s = b.parser.screen();
-                                let (r, c) = s.size();
-                                let cursor_r = b.parser.screen().cursor_position().0;
-                                (s.alternate_screen(), r, c, cursor_r)
+                                (0..rows).map(|r| crate::terminal::build_row(s, r, cols)).collect()
                             };
 
-                            if !is_alt {
-                                let curr: Vec<crate::terminal::Line> = {
-                                    let s = b.parser.screen();
-                                    (0..rows).map(|r| crate::terminal::build_row(s, r, cols)).collect()
-                                };
-
-                                let k = cursor_row as usize;
-                                for line in curr.iter().take(k) {
-                                    b.history.push_back(line.clone());
-                                }
-                                while b.history.len() > crate::terminal::MAX_HISTORY {
-                                    b.history.pop_front();
-                                }
-                                b.view_offset = 0;
-
-                                b.prev.clear();
-                                b.parser = vt100::Parser::new(rows, cols, 5000);
+                            let k = cursor_row as usize;
+                            for line in curr.iter().take(k) {
+                                b.history.push_back(line.clone());
                             }
+                            while b.history.len() > crate::terminal::MAX_HISTORY {
+                                b.history.pop_front();
+                            }
+                            b.view_offset = 0;
+
+                            b.prev = Vec::new();
+                            b.displayed_text = Vec::new();
+                            b.csi_state = CsiState::Normal;
+                            b.csi_pending = Vec::new();
+                            b.charset = crate::terminal::CharsetTracker::default();
+                            b.mouse_tracked = false;
+
+                            b.parser = vt100::Parser::new(rows, cols, 5000);
 
                             if let Some(log) = b.session_log.as_mut() {
                                 log.note("reconnecting");

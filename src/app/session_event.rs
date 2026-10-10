@@ -137,15 +137,6 @@ pub(super) fn apply_session_event_to_window(
             {
                 refresh_sidebar(win, statuses, local, local_net_hist);
             }
-            else {
-                if let Some(h) = crate::app::term_buf(bufs, tab_id) {
-                    let mut b = h.lock().unwrap();
-                    b.release_history_keep_screen();
-                    if let Some(log) = b.session_log.as_mut() {
-                        log.note(&format!("tab closed: {reason}"));
-                    }
-                }
-            }
         }
         SessionEvent::ResourceStats {
             cpu_percent,
