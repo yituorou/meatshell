@@ -70,9 +70,17 @@ pub(super) fn wire_downloads_and_links(
             {
                 let _ = std::process::Command::new("explorer").arg(&dir).spawn();
             }
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
             {
-                let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+                if let Err(err) = std::process::Command::new("open").arg(&dir).spawn() {
+                    tracing::warn!("could not open download dir in Finder: {err}");
+                }
+            }
+            #[cfg(all(not(windows), not(target_os = "macos")))]
+            {
+                if let Err(err) = std::process::Command::new("xdg-open").arg(&dir).spawn() {
+                    tracing::warn!("could not open download dir: {err}");
+                }
             }
         });
     }
