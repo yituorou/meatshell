@@ -1048,6 +1048,31 @@ fn start_client(account: &Account<'_>, _session_id: &str) -> Result<String, Stri
 mod tests {
     use super::*;
 
+    /// Default FreeRDP-era options for the mstsc tests, which only care about
+    /// connection, credential and window-size fields.
+    #[cfg(windows)]
+    fn test_account_defaults() -> Account<'static> {
+        Account {
+            host: "",
+            port: 3389,
+            user: "",
+            domain: "",
+            password: "",
+            fullscreen: false,
+            width: 1280,
+            height: 720,
+            legacy_tls: false,
+            admin: false,
+            smart_sizing: false,
+            cert_policy: "ignore",
+            network: "auto",
+            sound: false,
+            clipboard: true,
+            gfx: false,
+            extra_args: Vec::new(),
+        }
+    }
+
     #[test]
     fn legacy_session_json_defaults_to_secure_compatibility_settings() {
         let mut old = serde_json::to_value(Session::new_empty()).unwrap();
@@ -1092,7 +1117,9 @@ mod tests {
         assert!(saved.rdp_sound && !saved.rdp_clipboard && saved.rdp_gfx);
     }
 
+    // FreeRDP-only: `preview_args` deliberately refuses on Windows (mstsc).
     #[test]
+    #[cfg(not(windows))]
     fn preview_never_contains_the_saved_password_and_validation_blocks_conflicts() {
         let mut session = Session::new_empty();
         session.host = "10.0.0.5".into();
@@ -1172,6 +1199,7 @@ mod tests {
             fullscreen: true,
             width: 1280,
             height: 720,
+            ..test_account_defaults()
         };
         let contents = rdp_file_contents(&account, false);
         assert!(contents.contains("screen mode id:i:2\r\n"));
@@ -1195,6 +1223,7 @@ mod tests {
             fullscreen: false,
             width: 1280,
             height: 720,
+            ..test_account_defaults()
         };
         let saved = rdp_file_contents(&account, true);
         assert!(saved.contains("prompt for credentials:i:0\r\n"));
@@ -1223,6 +1252,7 @@ mod tests {
             fullscreen: false,
             width: 1280,
             height: 720,
+            ..test_account_defaults()
         };
         assert_eq!(credential_user(&account), "alice");
         account.domain = "CONTOSO";
