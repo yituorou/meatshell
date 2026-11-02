@@ -101,6 +101,9 @@ fn default_rdp_width() -> u16 {
 fn default_rdp_height() -> u16 {
     720
 }
+fn default_rdp_cert_policy() -> String { "ignore".into() }
+fn default_rdp_network() -> String { "auto".into() }
+fn default_rdp_clipboard() -> bool { true }
 
 /// Per-session override of the global session-log setting (#265).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -265,6 +268,29 @@ pub struct Session {
     pub rdp_width: u16,
     #[serde(default = "default_rdp_height")]
     pub rdp_height: u16,
+    /// Explicit per-server opt-in: TLS security level 0 weakens encryption.
+    #[serde(default)]
+    pub rdp_legacy_tls: bool,
+    /// Request the administrative session on the remote server.
+    #[serde(default)]
+    pub rdp_admin: bool,
+    /// Scale fixed resolution instead of dynamically changing remote resolution.
+    #[serde(default)]
+    pub rdp_smart_sizing: bool,
+    /// FreeRDP-specific options; ignored by Windows mstsc.
+    #[serde(default = "default_rdp_cert_policy")]
+    pub rdp_cert_policy: String,
+    #[serde(default = "default_rdp_network")]
+    pub rdp_network: String,
+    #[serde(default)]
+    pub rdp_sound: bool,
+    #[serde(default = "default_rdp_clipboard")]
+    pub rdp_clipboard: bool,
+    #[serde(default)]
+    pub rdp_gfx: bool,
+    /// One FreeRDP argument or supported bilingual alias per line.
+    #[serde(default)]
+    pub rdp_extra_args: String,
 
     /// Character encoding used by the interactive terminal stream (#338).
     /// UTF-8 remains the default for existing and newly created sessions.
@@ -478,6 +504,15 @@ impl Session {
             rdp_fullscreen: false,
             rdp_width: default_rdp_width(),
             rdp_height: default_rdp_height(),
+            rdp_legacy_tls: false,
+            rdp_admin: false,
+            rdp_smart_sizing: false,
+            rdp_cert_policy: default_rdp_cert_policy(),
+            rdp_network: default_rdp_network(),
+            rdp_sound: false,
+            rdp_clipboard: true,
+            rdp_gfx: false,
+            rdp_extra_args: String::new(),
             encoding: default_encoding(),
             vt100_drawing: default_vt100_drawing(),
             term_type: default_term_type(),

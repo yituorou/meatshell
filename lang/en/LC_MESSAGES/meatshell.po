@@ -783,3 +783,66 @@ msgstr "Selected items"
 
 msgid "System information"
 msgstr "System information"
+
+msgid "FreeRDP server compatibility (Linux / macOS)"
+msgstr "FreeRDP server compatibility (Linux / macOS)"
+
+msgid "Legacy TLS (security level 0; less secure)"
+msgstr "Legacy TLS (security level 0; less secure)"
+
+msgid "Administrative session (/admin)"
+msgstr "Administrative session (/admin)"
+
+msgid "Smart sizing (scale fixed resolution)"
+msgstr "Smart sizing (scale fixed resolution)"
+
+msgid "Certificate policy"
+msgstr "Certificate policy"
+
+msgid "Ignore certificate (less secure)"
+msgstr "Ignore certificate (less secure)"
+
+msgid "Trust on first use"
+msgstr "Trust on first use"
+
+msgid "Reject untrusted"
+msgstr "Reject untrusted"
+
+msgid "Network profile"
+msgstr "Network profile"
+
+msgid "Automatic"
+msgstr "Automatic"
+
+msgid "Fast broadband"
+msgstr "Fast broadband"
+
+msgid "Slow broadband"
+msgstr "Slow broadband"
+
+msgid "Redirect sound"
+msgstr "Redirect sound"
+
+msgid "Clipboard sharing"
+msgstr "Clipboard sharing"
+
+msgid "Graphics acceleration (GFX)"
+msgstr "Graphics acceleration (GFX)"
+
+msgid "Advanced FreeRDP arguments"
+msgstr "Advanced FreeRDP arguments"
+
+msgid "One argument per line. Chinese aliases or native English FreeRDP options."
+msgstr "One argument per line. Chinese aliases or native English FreeRDP options."
+
+msgid "Examples: 网络=局域网, 音频=开, /bpp:24, /drive:资料,/tmp/中文路径"
+msgstr "Examples: network=lan, sound=on, /bpp:24, /drive:share,/tmp/path"
+
+msgid "Preview FreeRDP arguments"
+msgstr "Preview FreeRDP arguments"
+
+msgid "Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录"
+msgstr "Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录"
+
+msgid "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."
+msgstr "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."

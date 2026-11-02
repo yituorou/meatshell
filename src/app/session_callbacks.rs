@@ -227,6 +227,17 @@ pub(super) fn wire_session_callbacks(
             w.set_dialog_rdp_resolution(RDP_RESOLUTION_DEFAULT.into());
             w.set_dialog_rdp_width("1280".into());
             w.set_dialog_rdp_height("720".into());
+            w.set_dialog_rdp_legacy_tls(false);
+            w.set_dialog_rdp_admin(false);
+            w.set_dialog_rdp_smart_sizing(false);
+            w.set_dialog_rdp_cert_policy("ignore".into());
+            w.set_dialog_rdp_network("auto".into());
+            w.set_dialog_rdp_sound(false);
+            w.set_dialog_rdp_clipboard(true);
+            w.set_dialog_rdp_gfx(false);
+            w.set_dialog_rdp_extra_args("".into());
+            w.set_dialog_rdp_show_advanced(false);
+            w.set_dialog_rdp_preview("".into());
             w.set_dialog_encoding("UTF-8".into());
             w.set_dialog_vt100_drawing(false);
             w.set_dialog_term_type(crate::config::DEFAULT_TERM_TYPE.into());
@@ -503,6 +514,17 @@ pub(super) fn wire_session_callbacks(
                 );
                 w.set_dialog_rdp_width(session.rdp_width.to_string().into());
                 w.set_dialog_rdp_height(session.rdp_height.to_string().into());
+                w.set_dialog_rdp_legacy_tls(session.rdp_legacy_tls);
+                w.set_dialog_rdp_admin(session.rdp_admin);
+                w.set_dialog_rdp_smart_sizing(session.rdp_smart_sizing);
+                w.set_dialog_rdp_cert_policy(session.rdp_cert_policy.clone().into());
+                w.set_dialog_rdp_network(session.rdp_network.clone().into());
+                w.set_dialog_rdp_sound(session.rdp_sound);
+                w.set_dialog_rdp_clipboard(session.rdp_clipboard);
+                w.set_dialog_rdp_gfx(session.rdp_gfx);
+                w.set_dialog_rdp_extra_args(session.rdp_extra_args.clone().into());
+                w.set_dialog_rdp_show_advanced(!session.rdp_extra_args.is_empty());
+                w.set_dialog_rdp_preview("".into());
                 w.set_dialog_encoding(session.encoding.clone().into());
                 w.set_dialog_vt100_drawing(session.vt100_drawing);
                 w.set_dialog_term_type(session.effective_term_type().into());
@@ -839,6 +861,14 @@ pub(super) fn wire_session_callbacks(
             // Saving and testing use the same draft conversion, including blank-secret retention.
             let existing = store.borrow().get(&id).cloned();
             let new_session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            if new_session.kind == crate::config::SessionKind::Rdp {
+                if let Err(message) = crate::rdp::validate_options(&new_session) {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_dialog_test_status(message.into());
+                    }
+                    return;
+                }
+            }
             if let Err(err) = store.borrow().resolve_jump_chain(&new_session) {
                 if let Some(w) = weak.upgrade() {
                     w.set_dialog_test_status(err.to_string().into());
@@ -863,6 +893,15 @@ pub(super) fn wire_session_callbacks(
             }
         });
     }
+
+    // Preview from unsaved draft; the saved password is never rendered.
+    window.on_session_dialog_preview_rdp(move |draft: SessionDraft| {
+        let session = session_from_draft(&draft, None, Vec::new(), Vec::new());
+        if session.kind != crate::config::SessionKind::Rdp {
+            return String::new().into();
+        }
+        crate::rdp::preview_args(&session).unwrap_or_else(|message| message).into()
+    });
 
     // Test connection from the session dialog. SSH tests use the same handshake,
     // host-key verification, proxy/jump routing, and authentication as a real

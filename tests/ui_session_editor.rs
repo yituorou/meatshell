@@ -56,6 +56,13 @@ slint::slint! {
         in-out property <string> host: "target.example.invalid";
         in-out property <string> user: "demo";
         in-out property <string> auth: "password";
+        in-out property <string> kind: "ssh";
+        in-out property <string> rdp-cert: "ignore";
+        in-out property <string> rdp-extra;
+        in-out property <bool> rdp-sound: false;
+        out property <string> saved-rdp-cert;
+        out property <string> saved-rdp-extra;
+        out property <bool> saved-rdp-sound;
         callback save-current();
         save-current => { editor.submit-current(); }
         init => {
@@ -65,7 +72,12 @@ slint::slint! {
         editor := SessionDialog {
             is-editing: true;
             test-status <=> root.test-status;
-            submit(draft) => { root.submit-count += 1; }
+            submit(draft) => {
+                root.submit-count += 1;
+                root.saved-rdp-cert = draft.rdp-cert-policy;
+                root.saved-rdp-extra = draft.rdp-extra-args;
+                root.saved-rdp-sound = draft.rdp-sound;
+            }
             stop-test => { root.stop-count += 1; }
             closed => { root.closed-count += 1; }
             connection-draft-changed => { root.changed-count += 1; }
@@ -76,6 +88,10 @@ slint::slint! {
             draft-host <=> root.host;
             draft-user <=> root.user;
             draft-auth <=> root.auth;
+            draft-kind: root.kind;
+            draft-rdp-cert-policy <=> root.rdp-cert;
+            draft-rdp-extra-args <=> root.rdp-extra;
+            draft-rdp-sound <=> root.rdp-sound;
             draft-note: "Example route, no real credentials";
             allow-secret-reveal: true;
             jump-choices: ["Select a jump host", "Bastion A (demo@a.example.invalid:22)", "Bastion B (demo@b.example.invalid:22)"];
@@ -460,5 +476,22 @@ fn editing_connection_fields_invalidates_the_test_snapshot() {
             assert!(ui.get_changed_count() > changes);
             changes = ui.get_changed_count();
         }
+    }).join().unwrap();
+}
+
+#[test]
+fn rdp_common_and_bilingual_advanced_fields_reach_the_saved_draft() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend { window, clipboard: Rc::default() })).unwrap();
+        let ui = DialogFixture::new().unwrap();
+        ui.set_kind("rdp".into());
+        ui.set_rdp_cert("tofu".into());
+        ui.set_rdp_extra("网络=局域网\n/bpp:24".into());
+        ui.set_rdp_sound(true);
+        ui.invoke_save_current();
+        assert_eq!(ui.get_saved_rdp_cert().as_str(), "tofu");
+        assert_eq!(ui.get_saved_rdp_extra().as_str(), "网络=局域网\n/bpp:24");
+        assert!(ui.get_saved_rdp_sound());
     }).join().unwrap();
 }

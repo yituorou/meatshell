@@ -56,6 +56,15 @@ export struct SessionDraft {
     rdp-resolution: string,  // "fullscreen" | "custom" | "WxH"
     rdp-width: int,          // desktop size used by the "custom" choice
     rdp-height: int,
+    rdp-legacy-tls: bool,
+    rdp-admin: bool,
+    rdp-smart-sizing: bool,
+    rdp-cert-policy: string,
+    rdp-network: string,
+    rdp-sound: bool,
+    rdp-clipboard: bool,
+    rdp-gfx: bool,
+    rdp-extra-args: string,
     encoding: string,
     // Honor VT100 line drawing (DEC Special Graphics) even in UTF-8 mode (#376),
     // like PuTTY's Window → Translation option. On by default.
@@ -821,6 +830,17 @@ export component SessionDialog inherits ModalLayer {
     in-out property <string> draft-rdp-resolution: "1280x720";
     in-out property <string> draft-rdp-width: "1280";
     in-out property <string> draft-rdp-height: "720";
+    in-out property <bool> draft-rdp-legacy-tls: false;
+    in-out property <bool> draft-rdp-admin: false;
+    in-out property <bool> draft-rdp-smart-sizing: false;
+    in-out property <string> draft-rdp-cert-policy: "ignore";
+    in-out property <string> draft-rdp-network: "auto";
+    in-out property <bool> draft-rdp-sound: false;
+    in-out property <bool> draft-rdp-clipboard: true;
+    in-out property <bool> draft-rdp-gfx: false;
+    in-out property <string> draft-rdp-extra-args: "";
+    in-out property <bool> show-rdp-advanced: false;
+    in-out property <string> rdp-preview: "";
     in-out property <string> draft-encoding: "UTF-8";
     in-out property <bool> draft-vt100-drawing: false;
     in-out property <string> draft-term-type: "xterm-256color";
@@ -840,9 +860,9 @@ export component SessionDialog inherits ModalLayer {
     // cancels the old attempt before its result can label a different draft.
     callback connection-draft-changed();
     changed draft-kind => { root.connection-draft-changed(); }
-    changed draft-host => { root.connection-draft-changed(); }
-    changed draft-port => { root.connection-draft-changed(); }
-    changed draft-user => { root.connection-draft-changed(); }
+    changed draft-host => { root.connection-draft-changed(); root.rdp-preview = ""; }
+    changed draft-port => { root.connection-draft-changed(); root.rdp-preview = ""; }
+    changed draft-user => { root.connection-draft-changed(); root.rdp-preview = ""; }
     changed draft-auth => { root.connection-draft-changed(); }
     changed draft-password => { root.connection-draft-changed(); }
     changed draft-key-path => { root.connection-draft-changed(); }
@@ -855,6 +875,19 @@ export component SessionDialog inherits ModalLayer {
     changed draft-stop-bits => { root.connection-draft-changed(); }
     changed draft-parity => { root.connection-draft-changed(); }
     changed draft-flow => { root.connection-draft-changed(); }
+    changed draft-rdp-cert-policy => { root.rdp-preview = ""; }
+    changed draft-rdp-network => { root.rdp-preview = ""; }
+    changed draft-rdp-sound => { root.rdp-preview = ""; }
+    changed draft-rdp-clipboard => { root.rdp-preview = ""; }
+    changed draft-rdp-gfx => { root.rdp-preview = ""; }
+    changed draft-rdp-extra-args => { root.rdp-preview = ""; }
+    changed draft-rdp-legacy-tls => { root.rdp-preview = ""; }
+    changed draft-rdp-admin => { root.rdp-preview = ""; }
+    changed draft-rdp-smart-sizing => { root.rdp-preview = ""; }
+    changed draft-rdp-resolution => { root.rdp-preview = ""; }
+    changed draft-rdp-width => { root.rdp-preview = ""; }
+    changed draft-rdp-height => { root.rdp-preview = ""; }
+    changed draft-rdp-domain => { root.rdp-preview = ""; }
 
     public function submit-current() {
         root.stop-test();
@@ -864,7 +897,11 @@ export component SessionDialog inherits ModalLayer {
             return;
         }
         root.host-missing = false;
-        root.submit({
+        root.submit(root.current-draft());
+    }
+
+    public function current-draft() -> SessionDraft {
+        return {
             id: root.draft-id,
             name: root.draft-name,
             kind: root.draft-kind,
@@ -890,6 +927,15 @@ export component SessionDialog inherits ModalLayer {
             rdp-resolution: root.draft-rdp-resolution,
             rdp-width: root.draft-rdp-width.to-float(),
             rdp-height: root.draft-rdp-height.to-float(),
+            rdp-legacy-tls: root.draft-rdp-legacy-tls,
+            rdp-admin: root.draft-rdp-admin,
+            rdp-smart-sizing: root.draft-rdp-smart-sizing,
+            rdp-cert-policy: root.draft-rdp-cert-policy,
+            rdp-network: root.draft-rdp-network,
+            rdp-sound: root.draft-rdp-sound,
+            rdp-clipboard: root.draft-rdp-clipboard,
+            rdp-gfx: root.draft-rdp-gfx,
+            rdp-extra-args: root.draft-rdp-extra-args,
             encoding: root.draft-encoding,
             vt100-drawing: root.draft-vt100-drawing,
             term-type: root.draft-term-type,
@@ -901,11 +947,12 @@ export component SessionDialog inherits ModalLayer {
             jumps: root.jumps,
             allow-secret-reveal: root.allow-secret-reveal,
             allow-mcp-access: root.allow-mcp-access,
-        });
+        };
     }
 
     callback submit(SessionDraft);
     callback test-connection(SessionDraft);
+    callback preview-rdp(SessionDraft) -> string;
     callback cancel();
     callback closed();
     callback stop-test();
@@ -1465,6 +1512,92 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
+            if root.draft-kind == "rdp" : VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("FreeRDP server compatibility (Linux / macOS)");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                CheckBox {
+                    text: @tr("Legacy TLS (security level 0; less secure)");
+                    checked <=> root.draft-rdp-legacy-tls;
+                }
+                CheckBox {
+                    text: @tr("Administrative session (/admin)");
+                    checked <=> root.draft-rdp-admin;
+                }
+                CheckBox {
+                    text: @tr("Smart sizing (scale fixed resolution)");
+                    checked <=> root.draft-rdp-smart-sizing;
+                }
+                Text { text: @tr("Certificate policy"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+                ComboBox {
+                    model: [@tr("Ignore certificate (less secure)"), @tr("Trust on first use"), @tr("Reject untrusted")];
+                    current-value: root.draft-rdp-cert-policy == "tofu" ? @tr("Trust on first use")
+                        : root.draft-rdp-cert-policy == "deny" ? @tr("Reject untrusted")
+                        : @tr("Ignore certificate (less secure)");
+                    selected(value) => {
+                        root.draft-rdp-cert-policy = value == @tr("Trust on first use") ? "tofu"
+                            : value == @tr("Reject untrusted") ? "deny" : "ignore";
+                    }
+                }
+                Text { text: @tr("Network profile"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+                ComboBox {
+                    model: [@tr("Automatic"), "LAN", "WAN", @tr("Fast broadband"), @tr("Slow broadband")];
+                    current-value: root.draft-rdp-network == "lan" ? "LAN"
+                        : root.draft-rdp-network == "wan" ? "WAN"
+                        : root.draft-rdp-network == "broadband-high" ? @tr("Fast broadband")
+                        : root.draft-rdp-network == "broadband-low" ? @tr("Slow broadband") : @tr("Automatic");
+                    selected(value) => {
+                        root.draft-rdp-network = value == "LAN" ? "lan" : value == "WAN" ? "wan"
+                            : value == @tr("Fast broadband") ? "broadband-high"
+                            : value == @tr("Slow broadband") ? "broadband-low" : "auto";
+                    }
+                }
+                CheckBox { text: @tr("Redirect sound"); checked <=> root.draft-rdp-sound; }
+                CheckBox { text: @tr("Clipboard sharing"); checked <=> root.draft-rdp-clipboard; }
+                CheckBox { text: @tr("Graphics acceleration (GFX)"); checked <=> root.draft-rdp-gfx; }
+                CheckBox { text: @tr("Advanced FreeRDP arguments"); checked <=> root.show-rdp-advanced; }
+                if root.show-rdp-advanced : VerticalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: @tr("One argument per line. Chinese aliases or native English FreeRDP options.");
+                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+                    }
+                    Rectangle {
+                        height: 92px; horizontal-stretch: 1; clip: true;
+                        border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border-strong;
+                        background: Theme.bg-elevated;
+                        rdp-args-input := TextInput {
+                            x: 8px; y: 6px; width: parent.width - 16px; height: parent.height - 12px;
+                            text <=> root.draft-rdp-extra-args; single-line: false; wrap: word-wrap;
+                            color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.fs-sm;
+                        }
+                    }
+                    Text {
+                        text: @tr("Examples: 网络=局域网, 音频=开, /bpp:24, /drive:资料,/tmp/中文路径");
+                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+                    }
+                    Text {
+                        text: @tr("Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录");
+                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+                    }
+                    Text {
+                        text: @tr("Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list.");
+                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+                    }
+                }
+                GhostButton {
+                    text: @tr("Preview FreeRDP arguments");
+                    clicked => { root.rdp-preview = root.preview-rdp(root.current-draft()); }
+                }
+                if root.rdp-preview != "" : Text {
+                    text: root.rdp-preview; color: Theme.text-muted;
+                    font-family: Theme.font-mono; font-size: Theme.fs-xs; wrap: word-wrap;
+                }
+            }
+
             // ── Serial-only fields ──────────────────────────────────────────
             if root.draft-kind == "serial" : SerialPortCombo {
                 label: @tr("Serial port");
@@ -1826,44 +1959,7 @@ export component SessionDialog inherits ModalLayer {
                         }
                         root.host-missing = false;
                         root.test-status = @tr("Testing...");
-                        root.test-connection({
-                            id: root.draft-id,
-                            name: root.draft-name,
-                            kind: root.draft-kind,
-                            host: root.draft-host,
-                            port: root.draft-port.to-float(),
-                            user: root.draft-user,
-                            auth: root.draft-auth,
-                            password: root.draft-password,
-                            private-key-path: root.draft-key-path,
-                            private-key-inline: root.draft-key-inline,
-                            private-key-inline-mode: root.draft-key-inline-mode,
-                            proxy: (root.draft-proxy-type == "none" || root.draft-proxy-hostport == "") ? ""
-                                 : root.draft-proxy-type == "http" ? "http://" + root.draft-proxy-hostport
-                                 : "socks5://" + root.draft-proxy-hostport,
-                            group: root.draft-group,
-                            serial-port: root.draft-serial-port,
-                            baud-rate: root.draft-baud.to-float(),
-                            data-bits: root.draft-data-bits.to-float(),
-                            stop-bits: root.draft-stop-bits.to-float(),
-                            parity: root.draft-parity,
-                            flow-control: root.draft-flow,
-                            rdp-domain: root.draft-rdp-domain,
-                            rdp-resolution: root.draft-rdp-resolution,
-                            rdp-width: root.draft-rdp-width.to-float(),
-                            rdp-height: root.draft-rdp-height.to-float(),
-                            encoding: root.draft-encoding,
-                            vt100-drawing: root.draft-vt100-drawing,
-                            term-type: root.draft-term-type,
-                            session-log: root.draft-session-log,
-                            disable-shell-integration: root.draft-disable-shell-integration,
-                            sftp-mode: root.draft-sftp-mode,
-                            sftp-command: root.draft-sftp-command,
-                            note: root.draft-note,
-                            jumps: root.jumps,
-                            allow-secret-reveal: root.allow-secret-reveal,
-                            allow-mcp-access: root.allow-mcp-access,
-                        });
+                        root.test-connection(root.current-draft());
                     }
                 }
                 if root.test-status != "" : Text {
