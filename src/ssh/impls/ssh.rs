@@ -509,6 +509,35 @@ fn bound_prompt_setup_echo(text: &mut String) {
     *text = tail;
 }
 
+/// How long output stays hidden waiting for the setup's OSC 699 marker
+/// before it is released anyway (#524).
+const PROMPT_SETUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Give up waiting for the OSC 699 completion marker and return everything
+/// buffered so far, minus our own setup echo (#524).
+///
+/// The setup is injected after the first non-empty output, which on many
+/// hosts is only the `Last login:` banner printed before the login shell's rc
+/// files run. If those rc files flush or consume pending input, `exec` another
+/// program, or run a menu, the setup never executes, the marker never comes,
+/// and every later byte — prompt and keystroke echo included — used to be
+/// buffered forever, leaving a frozen terminal.
+///
+/// If the echo hasn't arrived (or arrived only partly), `late_pending` is
+/// armed so the normal output path still strips it when it shows up.
+fn release_prompt_setup_buffer(buf: &mut String, late_pending: &mut bool) -> String {
+    let mut text = std::mem::take(buf);
+    *late_pending = !strip_late_prompt_setup_echo(&mut text);
+    text
+}
+
+/// Drop a completion marker that arrives after suppression already ended.
+fn strip_prompt_setup_done(text: &mut String) {
+    if text.contains(PROMPT_SETUP_DONE) {
+        *text = text.replace(PROMPT_SETUP_DONE, "");
+    }
+}
+
 /// Find a meatshell command-capture sequence (`ESC ] 697 ; <command> BEL|ST`)
 /// emitted by the shell hook (#113). Returns the command text and the byte
 /// range of the whole escape sequence, so the caller can strip it before the
@@ -1703,6 +1732,9 @@ async fn run_session(
     // session makes recalling an accidentally saved setup command clear normal
     // terminal rows (#289).
     let mut late_prompt_echo_pending = false;
+    // When to stop waiting for the setup's completion marker and show the
+    // buffered output anyway (#524). `Some` only while `suppress_echo`.
+    let mut suppress_deadline: Option<tokio::time::Instant> = None;
     // After a ZMODEM transfer finishes we briefly ignore ZMODEM detection so the
     // sender's lingering close frames can't spawn a spurious second receive (#76).
     let mut zmodem_done_at: Option<std::time::Instant> = None;
@@ -1836,6 +1868,32 @@ async fn run_session(
     // --- Main pump ------------------------------------------------------
     loop {
         tokio::select! {
+            _ = async {
+                match suppress_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                suppress_deadline = None;
+                if suppress_echo {
+                    suppress_echo = false;
+                    tracing::warn!(
+                        "[SESSION_START] id={} shell integration setup did not complete within {:?}; showing output without it",
+                        session.id,
+                        PROMPT_SETUP_TIMEOUT
+                    );
+                    let text = release_prompt_setup_buffer(
+                        &mut echo_buf,
+                        &mut late_prompt_echo_pending,
+                    );
+                    if !text.is_empty() {
+                        if let Some(cwd) = cwd_tracker.feed(&text) {
+                            let _ = events.send(SessionEvent::CwdChanged(cwd));
+                        }
+                        let _ = events.send(SessionEvent::Output(text));
+                    }
+                }
+            }
             _ = async {
                 match auxiliary_deadline {
                     Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -2090,6 +2148,8 @@ async fn run_session(
                         {
                             prompt_injected = true;
                             suppress_echo = true;
+                            suppress_deadline =
+                                Some(tokio::time::Instant::now() + PROMPT_SETUP_TIMEOUT);
                             // A separate exec probe already confirmed bash or zsh.
                             // Keep buffering until the hook's OSC 7 arrives: slow
                             // Linux/macOS PTYs may echo this command after several
@@ -2137,6 +2197,7 @@ async fn run_session(
                             echo_buf.push_str(&chunk);
                         if let Some(tail) = take_after_prompt_setup_done(&mut echo_buf) {
                             suppress_echo = false;
+                            suppress_deadline = None;
                             late_prompt_echo_pending = false;
                             tail
                         } else {
@@ -2149,6 +2210,10 @@ async fn run_session(
                                 &mut clean,
                                 &mut late_prompt_echo_pending,
                             );
+                            if prompt_injected {
+                                // A marker arriving after the #524 timeout.
+                                strip_prompt_setup_done(&mut clean);
+                            }
                             clean
                         };
 
@@ -3175,10 +3240,41 @@ mod keepalive_tests {
 mod prompt_setup_echo_tests {
     use super::{
         bound_prompt_setup_echo, prompt_setup_echo_end, prompt_setup_supported,
-        strip_late_prompt_setup_echo, strip_pending_prompt_setup_echo, strip_prompt_setup_echo,
+        release_prompt_setup_buffer, strip_late_prompt_setup_echo,
+        strip_pending_prompt_setup_echo, strip_prompt_setup_done, strip_prompt_setup_echo,
         take_after_prompt_setup_done, PROMPT_BODY, PROMPT_SETUP_DONE, PROMPT_SETUP_HISTORY_MARKER,
         PROMPT_SETUP_PREFIX,
     };
+
+    #[test]
+    fn timeout_releases_prompt_when_setup_never_runs() {
+        // #524: rc files swallowed the injected setup, so no echo and no
+        // completion marker ever arrive. The prompt must still be shown.
+        let mut buffered = String::from("[root@host ~]# ");
+        let mut pending = false;
+        let text = release_prompt_setup_buffer(&mut buffered, &mut pending);
+        assert_eq!(text, "[root@host ~]# ");
+        assert!(buffered.is_empty());
+        // The echo may still show up later; keep stripping armed.
+        assert!(pending);
+    }
+
+    #[test]
+    fn timeout_release_strips_setup_echo_already_buffered() {
+        let mut buffered = format!("{} && eval 'body; __ms7'\r\n[root@host ~]# ", PROMPT_SETUP_PREFIX);
+        let mut pending = false;
+        let text = release_prompt_setup_buffer(&mut buffered, &mut pending);
+        assert!(!text.contains(PROMPT_SETUP_PREFIX));
+        assert!(text.ends_with("[root@host ~]# "));
+        assert!(!pending);
+    }
+
+    #[test]
+    fn late_completion_marker_is_dropped() {
+        let mut text = format!("{PROMPT_SETUP_DONE}[root@host ~]# ");
+        strip_prompt_setup_done(&mut text);
+        assert_eq!(text, "[root@host ~]# ");
+    }
 
     #[test]
     fn only_bash_and_zsh_receive_prompt_setup() {
