@@ -1134,6 +1134,17 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-rdp-resolution: "1280x720";
     in-out property <string> dialog-rdp-width: "1280";
     in-out property <string> dialog-rdp-height: "720";
+    in-out property <bool> dialog-rdp-legacy-tls: false;
+    in-out property <bool> dialog-rdp-admin: false;
+    in-out property <bool> dialog-rdp-smart-sizing: false;
+    in-out property <string> dialog-rdp-cert-policy: "ignore";
+    in-out property <string> dialog-rdp-network: "auto";
+    in-out property <bool> dialog-rdp-sound: false;
+    in-out property <bool> dialog-rdp-clipboard: true;
+    in-out property <bool> dialog-rdp-gfx: false;
+    in-out property <string> dialog-rdp-extra-args: "";
+    in-out property <bool> dialog-rdp-show-advanced: false;
+    in-out property <string> dialog-rdp-preview: "";
     in-out property <string> dialog-encoding: "UTF-8";
     in-out property <bool> dialog-vt100-drawing: false;
     in-out property <string> dialog-term-type: "xterm-256color";
@@ -1210,6 +1221,7 @@ export component AppWindow inherits Window {
     callback remove-session(string /* session-id */);
     callback session-dialog-submit(SessionDraft);
     callback session-dialog-test(SessionDraft);
+    callback session-dialog-preview-rdp(SessionDraft) -> string;
     callback session-dialog-cancel();
     callback session-dialog-closed();
     callback session-dialog-stop-test();
@@ -4743,6 +4755,17 @@ export component AppWindow inherits Window {
         draft-rdp-resolution <=> root.dialog-rdp-resolution;
         draft-rdp-width <=> root.dialog-rdp-width;
         draft-rdp-height <=> root.dialog-rdp-height;
+        draft-rdp-legacy-tls <=> root.dialog-rdp-legacy-tls;
+        draft-rdp-admin <=> root.dialog-rdp-admin;
+        draft-rdp-smart-sizing <=> root.dialog-rdp-smart-sizing;
+        draft-rdp-cert-policy <=> root.dialog-rdp-cert-policy;
+        draft-rdp-network <=> root.dialog-rdp-network;
+        draft-rdp-sound <=> root.dialog-rdp-sound;
+        draft-rdp-clipboard <=> root.dialog-rdp-clipboard;
+        draft-rdp-gfx <=> root.dialog-rdp-gfx;
+        draft-rdp-extra-args <=> root.dialog-rdp-extra-args;
+        show-rdp-advanced <=> root.dialog-rdp-show-advanced;
+        rdp-preview <=> root.dialog-rdp-preview;
         draft-encoding <=> root.dialog-encoding;
         draft-vt100-drawing <=> root.dialog-vt100-drawing;
         draft-term-type <=> root.dialog-term-type;
@@ -4756,6 +4779,7 @@ export component AppWindow inherits Window {
         triggers: root.dialog-triggers;
         submit(draft) => { root.session-dialog-submit(draft); }
         test-connection(draft) => { root.session-dialog-test(draft); }
+        preview-rdp(draft) => { root.session-dialog-preview-rdp(draft) }
         cancel => { root.session-dialog-cancel(); }
         closed => { root.session-dialog-closed(); }
         stop-test => { root.session-dialog-stop-test(); }

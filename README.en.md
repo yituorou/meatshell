@@ -105,6 +105,7 @@ open /Applications/meatshell.app
 - [x] Quick commands + command box (broadcast to all sessions) + command history
 - [x] Serial / Telnet sessions
 - [x] RDP remote desktop: stores host / port / user / password / domain with a resolution choice (full screen / common sizes / custom) and hands the session to a remote desktop client (`mstsc` on Windows; FreeRDP's `xfreerdp3` / `xfreerdp` on Linux / macOS — install it yourself, or use the Flatpak build, which bundles it)
+  - On Linux / macOS, each RDP session can select certificate policy, network profile, sound, clipboard, GFX, and legacy TLS compatibility. Advanced arguments accept one native FreeRDP argument per line (for example `/bpp:24` or `/drive:share,/tmp/path`) or supported aliases such as `network=lan`, `sound=on`, `网络=局域网`, and `音频=开`. Preview shows the final argument list without the saved password. Host, identity, certificate, and display switches cannot be overridden there; passwords stay on stdin. These FreeRDP options do not apply to Windows `mstsc`.
 - [x] Outbound proxy (SOCKS5 / HTTP)
 - [x] Import `~/.ssh/config`
 - [x] Session passwords encrypted at rest (ChaCha20-Poly1305)

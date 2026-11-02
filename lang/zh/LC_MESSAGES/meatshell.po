@@ -780,3 +780,66 @@ msgstr "选中项"
 
 msgid "System information"
 msgstr "系统信息"
+
+msgid "FreeRDP server compatibility (Linux / macOS)"
+msgstr "FreeRDP 服务器兼容设置（Linux / macOS）"
+
+msgid "Legacy TLS (security level 0; less secure)"
+msgstr "旧版 TLS（安全等级 0，安全性较低）"
+
+msgid "Administrative session (/admin)"
+msgstr "管理会话（/admin）"
+
+msgid "Smart sizing (scale fixed resolution)"
+msgstr "智能缩放（缩放固定分辨率）"
+
+msgid "Certificate policy"
+msgstr "证书策略"
+
+msgid "Ignore certificate (less secure)"
+msgstr "忽略证书（安全性较低）"
+
+msgid "Trust on first use"
+msgstr "首次连接时信任"
+
+msgid "Reject untrusted"
+msgstr "拒绝不受信任的证书"
+
+msgid "Network profile"
+msgstr "网络类型"
+
+msgid "Automatic"
+msgstr "自动"
+
+msgid "Fast broadband"
+msgstr "高速宽带"
+
+msgid "Slow broadband"
+msgstr "低速宽带"
+
+msgid "Redirect sound"
+msgstr "重定向声音"
+
+msgid "Clipboard sharing"
+msgstr "共享剪贴板"
+
+msgid "Graphics acceleration (GFX)"
+msgstr "图形加速（GFX）"
+
+msgid "Advanced FreeRDP arguments"
+msgstr "高级 FreeRDP 参数"
+
+msgid "One argument per line. Chinese aliases or native English FreeRDP options."
+msgstr "每行一个参数。可用中文别名或 FreeRDP 原生英文参数。"
+
+msgid "Examples: 网络=局域网, 音频=开, /bpp:24, /drive:资料,/tmp/中文路径"
+msgstr "示例：网络=局域网、音频=开、/bpp:24、/drive:资料,/tmp/中文路径"
+
+msgid "Preview FreeRDP arguments"
+msgstr "预览 FreeRDP 参数"
+
+msgid "Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录"
+msgstr "别名：network/网络、sound/音频、microphone/麦克风、printer/打印机、bpp/色深、drive/共享目录"
+
+msgid "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."
+msgstr "不要在高级参数中填写密码或令牌；参数会保存并显示在进程列表中。"

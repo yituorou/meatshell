@@ -42,6 +42,15 @@ struct Account<'a> {
     /// Desktop size for a windowed session, in pixels.
     width: u16,
     height: u16,
+    legacy_tls: bool,
+    admin: bool,
+    smart_sizing: bool,
+    cert_policy: &'a str,
+    network: &'a str,
+    sound: bool,
+    clipboard: bool,
+    gfx: bool,
+    extra_args: Vec<String>,
 }
 
 /// Start the system remote desktop client for `session`.
@@ -50,6 +59,48 @@ struct Account<'a> {
 /// the welcome page), `Err` a human-readable reason. This call is fire and
 /// forget: the client owns its own window and lifetime.
 pub(crate) fn launch(session: &Session) -> Result<String, String> {
+    with_account(session, |account| start_client(account, &session.id))
+}
+
+/// Validate on save and again on launch (imported configs are untrusted).
+pub(crate) fn validate_options(session: &Session) -> Result<(), String> {
+    freerdp::session_options(session).map(|_| ())
+}
+
+/// Preview only the command line, never the saved password or stdin contents.
+pub(crate) fn preview_args(session: &Session) -> Result<String, String> {
+    if cfg!(windows) {
+        return Err(t(
+            "Windows 使用 mstsc，FreeRDP 参数不适用",
+            "Windows uses mstsc; FreeRDP arguments do not apply",
+        )
+        .to_string());
+    }
+    with_account(session, |account| {
+        let (binary, dialect) = freerdp::CLIENTS
+            .iter()
+            .find_map(|binary| freerdp::probe_dialect(binary).map(|dialect| (*binary, dialect)))
+            .unwrap_or(("xfreerdp", freerdp::Dialect::V2));
+        let rendered = freerdp::args(account, dialect)
+            .into_iter()
+            .map(|arg| {
+                // This is a preview, not a shell command; quote whitespace only for readability.
+                if arg.contains(char::is_whitespace) {
+                    format!("{arg:?}")
+                } else {
+                    arg
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(format!("{binary} {rendered}"))
+    })
+}
+
+fn with_account<R>(
+    session: &Session,
+    action: impl FnOnce(&Account<'_>) -> Result<R, String>,
+) -> Result<R, String> {
     let host = session.host.trim();
     if host.is_empty() {
         return Err(t("主机地址为空", "host is empty").to_string());
@@ -67,6 +118,10 @@ pub(crate) fn launch(session: &Session) -> Result<String, String> {
     } else {
         session.rdp_domain.trim().to_string()
     };
+    #[cfg(not(windows))]
+    let extra_args = freerdp::session_options(session)?;
+    #[cfg(windows)]
+    let extra_args = Vec::new();
     let account = Account {
         host,
         port,
@@ -76,8 +131,17 @@ pub(crate) fn launch(session: &Session) -> Result<String, String> {
         fullscreen: session.rdp_fullscreen,
         width: session.rdp_width.max(MIN_DESKTOP_SIDE),
         height: session.rdp_height.max(MIN_DESKTOP_SIDE),
+        legacy_tls: session.rdp_legacy_tls,
+        admin: session.rdp_admin,
+        smart_sizing: session.rdp_smart_sizing,
+        cert_policy: &session.rdp_cert_policy,
+        network: &session.rdp_network,
+        sound: session.rdp_sound,
+        clipboard: session.rdp_clipboard,
+        gfx: session.rdp_gfx,
+        extra_args,
     };
-    start_client(&account, &session.id)
+    action(&account)
 }
 
 /// Split `DOMAIN\user` / `user@domain` into its parts; plain names pass through.
@@ -237,7 +301,11 @@ mod credman {
 
     /// Create or replace the domain credential for `target`. The blob is the
     /// UTF-16 password without a terminating NUL. `Err` is the Win32 error.
-    pub(super) fn write_domain_password(target: &str, user: &str, password: &str) -> Result<(), u32> {
+    pub(super) fn write_domain_password(
+        target: &str,
+        user: &str,
+        password: &str,
+    ) -> Result<(), u32> {
         let target = wide(target);
         let user = wide(user);
         let blob: Vec<u8> = password.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -288,7 +356,10 @@ fn start_client(account: &Account<'_>, session_id: &str) -> Result<String, Strin
     Command::new("mstsc").arg(&path).spawn().map_err(|err| {
         format!(
             "{} mstsc: {err}",
-            t("无法启动系统远程桌面", "cannot start the system remote desktop client")
+            t(
+                "无法启动系统远程桌面",
+                "cannot start the system remote desktop client"
+            )
         )
     })?;
     Ok(format!("{}:{} (mstsc)", account.host, account.port))
@@ -300,6 +371,8 @@ fn start_client(account: &Account<'_>, session_id: &str) -> Result<String, Strin
 #[cfg_attr(windows, allow(dead_code))]
 mod freerdp {
     use super::Account;
+    use crate::config::Session;
+    use std::collections::HashSet;
 
     /// Which command line dialect a FreeRDP build speaks. FreeRDP 3 added the
     /// optional `force` value to `/from-stdin` — read the credentials before
@@ -364,6 +437,181 @@ mod freerdp {
         None
     }
 
+    /// Each nonempty line is one argument, not a shell fragment. Chinese and
+    /// English aliases cover common values; arbitrary native FreeRDP switches
+    /// remain available in their original spelling.
+    pub(super) fn parse_extra_args(input: &str) -> Result<Vec<String>, String> {
+        let mut result = Vec::new();
+        let mut keys = HashSet::new();
+        for (index, line) in input.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if result.len() >= 32 || line.len() > 512 || line.chars().any(char::is_control) {
+                return Err(format!(
+                    "{} {}",
+                    super::t(
+                        "RDP 参数过多或过长，行",
+                        "too many or too long RDP arguments, line"
+                    ),
+                    index + 1
+                ));
+            }
+            let arg = if !line.starts_with(['/', '+', '-']) && line.contains('=') {
+                let (name, value) = line.split_once('=').expect("checked above");
+                match (name.trim().to_ascii_lowercase().as_str(), value.trim()) {
+                    ("网络" | "network", "局域网" | "lan") => "/network:lan".to_string(),
+                    ("网络" | "network", "广域网" | "wan") => "/network:wan".to_string(),
+                    ("网络" | "network", "自动" | "auto") => "/network:auto".to_string(),
+                    ("音频" | "sound", "开" | "on") => "/sound".to_string(),
+                    ("音频" | "sound", "关" | "off") => "-sound".to_string(),
+                    ("麦克风" | "microphone", "开" | "on") => "/microphone".to_string(),
+                    ("打印机" | "printer", "开" | "on") => "/printer".to_string(),
+                    ("色深" | "bpp", "16" | "24" | "32") => format!("/bpp:{}", value.trim()),
+                    ("共享目录" | "drive", path) if path.contains(',') => {
+                        format!("/drive:{path}")
+                    }
+                    _ => {
+                        return Err(format!(
+                            "{} {}",
+                            super::t(
+                                "未知的 RDP 参数别名，行",
+                                "unknown RDP argument alias, line"
+                            ),
+                            index + 1
+                        ))
+                    }
+                }
+            } else {
+                line.to_string()
+            };
+            let key = option_key(&arg).ok_or_else(|| {
+                format!(
+                    "{} {}",
+                    super::t("无效的 RDP 参数，行", "invalid RDP argument, line"),
+                    index + 1
+                )
+            })?;
+            // Keep credentials on stdin. The forbidden options also prevent
+            // overriding connection identity, certificate policy, and display.
+            if [
+                "p",
+                "password",
+                "passwd",
+                "gateway",
+                "proxy",
+                "v",
+                "u",
+                "d",
+                "from-stdin",
+                "cert",
+                "tls",
+                "tls-seclevel",
+                "size",
+                "w",
+                "h",
+                "f",
+                "smart-sizing",
+                "dynamic-resolution",
+                "admin",
+                "clipboard",
+            ]
+            .contains(&key.as_str())
+                || key.contains("secret")
+                || key.contains("token")
+                || key.contains("pass")
+                || arg.contains(';')
+                || arg.contains('|')
+                || arg.contains('`')
+                || (key != "drive" && arg.contains(char::is_whitespace))
+            {
+                return Err(format!(
+                    "{} {}",
+                    super::t(
+                        "禁止或冲突的 RDP 参数，行",
+                        "forbidden or conflicting RDP argument, line"
+                    ),
+                    index + 1
+                ));
+            }
+            // Multiple shares are valid, but the share name must be unique.
+            let unique_key = if key == "drive" {
+                let spec = arg.split_once(':').map(|(_, value)| value).unwrap_or("");
+                let (name, path) = spec.split_once(',').ok_or_else(|| {
+                    format!(
+                        "{} {}",
+                        super::t(
+                            "共享目录缺少名称或路径，行",
+                            "drive share needs a name and path, line"
+                        ),
+                        index + 1
+                    )
+                })?;
+                if name.is_empty() || path.is_empty() {
+                    return Err(format!(
+                        "{} {}",
+                        super::t(
+                            "共享目录缺少名称或路径，行",
+                            "drive share needs a name and path, line"
+                        ),
+                        index + 1
+                    ));
+                }
+                format!("drive:{}", name.to_lowercase())
+            } else {
+                key
+            };
+            if !keys.insert(unique_key) {
+                return Err(format!(
+                    "{} {}",
+                    super::t("重复的 RDP 参数，行", "duplicate RDP argument, line"),
+                    index + 1
+                ));
+            }
+            result.push(arg);
+        }
+        Ok(result)
+    }
+
+    fn option_key(arg: &str) -> Option<String> {
+        let name = arg
+            .strip_prefix('/')
+            .or_else(|| arg.strip_prefix('+'))
+            .or_else(|| arg.strip_prefix('-'))?;
+        let key = name.split(':').next()?.to_ascii_lowercase();
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return None;
+        }
+        Some(key)
+    }
+
+    pub(super) fn session_options(session: &Session) -> Result<Vec<String>, String> {
+        if !["ignore", "tofu", "deny"].contains(&session.rdp_cert_policy.as_str())
+            || !["auto", "lan", "wan", "broadband-high", "broadband-low"]
+                .contains(&session.rdp_network.as_str())
+        {
+            return Err(super::t("RDP 常用参数无效", "invalid RDP common options").to_string());
+        }
+        let args = parse_extra_args(&session.rdp_extra_args)?;
+        for arg in &args {
+            let key = option_key(arg).expect("validated above");
+            if (key == "network" && session.rdp_network != "auto")
+                || (key == "sound" && session.rdp_sound)
+                || (key == "gfx" && session.rdp_gfx)
+            {
+                return Err(format!(
+                    "{}: {key}",
+                    super::t(
+                        "RDP 参数与常用设置冲突",
+                        "RDP argument conflicts with common settings"
+                    )
+                ));
+            }
+        }
+        Ok(args)
+    }
+
     /// The command line for a FreeRDP connect.
     ///
     /// The password is deliberately absent — it goes over stdin, see
@@ -372,15 +620,38 @@ mod freerdp {
     pub(super) fn args(account: &Account<'_>, dialect: Dialect) -> Vec<String> {
         let mut args = vec![
             format!("/v:{}:{}", account.host, account.port),
-            "/cert:ignore".to_string(),
-            "/clipboard".to_string(),
-            // Let the session follow the window when it is resized. FreeRDP
-            // refuses to start when `+smart-sizing` is given as well — "Smart
-            // sizing and dynamic resolution are mutually exclusive options" —
-            // and following the window keeps the picture pixel sharp instead of
-            // scaling it up, so this is the one we ask for.
-            "+dynamic-resolution".to_string(),
+            format!("/cert:{}", account.cert_policy),
+            if account.clipboard {
+                "/clipboard"
+            } else {
+                "-clipboard"
+            }
+            .to_string(),
         ];
+        // Explicit compatibility flags, scoped to this one saved target.
+        if account.legacy_tls {
+            args.push(match dialect {
+                Dialect::V3 => "/tls:seclevel:0".to_string(),
+                Dialect::V2 => "/tls-seclevel:0".to_string(),
+            });
+        }
+        if account.admin {
+            args.push("/admin".to_string());
+        }
+        if account.network != "auto" {
+            args.push(format!("/network:{}", account.network));
+        }
+        if account.sound {
+            args.push("/sound".to_string());
+        }
+        if account.gfx {
+            args.push("/gfx".to_string());
+        }
+        if account.smart_sizing {
+            args.push("/smart-sizing".to_string());
+        } else {
+            args.push("+dynamic-resolution".to_string());
+        }
         // Omitted when empty: `/u:` with no value does not mean "no user name".
         if !account.user.is_empty() {
             args.push(format!("/u:{}", account.user));
@@ -392,9 +663,14 @@ mod freerdp {
         if account.fullscreen {
             args.push("/f".to_string());
         } else {
-            args.push(format!("/w:{}", account.width));
-            args.push(format!("/h:{}", account.height));
+            if account.smart_sizing {
+                args.push(format!("/size:{}x{}", account.width, account.height));
+            } else {
+                args.push(format!("/w:{}", account.width));
+                args.push(format!("/h:{}", account.height));
+            }
         }
+        args.extend(account.extra_args.iter().cloned());
         args.push(match dialect {
             // `:force` reads stdin up front. Without it FreeRDP 3 only reads
             // when the server asks for credentials, which is where its
@@ -439,6 +715,15 @@ mod freerdp {
                 fullscreen: false,
                 width: 1600,
                 height: 900,
+                legacy_tls: false,
+                admin: false,
+                smart_sizing: false,
+                cert_policy: "ignore",
+                network: "auto",
+                sound: false,
+                clipboard: true,
+                gfx: false,
+                extra_args: Vec::new(),
             }
         }
 
@@ -469,6 +754,108 @@ mod freerdp {
                 assert!(args.contains(&"/d:CONTOSO".to_string()));
                 assert!(args.contains(&"/v:10.0.0.5:3389".to_string()));
             }
+        }
+
+        #[test]
+        fn compatibility_options_are_per_server_and_never_leak_to_defaults() {
+            let mut target = account();
+            let default = args(&target, Dialect::V3);
+            assert!(!default.contains(&"/tls:seclevel:0".to_string()));
+            assert!(!default.contains(&"/admin".to_string()));
+            assert!(!default.contains(&"/smart-sizing".to_string()));
+
+            target.legacy_tls = true;
+            target.admin = true;
+            target.smart_sizing = true;
+            let compat = args(&target, Dialect::V3);
+            assert!(compat.contains(&"/tls:seclevel:0".to_string()));
+            assert!(compat.contains(&"/admin".to_string()));
+            assert!(compat.contains(&"/smart-sizing".to_string()));
+            assert!(compat.contains(&"/size:1600x900".to_string()));
+            assert!(!compat.contains(&"+dynamic-resolution".to_string()));
+            assert!(!compat.iter().any(|arg| arg.contains("s3cret")));
+            let compat_v2 = args(&target, Dialect::V2);
+            assert!(compat_v2.contains(&"/tls-seclevel:0".to_string()));
+            assert!(!compat_v2.contains(&"/tls:seclevel:0".to_string()));
+        }
+
+        #[test]
+        fn bilingual_extra_args_translate_without_shell_or_credentials() {
+            let input =
+                "网络=局域网\n音频=开\n麦克风=开\n色深=24\n共享目录=资料,/tmp/中文 路径\n/gfx";
+            assert_eq!(
+                parse_extra_args(input).unwrap(),
+                vec![
+                    "/network:lan",
+                    "/sound",
+                    "/microphone",
+                    "/bpp:24",
+                    "/drive:资料,/tmp/中文 路径",
+                    "/gfx"
+                ]
+            );
+            assert_eq!(
+                parse_extra_args("network=wan\nsound=on").unwrap(),
+                vec!["/network:wan", "/sound"]
+            );
+        }
+
+        #[test]
+        fn multiple_named_drive_shares_and_equals_in_paths_are_allowed() {
+            assert_eq!(
+                parse_extra_args("/drive:one,/tmp/a=b\n共享目录=二,/tmp/中文 路径").unwrap(),
+                vec!["/drive:one,/tmp/a=b", "/drive:二,/tmp/中文 路径"]
+            );
+            assert!(parse_extra_args("/drive:one,/tmp/a\n/drive:one,/tmp/b").is_err());
+        }
+
+        #[test]
+        fn extra_args_reject_sensitive_conflicting_duplicate_and_shell_syntax() {
+            for input in [
+                "/p:secret",
+                "/password:secret",
+                "/gateway:g:host,p:secret",
+                "/proxy:socks5://u:p@host",
+                "/v:evil",
+                "/u:other",
+                "/from-stdin",
+                "/cert:ignore",
+                "/size:100x100",
+                "/tls:seclevel:0",
+                "/network:lan\n/network:wan",
+                "network=lan\n/network:wan",
+                "/gfx;touch /tmp/x",
+                "not-an-option",
+                "网络=未知",
+            ] {
+                assert!(parse_extra_args(input).is_err(), "accepted {input:?}");
+            }
+        }
+
+        #[test]
+        fn common_options_and_extra_args_are_per_session() {
+            let mut target = account();
+            target.cert_policy = "tofu";
+            target.network = "wan";
+            target.sound = true;
+            target.clipboard = false;
+            target.gfx = true;
+            target.extra_args = parse_extra_args("/bpp:24").unwrap();
+            let selected = args(&target, Dialect::V3);
+            for option in [
+                "/cert:tofu",
+                "/network:wan",
+                "/sound",
+                "-clipboard",
+                "/gfx",
+                "/bpp:24",
+            ] {
+                assert!(selected.contains(&option.to_string()), "missing {option}");
+            }
+            let defaults = args(&account(), Dialect::V3);
+            assert!(defaults.contains(&"/cert:ignore".to_string()));
+            assert!(defaults.contains(&"/clipboard".to_string()));
+            assert!(!defaults.contains(&"/bpp:24".to_string()));
         }
 
         #[test]
@@ -662,6 +1049,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_session_json_defaults_to_secure_compatibility_settings() {
+        let mut old = serde_json::to_value(Session::new_empty()).unwrap();
+        for key in [
+            "rdp_legacy_tls",
+            "rdp_admin",
+            "rdp_smart_sizing",
+            "rdp_cert_policy",
+            "rdp_network",
+            "rdp_sound",
+            "rdp_clipboard",
+            "rdp_gfx",
+            "rdp_extra_args",
+        ] {
+            old.as_object_mut().unwrap().remove(key);
+        }
+        let session: Session = serde_json::from_value(old).unwrap();
+        assert!(!session.rdp_legacy_tls);
+        assert!(!session.rdp_admin);
+        assert!(!session.rdp_smart_sizing);
+        assert_eq!(session.rdp_cert_policy, "ignore");
+        assert_eq!(session.rdp_network, "auto");
+        assert!(!session.rdp_sound && session.rdp_clipboard && !session.rdp_gfx);
+        assert!(session.rdp_extra_args.is_empty());
+
+        let mut selected = session;
+        selected.rdp_legacy_tls = true;
+        selected.rdp_admin = true;
+        selected.rdp_smart_sizing = true;
+        selected.rdp_cert_policy = "tofu".into();
+        selected.rdp_network = "wan".into();
+        selected.rdp_extra_args = "网络=局域网".into();
+        selected.rdp_sound = true;
+        selected.rdp_clipboard = false;
+        selected.rdp_gfx = true;
+        let saved: Session =
+            serde_json::from_value(serde_json::to_value(selected).unwrap()).unwrap();
+        assert!(saved.rdp_legacy_tls && saved.rdp_admin && saved.rdp_smart_sizing);
+        assert_eq!(saved.rdp_cert_policy, "tofu");
+        assert_eq!(saved.rdp_network, "wan");
+        assert_eq!(saved.rdp_extra_args, "网络=局域网");
+        assert!(saved.rdp_sound && !saved.rdp_clipboard && saved.rdp_gfx);
+    }
+
+    #[test]
+    fn preview_never_contains_the_saved_password_and_validation_blocks_conflicts() {
+        let mut session = Session::new_empty();
+        session.host = "10.0.0.5".into();
+        session.user = "alice".into();
+        session.password = crate::config::Secret::new("super-secret");
+        session.rdp_extra_args = "网络=局域网\n/bpp:24".into();
+        let preview = preview_args(&session).unwrap();
+        assert!(preview.contains("/network:lan") && preview.contains("/bpp:24"));
+        assert!(!preview.contains("super-secret"));
+        session.rdp_network = "wan".into();
+        assert!(validate_options(&session).is_err());
+    }
+
+    #[test]
     fn user_and_domain_are_split_from_the_user_field() {
         assert_eq!(
             split_user_domain("CONTOSO\\alice"),
@@ -675,10 +1120,7 @@ mod tests {
             split_user_domain("alice"),
             ("alice".to_string(), String::new())
         );
-        assert_eq!(
-            split_user_domain(""),
-            (String::new(), String::new())
-        );
+        assert_eq!(split_user_domain(""), (String::new(), String::new()));
     }
 
     #[test]
@@ -693,6 +1135,15 @@ mod tests {
             fullscreen: false,
             width: 1920,
             height: 1080,
+            legacy_tls: false,
+            admin: false,
+            smart_sizing: false,
+            cert_policy: "ignore",
+            network: "auto",
+            sound: false,
+            clipboard: true,
+            gfx: false,
+            extra_args: Vec::new(),
         };
         let contents = rdp_file_contents(&account, false);
         assert!(contents.contains("full address:s:192.168.1.10:3389\r\n"));
@@ -787,8 +1238,10 @@ mod tests {
     #[cfg(windows)]
     fn credential_manager_accepts_the_saved_password() {
         let target = format!("TERMSRV/meatshell-test-{}.invalid", uuid::Uuid::new_v4());
-        assert_eq!(credman::write_domain_password(&target, "alice", "p@ssw0rd-示例"), Ok(()));
+        assert_eq!(
+            credman::write_domain_password(&target, "alice", "p@ssw0rd-示例"),
+            Ok(())
+        );
         assert!(credman::delete_domain_password(&target));
     }
 }
-

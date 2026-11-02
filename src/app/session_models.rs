@@ -598,6 +598,15 @@ pub(super) fn session_from_draft(
         rdp_fullscreen,
         rdp_width,
         rdp_height,
+        rdp_legacy_tls: draft.rdp_legacy_tls,
+        rdp_admin: draft.rdp_admin,
+        rdp_smart_sizing: draft.rdp_smart_sizing,
+        rdp_cert_policy: draft.rdp_cert_policy.to_string(),
+        rdp_network: draft.rdp_network.to_string(),
+        rdp_sound: draft.rdp_sound,
+        rdp_clipboard: draft.rdp_clipboard,
+        rdp_gfx: draft.rdp_gfx,
+        rdp_extra_args: draft.rdp_extra_args.to_string(),
     }
 }
 
