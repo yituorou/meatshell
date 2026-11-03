@@ -64,6 +64,6 @@ pub(crate) use render::{
     RAW_CAP,
 };
 pub(crate) use state::{
-    BuiltScreen, CompiledOutputRule, CsiState, HistSpan, Line, OutputHighlightPreset, RenderGates,
-    TabRenderGate, TermBuffer, TermBufferHandle, TermBuffers,
+    BuiltScreen, CompiledOutputRule, CsiState, HistLine, HistSpan, Line, OutputHighlightPreset,
+    RenderGates, TabRenderGate, TermBuffer, TermBufferHandle, TermBuffers,
 };

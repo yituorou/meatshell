@@ -108,7 +108,7 @@ fn long_unbroken_output_is_captured_before_it_wraps_off_screen() {
     let rendered = buffer
         .history
         .iter()
-        .map(|line| line.0.as_str())
+        .map(|line| line.plain())
         .chain(buffer.displayed_text.iter().map(String::as_str))
         .collect::<String>();
     assert_eq!(rendered, String::from_utf8_lossy(output));

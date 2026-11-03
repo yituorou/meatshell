@@ -39,8 +39,11 @@ pub(crate) fn char_after_cell_end(prefix: &[usize], target: usize) -> usize {
     char_count
 }
 
-struct CellAttrs {
-    contents: String,
+/// Borrowed view of one cell. `contents` points into the vt100 grid (or a
+/// static blank) so building a row allocates per run, not per cell — this runs
+/// for every row of every half-screen batch during log floods.
+struct CellAttrs<'a> {
+    contents: &'a str,
     fg: vt100::Color,
     bg: vt100::Color,
     bold: bool,
@@ -49,9 +52,9 @@ struct CellAttrs {
     underline: bool,
 }
 
-impl CellAttrs {
+impl CellAttrs<'_> {
     /// Attributes that must match for two cells to share one rendered run.
-    fn same_style(&self, other: &CellAttrs) -> bool {
+    fn same_style(&self, other: &CellAttrs<'_>) -> bool {
         self.fg == other.fg
             && self.bg == other.bg
             && self.bold == other.bold
@@ -60,16 +63,16 @@ impl CellAttrs {
     }
 }
 
-fn cell_attrs(screen: &vt100::Screen, row: u16, column: u16) -> CellAttrs {
+fn cell_attrs(screen: &vt100::Screen, row: u16, column: u16) -> CellAttrs<'_> {
     match screen.cell(row, column) {
         Some(cell) => {
             let contents = cell.contents();
             let contents = if cell.is_wide_continuation() {
-                String::new()
+                ""
             } else if contents.is_empty() {
-                " ".to_string()
+                " "
             } else {
-                contents.to_string()
+                contents
             };
             CellAttrs {
                 contents,
@@ -82,7 +85,7 @@ fn cell_attrs(screen: &vt100::Screen, row: u16, column: u16) -> CellAttrs {
             }
         }
         None => CellAttrs {
-            contents: " ".to_string(),
+            contents: " ",
             fg: vt100::Color::Default,
             bg: vt100::Color::Default,
             bold: false,
@@ -105,7 +108,7 @@ pub(crate) fn build_row(screen: &vt100::Screen, row: u16, columns: u16) -> Line 
             // lands in several cells. Keep a cluster in one run so it is drawn
             // as one glyph; the extra cells stay reserved as blank columns.
             let start_column = column;
-            let mut text = first.contents.clone();
+            let mut text = first.contents.to_string();
             column += 2;
             while column < columns {
                 let next = cell_attrs(screen, row, column);
@@ -113,7 +116,7 @@ pub(crate) fn build_row(screen: &vt100::Screen, row: u16, columns: u16) -> Line 
                     break;
                 }
                 let mut joined = text.clone();
-                joined.push_str(&next.contents);
+                joined.push_str(next.contents);
                 if joined.graphemes(true).nth(1).is_some() {
                     break;
                 }
@@ -135,16 +138,16 @@ pub(crate) fn build_row(screen: &vt100::Screen, row: u16, columns: u16) -> Line 
         }
 
         let start_column = column;
-        let mut text = first.contents.clone();
-        plain.push_str(&first.contents);
+        let mut text = first.contents.to_string();
+        plain.push_str(first.contents);
         column += 1;
         while column < columns {
             let next = cell_attrs(screen, row, column);
             if next.wide || !next.same_style(&first) {
                 break;
             }
-            plain.push_str(&next.contents);
-            text.push_str(&next.contents);
+            plain.push_str(next.contents);
+            text.push_str(next.contents);
             column += 1;
         }
 

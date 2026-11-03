@@ -203,24 +203,159 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
     let Some((b, matches, sel)) = data else {
         return;
     };
-    let spans = ModelRc::from(Rc::new(VecModel::from(b.spans)));
+    let spans = std::cell::Cell::new(Some(b.spans));
     let fm = ModelRc::from(Rc::new(VecModel::from(matches)));
     let sm = ModelRc::from(Rc::new(VecModel::from(sel)));
     let (cr, cc, ru, alt) = (b.cursor_row, b.cursor_col, b.rows_used, b.is_alt);
     let (smax, soff) = (b.scroll_max, b.scroll_offset);
     set_terminal_row(win, tab_id, move |row| {
-        row.spans = spans.clone();
+        if let Some(spans) = spans.take() {
+            // Update the tab's existing model in place. Assigning a new
+            // ModelRc makes Slint's repeater drop and re-create every span
+            // element (and re-shape all their text) on every frame, which is
+            // what made fast log output stutter.
+            match row.spans.as_any().downcast_ref::<VecModel<TermSpan>>() {
+                Some(model) => sync_span_model(model, spans),
+                None => row.spans = ModelRc::from(Rc::new(VecModel::from(spans))),
+            }
+        }
         row.cursor_row = cr;
         row.cursor_col = cc;
         row.rows_used = ru;
         row.is_alt_screen = alt;
         row.mouse_tracked = b.mouse_tracked;
-        row.find_matches = fm.clone();
-        row.selection = sm.clone();
+        if !model_matches(&row.find_matches, &fm) {
+            row.find_matches = fm.clone();
+        }
+        if !model_matches(&row.selection, &sm) {
+            row.selection = sm.clone();
+        }
         row.scroll_max = smax;
         row.scroll_offset = soff;
     });
     win.window().request_redraw();
+}
+
+/// True when two small overlay models (find matches, selection rects) hold the
+/// same rows, so the existing one can stay and its repeater keeps its items.
+fn model_matches(old: &ModelRc<TermMatch>, new: &ModelRc<TermMatch>) -> bool {
+    use slint::Model as _;
+    old.row_count() == new.row_count() && old.iter().zip(new.iter()).all(|(a, b)| a == b)
+}
+
+/// Identity of a span ignoring its row, so a line that only moved up the
+/// screen (scrolling output) can keep its Slint element.
+#[derive(PartialEq, Eq, Hash)]
+struct SpanKey {
+    text: SharedString,
+    font: SharedString,
+    col: i32,
+    cells: i32,
+    fg: u32,
+    bg: u32,
+    flags: u8,
+}
+
+fn span_key(span: &TermSpan) -> SpanKey {
+    SpanKey {
+        text: span.text.clone(),
+        font: span.font.clone(),
+        col: span.col,
+        cells: span.cells,
+        fg: span.fg.as_argb_encoded(),
+        bg: span.bg.as_argb_encoded(),
+        flags: u8::from(span.bold)
+            | u8::from(span.underline) << 1
+            | u8::from(span.cjk) << 2
+            | u8::from(span.emoji) << 3,
+    }
+}
+
+/// Make `model` hold `spans`, touching as few rows as possible.
+///
+/// Each model row is one Slint element whose Text must be re-shaped when its
+/// text changes. When output scrolls, nearly every line moves up one or more
+/// rows without changing, so each new span first claims an old slot with the
+/// same content: only its `row` (a position) changes. Spans that are really
+/// new reuse the slots of lines that scrolled off. The model only grows or
+/// shrinks at the end, so no other element is shifted.
+pub(super) fn sync_span_model(model: &VecModel<TermSpan>, spans: Vec<TermSpan>) {
+    use slint::Model as _;
+
+    let old: Vec<TermSpan> = model.iter().collect();
+    if old == spans {
+        return;
+    }
+
+    let slots = plan_span_slots(&old, spans);
+    for (index, span) in slots.iter().enumerate() {
+        if index >= old.len() {
+            model.push(span.clone());
+        } else if old[index] != *span {
+            model.set_row_data(index, span.clone());
+        }
+    }
+    // Shrink from the end only, so no surviving element is shifted.
+    while model.row_count() > slots.len() {
+        model.remove(model.row_count() - 1);
+    }
+}
+
+/// Decide which model row each new span goes to (see [`sync_span_model`]).
+/// Returns the complete new row list, without holes.
+fn plan_span_slots(old: &[TermSpan], spans: Vec<TermSpan>) -> Vec<TermSpan> {
+    let mut by_key: std::collections::HashMap<SpanKey, Vec<usize>> =
+        std::collections::HashMap::with_capacity(old.len());
+    for (index, span) in old.iter().enumerate() {
+        by_key.entry(span_key(span)).or_default().push(index);
+    }
+
+    let mut slots: Vec<Option<TermSpan>> = vec![None; old.len()];
+    let mut unmatched = Vec::new();
+    for span in spans {
+        let reused = by_key.get_mut(&span_key(&span)).and_then(|candidates| {
+            // Emoji spans carry their glyph in the image, not the text.
+            let position = candidates
+                .iter()
+                .position(|&index| !span.emoji || old[index].emoji_image == span.emoji_image)?;
+            Some(candidates.swap_remove(position))
+        });
+        match reused {
+            Some(index) => slots[index] = Some(span),
+            None => unmatched.push(span),
+        }
+    }
+
+    // Slots of lines that scrolled away take the genuinely new spans; any
+    // left over are appended.
+    let mut unmatched = unmatched.into_iter();
+    for slot in slots.iter_mut().filter(|slot| slot.is_none()) {
+        match unmatched.next() {
+            Some(span) => *slot = Some(span),
+            None => break,
+        }
+    }
+    slots.extend(unmatched.map(Some));
+
+    // Fewer spans than before: move spans from the end into interior holes
+    // so the list only shrinks at its tail.
+    let mut front = 0;
+    loop {
+        while slots.last().is_some_and(Option::is_none) {
+            slots.pop();
+        }
+        while front < slots.len() && slots[front].is_some() {
+            front += 1;
+        }
+        if front >= slots.len() {
+            break;
+        }
+        slots[front] = slots.pop().flatten();
+    }
+    slots
+        .into_iter()
+        .map(|slot| slot.expect("holes were filled"))
+        .collect()
 }
 
 /// Refresh only the lightweight selection overlay. Dragging used to call
@@ -382,4 +517,82 @@ pub(super) fn selected_iface(st: &TabStatus) -> (String, u64, u64) {
 /// `@` (already a bare host/IP).
 pub(super) fn conn_ip(host: &str) -> String {
     host.rsplit('@').next().unwrap_or(host).trim().to_string()
+}
+
+#[cfg(test)]
+mod span_model_tests {
+    use super::{plan_span_slots, sync_span_model};
+    use crate::ui::TermSpan;
+    use slint::{Model as _, VecModel};
+
+    fn span(text: &str, row: i32) -> TermSpan {
+        TermSpan {
+            text: text.into(),
+            row,
+            col: 0,
+            cells: text.chars().count() as i32,
+            ..Default::default()
+        }
+    }
+
+    fn texts(spans: &[TermSpan]) -> Vec<(String, i32)> {
+        spans.iter().map(|s| (s.text.to_string(), s.row)).collect()
+    }
+
+    #[test]
+    fn scrolled_lines_keep_their_slot_and_new_lines_fill_freed_ones() {
+        let old = vec![span("a", 0), span("b", 1), span("c", 2)];
+        // One line scrolled off the top, "d" arrived at the bottom.
+        let new = vec![span("b", 0), span("c", 1), span("d", 2)];
+        let slots = plan_span_slots(&old, new);
+        // "b" and "c" stay in slots 1 and 2 (only their row changes); "d"
+        // reuses slot 0, the line that scrolled away.
+        assert_eq!(
+            texts(&slots),
+            vec![("d".into(), 2), ("b".into(), 0), ("c".into(), 1)]
+        );
+    }
+
+    #[test]
+    fn shrinking_moves_tail_spans_into_holes() {
+        let old = vec![span("a", 0), span("b", 1), span("c", 2), span("d", 3)];
+        let new = vec![span("d", 0)];
+        let slots = plan_span_slots(&old, new);
+        assert_eq!(texts(&slots), vec![("d".into(), 0)]);
+    }
+
+    #[test]
+    fn growing_appends_after_existing_slots() {
+        let old = vec![span("a", 0)];
+        let new = vec![span("a", 0), span("b", 1), span("c", 2)];
+        let slots = plan_span_slots(&old, new);
+        assert_eq!(
+            texts(&slots),
+            vec![("a".into(), 0), ("b".into(), 1), ("c".into(), 2)]
+        );
+    }
+
+    #[test]
+    fn model_ends_up_with_exactly_the_new_spans() {
+        let model = VecModel::from(vec![span("a", 0), span("b", 1), span("c", 2), span("x", 3)]);
+        let new = vec![span("b", 0), span("c", 1), span("d", 2)];
+        sync_span_model(&model, new.clone());
+        let mut got: Vec<_> = texts(&model.iter().collect::<Vec<_>>());
+        let mut want = texts(&new);
+        got.sort();
+        want.sort();
+        assert_eq!(got, want);
+        assert_eq!(model.row_count(), 3);
+    }
+
+    #[test]
+    fn duplicate_lines_are_matched_one_to_one() {
+        let old = vec![span("same", 0), span("same", 1)];
+        let new = vec![span("same", 0), span("same", 1), span("same", 2)];
+        let slots = plan_span_slots(&old, new);
+        assert_eq!(slots.len(), 3);
+        let mut rows: Vec<i32> = slots.iter().map(|s| s.row).collect();
+        rows.sort();
+        assert_eq!(rows, vec![0, 1, 2]);
+    }
 }

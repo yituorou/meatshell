@@ -31,7 +31,7 @@ fn make_buf(
         sel_focus: None,
         sel_ranges: Vec::new(),
         mouse_tracked: false,
-        history: history.iter().map(|s| hist_line(s)).collect(),
+        history: history.iter().map(|s| hist_line(s).into()).collect(),
         prev: Vec::new(),
         view_offset,
         scroll_accum: 0.0,
@@ -169,4 +169,97 @@ fn leaving_alternate_screen_after_shrinking_keeps_cursor_in_bounds() {
         let (row, col) = parser.screen().cursor_position();
         assert!(row < rows && col <= cols, "cursor {row},{col} outside {rows}x{cols}");
     }
+}
+
+/// Log-flood throughput probe (not a correctness test). Run with:
+/// `cargo test --release --bin meatshell log_flood_bench -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn log_flood_bench() {
+    let mut stream = String::new();
+    let levels = [
+        "\x1b[32mINFO\x1b[0m",
+        "\x1b[33mWARN\x1b[0m",
+        "\x1b[31mERROR\x1b[0m",
+        "\x1b[36mDEBUG\x1b[0m",
+    ];
+    for i in 0..200_000u32 {
+        stream.push_str(&format!(
+            "2026-11-03 01:{:02}:{:02}.{:03} {} 12345 --- [nio-8080-exec-{}] \x1b[35mc.e.logflood.FloodService\x1b[0m : #{:09} processed order id={} status=OK latency={}ms user=alice@example.com\r\n",
+            (i / 60000) % 60, (i / 1000) % 60, i % 1000, levels[(i % 4) as usize], i % 16, i, i * 7, i % 300
+        ));
+    }
+    let bytes = stream.as_bytes();
+    let mut buf = make_buf(50, 200, &[], &[], 0);
+    let chunk = 16 * 1024;
+    let started = std::time::Instant::now();
+    let mut renders = std::time::Duration::ZERO;
+    let mut render_count = 0u32;
+    let mut span_total = 0usize;
+    for (n, piece) in bytes.chunks(chunk).enumerate() {
+        buf.ingest(piece);
+        if n % 4 == 0 {
+            let t = std::time::Instant::now();
+            let b = buf.render();
+            renders += t.elapsed();
+            render_count += 1;
+            span_total += b.spans.len();
+        }
+    }
+    let total = started.elapsed();
+    let ingest = total - renders;
+    let mb = bytes.len() as f64 / 1_048_576.0;
+    eprintln!(
+        "BENCH bytes={:.1}MB lines=200000 ingest={:?} ({:.1} MB/s, {:.0} lines/s) renders={} avg_render={:?} avg_spans={}",
+        mb,
+        ingest,
+        mb / ingest.as_secs_f64(),
+        200_000.0 / ingest.as_secs_f64(),
+        render_count,
+        renders / render_count.max(1),
+        span_total / render_count.max(1) as usize
+    );
+}
+
+fn run_tuples(runs: &[HistSpan]) -> Vec<(String, i32, i32, bool, bool, bool, String, String)> {
+    runs.iter()
+        .map(|r| {
+            (
+                r.text.clone(),
+                r.col,
+                r.cells,
+                r.bold,
+                r.inverse,
+                r.underline,
+                format!("{:?}", r.fg),
+                format!("{:?}", r.bg),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn compact_history_line_round_trips_styled_runs() {
+    let mut parser = vt100::Parser::new(2, 60, 0);
+    parser.process(
+        "12:00 \x1b[32mINFO\x1b[0m svc \x1b[1;35mFlood\x1b[0m 中文 ok \x1b[44m   \x1b[0m"
+            .as_bytes(),
+    );
+    let line = build_row(parser.screen(), 0, 60);
+    let compact = HistLine::from(&line);
+    assert_eq!(run_tuples(&compact.spans()), run_tuples(&line.1));
+    // Trailing padding is dropped, but the coloured-background blank run at
+    // the end (and the plain space before it) keeps its spaces.
+    assert!(compact.plain().ends_with("ok    "));
+    assert_eq!(compact.plain(), &line.0[..compact.plain().len()]);
+    assert!(compact.plain().len() < line.0.len());
+}
+
+#[test]
+fn compact_history_line_keeps_wrap_flag_and_plain_text() {
+    let line: Line = ("hello".to_string() + &" ".repeat(75), Vec::new(), true);
+    let compact = HistLine::from(&line);
+    assert_eq!(compact.plain(), "hello");
+    assert!(compact.wrapped);
+    assert!(compact.spans().is_empty());
 }

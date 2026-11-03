@@ -1,7 +1,7 @@
 use crate::terminal::{
     build_row, cell_prefix, char_after_cell_end, char_at_cell_start, detect_scroll,
-    highlight_plain_output, render_term_span, BuiltScreen, CsiState, Line, TermBuffer, MAX_HISTORY,
-    RAW_CAP,
+    highlight_plain_output, render_term_span, BuiltScreen, CsiState, HistLine, Line, TermBuffer,
+    MAX_HISTORY, RAW_CAP,
 };
 use crate::ui::TermMatch;
 
@@ -219,8 +219,8 @@ impl TermBuffer {
         let Some(match_idx) = self
             .history
             .iter()
-            .map(|line| &line.0)
-            .chain(live.iter().map(|line| &line.0))
+            .map(HistLine::plain)
+            .chain(live.iter().map(|line| line.0.as_str()))
             .position(|line| line.to_lowercase().contains(&q))
         else {
             return false;
@@ -334,7 +334,7 @@ impl TermBuffer {
         let mut out = String::new();
         for r in lo_r..=hi_r {
             let line: &str = if r < hist_len {
-                &self.history[r].0
+                self.history[r].plain()
             } else if r - hist_len < live.len() {
                 &live[r - hist_len].0
             } else {
@@ -364,7 +364,7 @@ impl TermBuffer {
             };
             out.push_str(seg.trim_end());
             let wrapped = if r < hist_len {
-                self.history[r].2
+                self.history[r].wrapped
             } else if r - hist_len < live.len() {
                 live[r - hist_len].2
             } else {
@@ -546,19 +546,29 @@ impl TermBuffer {
         if bytes.is_empty() {
             return;
         }
-        // Retain the (post-rewrite) stream, capped, so a resize can replay it at
-        // the new width and reflow already-printed output (#169).
-        self.raw.extend(bytes.iter().copied());
         // CSI 3 J means "erase saved lines". The vt100 crate clears its own
         // scrollback, but MeatShell maintains a separate rendered history and a
         // raw replay stream for resize reflow. Drop both sides of that history,
         // including when the CSI sequence was split across SSH reads (#319).
+        //
+        // Only the new bytes (plus the last 3 retained ones, for a split
+        // sequence) can contain a new CSI 3 J. Scanning the whole retained
+        // stream instead cost a 2 MiB memmove + scan per chunk, which
+        // dominated ingest during log floods.
+        let carry = self.raw.len().min(3);
+        let window_start = self.raw.len() - carry;
         let erase_saved_through = {
-            let raw = self.raw.make_contiguous();
-            raw.windows(4)
+            let mut probe = Vec::with_capacity(carry + bytes.len());
+            probe.extend(self.raw.range(window_start..).copied());
+            probe.extend_from_slice(bytes);
+            probe
+                .windows(4)
                 .rposition(|window| window == b"\x1b[3J")
-                .map(|position| position + 4)
+                .map(|position| window_start + position + 4)
         };
+        // Retain the (post-rewrite) stream, capped, so a resize can replay it at
+        // the new width and reflow already-printed output (#169).
+        self.raw.extend(bytes.iter().copied());
         if let Some(end) = erase_saved_through {
             self.raw.drain(..end);
             self.history.clear();
@@ -696,7 +706,7 @@ impl TermBuffer {
         if !self.prev.is_empty() {
             let k = detect_scroll(&self.prev, &curr);
             for line in self.prev.iter().take(k) {
-                self.history.push_back(line.clone());
+                self.history.push_back(HistLine::from(line));
             }
             while self.history.len() > MAX_HISTORY {
                 self.history.pop_front();
@@ -787,20 +797,19 @@ impl TermBuffer {
         let mut spans = Vec::new();
         let mut displayed = Vec::with_capacity(win);
         for (d, idx) in (start..end).enumerate() {
-            let line: &Line = if idx < hist_len {
-                &self.history[idx]
+            let (plain, runs) = if idx < hist_len {
+                let line = &self.history[idx];
+                (line.plain(), line.spans())
             } else {
-                &live[idx - hist_len]
+                let line = &live[idx - hist_len];
+                (line.0.as_str(), line.1.clone())
             };
-            let runs = highlight_plain_output(
-                line.1.clone(),
-                self.output_highlight,
-                &self.custom_highlight_rules,
-            );
+            let runs =
+                highlight_plain_output(runs, self.output_highlight, &self.custom_highlight_rules);
             for hs in &runs {
                 spans.extend(render_term_span(hs, d as i32, self.is_dark));
             }
-            displayed.push(line.0.trim_end().to_string());
+            displayed.push(plain.trim_end().to_string());
         }
         while displayed.len() < win {
             displayed.push(String::new());

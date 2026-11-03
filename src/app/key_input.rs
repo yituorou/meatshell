@@ -461,7 +461,7 @@ pub(super) fn wire_key_input(
 
                             let k = cursor_row as usize;
                             for line in curr.iter().take(k) {
-                                b.history.push_back(line.clone());
+                                b.history.push_back(crate::terminal::HistLine::from(line));
                             }
                             while b.history.len() > crate::terminal::MAX_HISTORY {
                                 b.history.pop_front();

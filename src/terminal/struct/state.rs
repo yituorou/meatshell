@@ -32,7 +32,7 @@ pub(crate) struct TermBuffer {
     /// forwarded to the PTY instead of starting a local drag-selection, so
     /// btop/htop/mc can be operated with the mouse (#terminal-mouse).
     pub(crate) mouse_tracked: bool,
-    pub(crate) history: VecDeque<Line>,
+    pub(crate) history: VecDeque<HistLine>,
     pub(crate) prev: Vec<Line>,
     pub(crate) view_offset: usize,
     /// Fractional scrollback rows not yet applied. Wheel deltas arrive as
@@ -140,3 +140,126 @@ pub(crate) struct HistSpan {
 }
 
 pub(crate) type Line = (String, Vec<HistSpan>, bool);
+
+/// One styled run of a scrollback line: a byte range of [`HistLine::text`]
+/// plus its grid position and style. Fixed-size and allocation-free.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HistRun {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
+    pub(crate) col: u16,
+    pub(crate) cells: u16,
+    pub(crate) fg: vt100::Color,
+    pub(crate) bg: vt100::Color,
+    pub(crate) bold: bool,
+    pub(crate) inverse: bool,
+    pub(crate) underline: bool,
+}
+
+/// Compact scrollback line (up to `MAX_HISTORY` of these per tab).
+///
+/// A live [`Line`] stores its plain text and then every run's text again as a
+/// separate `String` — about seven allocations per line, and the plain text
+/// padded with spaces to the full terminal width. Every run's text is a
+/// contiguous slice of the plain text, so history keeps the text once (minus
+/// trailing padding) and small fixed-size run records: two allocations and
+/// well under half the memory for a typical log line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistLine {
+    text: Box<str>,
+    /// Length of the plain line within `text`. Any bytes after it hold run
+    /// text that could not be found in the plain line (never expected).
+    plain_len: u32,
+    runs: Box<[HistRun]>,
+    pub(crate) wrapped: bool,
+}
+
+impl HistLine {
+    /// The line's visible text, without trailing padding spaces.
+    pub(crate) fn plain(&self) -> &str {
+        &self.text[..self.plain_len as usize]
+    }
+
+    /// Expand back into renderable runs.
+    pub(crate) fn spans(&self) -> Vec<HistSpan> {
+        self.runs
+            .iter()
+            .map(|run| HistSpan {
+                text: self.text[run.start as usize..(run.start + run.len) as usize].to_string(),
+                fg: run.fg,
+                bg: run.bg,
+                bold: run.bold,
+                inverse: run.inverse,
+                underline: run.underline,
+                col: i32::from(run.col),
+                cells: i32::from(run.cells),
+            })
+            .collect()
+    }
+}
+
+impl From<&Line> for HistLine {
+    fn from((plain, spans, wrapped): &Line) -> Self {
+        // Keep plain text up to its last non-space, or further if a styled
+        // run (e.g. a coloured-background blank) extends past that.
+        let mut keep = plain.trim_end_matches(' ').len();
+        let mut extra = String::new();
+        let mut cursor = 0;
+        let mut runs = Vec::with_capacity(spans.len());
+        for span in spans {
+            // Runs are built left to right from the same cells as the plain
+            // text, so each is found at or after the previous one. Even if an
+            // identical earlier substring were matched, its text is the same.
+            let start = match plain.get(cursor..).and_then(|rest| rest.find(&span.text)) {
+                Some(offset) => {
+                    let start = cursor + offset;
+                    cursor = start + span.text.len();
+                    keep = keep.max(cursor);
+                    start
+                }
+                None => {
+                    let start = plain.len() + extra.len();
+                    extra.push_str(&span.text);
+                    start
+                }
+            };
+            runs.push(HistRun {
+                start: start as u32,
+                len: span.text.len() as u32,
+                col: span.col.clamp(0, i32::from(u16::MAX)) as u16,
+                cells: span.cells.clamp(0, i32::from(u16::MAX)) as u16,
+                fg: span.fg,
+                bg: span.bg,
+                bold: span.bold,
+                inverse: span.inverse,
+                underline: span.underline,
+            });
+        }
+        let mut text = String::with_capacity(keep + extra.len());
+        text.push_str(&plain[..keep]);
+        if !extra.is_empty() {
+            // Unmatched runs were addressed past the full plain line; shift
+            // them onto the trimmed text.
+            let shift = (plain.len() - keep) as u32;
+            for run in runs
+                .iter_mut()
+                .filter(|run| run.start as usize >= plain.len())
+            {
+                run.start -= shift;
+            }
+            text.push_str(&extra);
+        }
+        HistLine {
+            text: text.into_boxed_str(),
+            plain_len: keep as u32,
+            runs: runs.into_boxed_slice(),
+            wrapped: *wrapped,
+        }
+    }
+}
+
+impl From<Line> for HistLine {
+    fn from(line: Line) -> Self {
+        HistLine::from(&line)
+    }
+}

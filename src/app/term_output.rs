@@ -17,10 +17,12 @@ pub(super) const UI_FLUSH_ACK_TIMEOUT: std::time::Duration = std::time::Duration
 pub(super) const PACED_LOCAL_BACKLOG_LIMIT: usize = 1024 * 1024;
 pub(super) const PACED_QUEUE_EVENT_LIMIT: usize = 256;
 
-/// Max UI renders per second for a tab under sustained output (#209).
-pub(super) const RENDER_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+/// Max UI renders per second for a tab under sustained output (#209). 60 Hz:
+/// frames now update the span model in place (only new lines are re-shaped),
+/// so the old 30 Hz cap made scrolling logs look choppy for no CPU benefit.
+pub(super) const RENDER_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 /// Echo produced shortly after a physical keypress should feel immediate. This
-/// temporary 120 Hz ceiling is still coalesced, then falls back to 30 Hz once
+/// temporary 120 Hz ceiling is still coalesced, then falls back to 60 Hz once
 /// the user stops typing so firehose output keeps its existing CPU protection.
 pub(super) const INTERACTIVE_RENDER_MIN_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(8);
@@ -44,10 +46,11 @@ pub(super) fn tab_render_interval(bufs: &TermBuffers, tab_id: &str) -> std::time
         Ok(buf) if std::time::Instant::now() < buf.interactive_echo_until => {
             INTERACTIVE_RENDER_MIN_INTERVAL
         }
-        Ok(_) => RENDER_MIN_INTERVAL,
-        // A busy ingest lock is itself a firehose signal. Deferring this
-        // snapshot prevents the UI thread from joining the contention.
-        Err(_) => SCROLLED_RENDER_MIN_INTERVAL,
+        // A busy ingest lock just means output is streaming in. Falling back
+        // to the 10 Hz scrolled-back rate here made every log flood render at
+        // ~10 fps; the pump already yields to each UI flush (see
+        // `wait_for_ui_flush`), so the normal rate is safe.
+        Ok(_) | Err(_) => RENDER_MIN_INTERVAL,
     };
     interval
 }

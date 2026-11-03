@@ -72,10 +72,10 @@ fn extract_is_view_independent() {
 fn extract_joins_soft_wrapped_rows() {
     let mut buf = make_buf(5, 10, &[], &["x"], 0);
     buf.history = VecDeque::from([
-        wrapped_hist_line("0123456789"),
-        wrapped_hist_line("abcdefghij"),
-        hist_line("klmnop"),
-        hist_line("next"),
+        wrapped_hist_line("0123456789").into(),
+        wrapped_hist_line("abcdefghij").into(),
+        hist_line("klmnop").into(),
+        hist_line("next").into(),
     ]);
     buf.sel_anchor = Some((0, 0));
     buf.sel_focus = Some((3, 9));

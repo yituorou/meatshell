@@ -134,7 +134,7 @@ use crate::terminal::{
 #[cfg(test)]
 use crate::terminal::{
     build_row, highlight_plain_output, log_level_marker, normalize_pasted_newlines,
-    text_cell_width, vt_span_colors, CompiledOutputRule, HistSpan, Line,
+    text_cell_width, vt_span_colors, CompiledOutputRule, HistLine, HistSpan, Line,
 };
 #[cfg(any(target_os = "windows", test))]
 use crate::terminal::{windows_process_ctrl_release, CtrlKeySide};
