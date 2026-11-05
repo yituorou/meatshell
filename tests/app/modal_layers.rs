@@ -465,7 +465,7 @@ fn saved_secret_reveal_flows_through_the_real_app_window() {
             render();
         };
         let password_pixels = |pixels: &[slint::Rgb8Pixel]| {
-            (575..635)
+            (568..628)
                 .flat_map(|y| {
                     (312..650).map(move |x| {
                         let p = pixels[y * 1000 + x];
@@ -475,8 +475,10 @@ fn saved_secret_reveal_flows_through_the_real_app_window() {
                 .collect::<Vec<_>>()
         };
         // The MCP-access row (#432) grows the centered dialog by 30px:
-        // content above it sits 15px higher and the footer 15px lower.
-        click(308., 653.);
+        // content above it sits 15px higher and the footer 15px lower. The
+        // pinned action footer (#525) adds 13px more: content sits a further
+        // ~7px higher and the Save button ~14px lower.
+        click(308., 646.);
         assert!(ui.get_dialog_allow_secret_reveal());
         assert_eq!(
             ui.get_dialog_password(),
@@ -484,7 +486,7 @@ fn saved_secret_reveal_flows_through_the_real_app_window() {
             "opt-in must load the saved value masked"
         );
         // Save without opening the eye: the permission must persist independently.
-        click(660., 1015.);
+        click(660., 1029.);
         assert!(
             !ui.get_dialog_open(),
             "save failed: {}",
@@ -504,18 +506,18 @@ fn saved_secret_reveal_flows_through_the_real_app_window() {
         ui.invoke_edit_session(saved.id.clone().into());
         let masked = password_pixels(&render());
         assert_eq!(ui.get_dialog_password(), "fixture-only-password");
-        click(680., 605.);
+        click(680., 598.);
         assert!(
             masked != password_pixels(&render()),
             "eye must visibly switch from dots to the saved text"
         );
-        click(680., 605.);
+        click(680., 598.);
         assert!(
             masked == password_pixels(&render()),
             "second click must hide the value again"
         );
         // Type a replacement through the real TextInput, then save and reopen.
-        click(400., 605.);
+        click(400., 598.);
         let control = if cfg!(target_os = "macos") {
             Key::Meta
         } else {
@@ -541,17 +543,17 @@ fn saved_secret_reveal_flows_through_the_real_app_window() {
             "fixture-new-password",
             "toggling opt-in must not overwrite a typed replacement"
         );
-        click(660., 1015.);
+        click(660., 1029.);
         assert!(!ui.get_dialog_open(), "replacement save failed");
         ui.invoke_edit_session(saved.id.clone().into());
         let masked_new = password_pixels(&render());
         assert!(ui.get_dialog_allow_secret_reveal());
         assert_eq!(ui.get_dialog_password(), "fixture-new-password");
-        click(680., 605.);
+        click(680., 598.);
         assert!(masked_new != password_pixels(&render()));
         ui.set_dialog_allow_secret_reveal(false);
         render();
-        click(660., 997.);
+        click(660., 1011.);
         assert!(!ui.get_dialog_open(), "opt-out save failed");
         ui.invoke_edit_session(saved.id.clone().into());
         render();

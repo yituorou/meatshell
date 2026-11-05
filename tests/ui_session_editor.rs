@@ -455,8 +455,9 @@ fn saving_valid_dialog_is_independent_of_connection_test_result() {
             // The Linux fixture's rendered footer; other platforms have different font metrics.
             #[cfg(target_os = "linux")]
             {
-                press(&window, 510., 1015.);
-                release(&window, 510., 1015.);
+                // Save in the pinned footer (#525).
+                press(&window, 510., 1029.);
+                release(&window, 510., 1029.);
             }
             #[cfg(not(target_os = "linux"))]
             ui.invoke_save_current();
