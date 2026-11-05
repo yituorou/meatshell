@@ -16,6 +16,21 @@ pub struct QuickCommand {
     pub send_enter: bool,
 }
 
+impl QuickCommand {
+    /// The stored form of a group name typed by the user (#534). The implicit
+    /// group is *displayed* as "default", so typing that name (any case) means
+    /// that group, stored as "". Keeping it as a real name produced a second
+    /// "default" header whose members were the ungrouped commands.
+    pub fn normalize_group(group: &str) -> String {
+        let group = group.trim();
+        if group.eq_ignore_ascii_case("default") {
+            String::new()
+        } else {
+            group.to_string()
+        }
+    }
+}
+
 /// One user-defined client-side terminal highlighting rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputHighlightRule {

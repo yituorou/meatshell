@@ -282,12 +282,7 @@ pub(super) fn wire_key_input(
         let weak = window.as_weak();
         let collapsed = collapsed_quick_groups.clone();
         window.on_move_quick_command(move |index: i32, group: SharedString| {
-            let target = group.to_string();
-            let target = if target == "default" {
-                String::new()
-            } else {
-                target
-            };
+            let target = crate::config::QuickCommand::normalize_group(&group);
             {
                 let mut s = store_rc.borrow_mut();
                 let mut v = s.quick_commands().to_vec();
