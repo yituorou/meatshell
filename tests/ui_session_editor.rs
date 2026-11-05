@@ -102,6 +102,24 @@ slint::slint! {
             draft-key-inline <=> root.key;
         }
     }
+    // A window shorter than the expanded dialog (#525).
+    export component ShortDialogFixture inherits Window {
+        width: 700px; height: 600px;
+        out property <int> submit-count: 0;
+        init => {
+            Theme.ui-font-family = "Microsoft YaHei";
+            Palette.color-scheme = ColorScheme.dark;
+        }
+        SessionDialog {
+            is-open: true;
+            draft-kind: "ssh";
+            draft-name: "Example session";
+            draft-host: "target.example.invalid";
+            draft-user: "demo";
+            show-advanced: true;
+            submit(draft) => { root.submit-count += 1; }
+        }
+    }
 }
 
 struct Backend {
@@ -453,6 +471,32 @@ fn saving_valid_dialog_is_independent_of_connection_test_result() {
         ui.set_open(false);
         slint::platform::update_timers_and_animations();
         assert_eq!(ui.get_closed_count(), 1);
+    }).join().unwrap();
+}
+
+#[test]
+fn create_button_stays_reachable_with_advanced_options_in_a_short_window() {
+    // #525: the action row lived at the end of the scrolling body, so the
+    // expanded advanced section pushed it below the bottom of the card.
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend { window: window.clone(), clipboard: Rc::default() })).unwrap();
+        let ui = ShortDialogFixture::new().unwrap();
+        ui.show().unwrap();
+        window.set_size(slint::PhysicalSize::new(700, 600));
+        slint::platform::update_timers_and_animations();
+        let mut pixels = vec![Rgb8Pixel::default(); 700 * 600];
+        window.request_redraw();
+        window.draw_if_needed(|r| { r.render(&mut pixels, 700); });
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/session-editor-short.png");
+        image::save_buffer(path, &bytes, 700, 600, image::ColorType::Rgb8).unwrap();
+        // The card is clamped to 20..580 vertically and 130..570 horizontally.
+        // The pinned footer (12px padding) puts the right-aligned 30px-high,
+        // >=80px-wide primary button over (530, 553) on every platform.
+        press(&window, 530., 553.);
+        release(&window, 530., 553.);
+        assert_eq!(ui.get_submit_count(), 1, "Create must sit at the bottom of the card");
     }).join().unwrap();
 }
 

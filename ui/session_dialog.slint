@@ -854,7 +854,7 @@ export component SessionDialog inherits ModalLayer {
     // Port forwards / tunnels (#56). Every row is an editable form (#277).
     in property <[PortFwd]> forwards;
     in property <[TriggerDraft]> triggers;
-    property <bool> show-advanced: false;   // collapse proxy + forwarding (#56)
+    in-out property <bool> show-advanced: false;   // collapse proxy + forwarding (#56)
 
     // A result belongs to the tested endpoint and credentials. Editing either
     // cancels the old attempt before its result can label a different draft.
@@ -988,8 +988,9 @@ export component SessionDialog inherits ModalLayer {
         width: 440px;
         // Height follows the content, but never exceeds the window — past that
         // the body scrolls (the dialog grows with the advanced section / many
-        // port forwards) (#56).
-        height: min(body.preferred-height + 53px, parent.height - 40px);
+        // port forwards) (#56). Header (52px + 1px divider) and the pinned
+        // action footer (1px divider + its row) stay outside the scroll (#525).
+        height: min(body.preferred-height + 54px + footer.preferred-height, parent.height - 40px);
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         background: Theme.popup-bg;
@@ -1943,8 +1944,24 @@ export component SessionDialog inherits ModalLayer {
                     color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
                 }
             }
+        }
+        }
 
-            HorizontalLayout {
+        Rectangle {
+            width: 100%;
+            height: 1px;
+            background: Theme.border-subtle;
+        }
+
+        // Action row pinned below the scrolling body (#525). It used to be the
+        // last item inside the Flickable, so once the advanced section made
+        // the dialog taller than the window it was clipped off the bottom and
+        // could only be reached by wheel-scrolling a body with no scrollbar.
+        footer := HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 12px;
+                padding-bottom: 12px;
                 spacing: 8px;
                 GhostButton {
                     text: @tr("Test connection");
@@ -1982,8 +1999,6 @@ export component SessionDialog inherits ModalLayer {
                     }
                 }
             }
-        }
-        }
         }
     }
 }
