@@ -198,9 +198,11 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         let b = buf.render(); // also refreshes buf.displayed_text
         let matches = compute_find_matches(&buf.displayed_text, &buf.find_query);
         let sel = buf.selection_rects_visible(cols);
-        (b, matches, sel)
+        // One row's worth of work, so it is safe on every frame (#535).
+        let current = buf.find_current_rect().unwrap_or_default();
+        (b, matches, sel, current)
     });
-    let Some((b, matches, sel)) = data else {
+    let Some((b, matches, sel, current)) = data else {
         return;
     };
     let spans = std::cell::Cell::new(Some(b.spans));
@@ -226,6 +228,9 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         row.mouse_tracked = b.mouse_tracked;
         if !model_matches(&row.find_matches, &fm) {
             row.find_matches = fm.clone();
+        }
+        if row.find_current != current {
+            row.find_current = current.clone();
         }
         if !model_matches(&row.selection, &sm) {
             row.selection = sm.clone();

@@ -281,6 +281,10 @@ export component TabBar inherits Rectangle {
     callback tab-rename-request(string /* tab-id */);
     // Save the ssh connection running in a local tab as a session (#501).
     callback tab-save-session(string /* tab-id */);
+    // Session log from the tab menu (#535): whether the tab is recording now,
+    // and start (asks where to save) or stop recording.
+    callback tab-log-active(string /* tab-id */) -> bool;
+    callback tab-log-toggle(string /* tab-id */);
     callback merge-pane();
     // Drag-to-split (#v0.5): cursor moved / dropped while dragging `tab-id`, in
     // absolute (window) coordinates. `over-own-strip` tells Rust that this strip
@@ -301,6 +305,7 @@ export component TabBar inherits Rectangle {
     property <string> menu-target;
     property <string> menu-target-kind;
     property <bool> menu-target-local;
+    property <bool> menu-target-logging;
 
     height: 36px;
     background: Theme.bg-panel-alt;
@@ -514,6 +519,7 @@ export component TabBar inherits Rectangle {
                             root.menu-target = tab.id;
                             root.menu-target-kind = tab.kind;
                             root.menu-target-local = tab.local;
+                            root.menu-target-logging = tab.kind == "terminal" && root.tab-log-active(tab.id);
                             root.menu-x = ax - root.absolute-position.x;
                             root.menu-y = ay - root.absolute-position.y;
                             tab-menu.show();
@@ -679,6 +685,13 @@ export component TabBar inherits Rectangle {
                     label: @tr("Add to session list");
                     enabled: root.menu-target-kind == "terminal" && root.menu-target-local;
                     clicked => { root.tab-save-session(root.menu-target); }
+                }
+                // Record this tab's output to a file the user picks, or stop
+                // recording (#535). Works for SSH, Telnet, serial and local tabs.
+                TabMenuItem {
+                    label: root.menu-target-logging ? @tr("Stop session log") : @tr("Start session log...");
+                    enabled: root.menu-target-kind == "terminal";
+                    clicked => { root.tab-log-toggle(root.menu-target); }
                 }
                 Rectangle { height: 1px; background: Theme.border-subtle; }
                 TabMenuItem {

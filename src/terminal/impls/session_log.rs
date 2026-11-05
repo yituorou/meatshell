@@ -200,6 +200,16 @@ fn timestamp(t: DateTime<Local>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// `<name>_<YYYYMMDD-HHMMSS>`: the automatic log's file stem, also offered as
+/// the default name when a log is started from the tab menu (#535).
+pub(crate) fn default_log_stem(session_name: &str, now: DateTime<Local>) -> String {
+    format!(
+        "{}_{}",
+        sanitize_file_stem(session_name),
+        now.format("%Y%m%d-%H%M%S")
+    )
+}
+
 /// Replace characters that are invalid in file names on any platform.
 pub(crate) fn sanitize_file_stem(name: &str) -> String {
     let cleaned: String = name
@@ -225,11 +235,7 @@ impl SessionLogger {
     pub(crate) fn create(dir: &Path, session_name: &str, target: &str) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let now = Local::now();
-        let stem = format!(
-            "{}_{}",
-            sanitize_file_stem(session_name),
-            now.format("%Y%m%d-%H%M%S")
-        );
+        let stem = default_log_stem(session_name, now);
         let mut attempt = 0u32;
         let (file, path) = loop {
             let name = if attempt == 0 {
@@ -246,6 +252,30 @@ impl SessionLogger {
                 Err(err) => return Err(err),
             }
         };
+        Self::start(file, path, session_name, target, now)
+    }
+
+    /// Record into a file the user picked (#535). The save dialog has already
+    /// asked before replacing an existing file, so this truncates it.
+    pub(crate) fn create_at(path: &Path, session_name: &str, target: &str) -> io::Result<Self> {
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir)?;
+        }
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        Self::start(file, path.to_path_buf(), session_name, target, Local::now())
+    }
+
+    fn start(
+        file: File,
+        path: PathBuf,
+        session_name: &str,
+        target: &str,
+        now: DateTime<Local>,
+    ) -> io::Result<Self> {
         let mut writer = BufWriter::new(file);
         writeln!(
             writer,

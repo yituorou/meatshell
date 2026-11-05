@@ -60,6 +60,7 @@ fn terminal(
         is_alt_screen: false,
         mouse_tracked: false,
         find_matches: ModelRc::from(Rc::new(VecModel::default())),
+        find_current: Default::default(),
         selection: ModelRc::from(Rc::new(VecModel::default())),
         sftp_path: "/home/me".into(),
         sftp_entries: ModelRc::from(Rc::new(VecModel::from(remote_entries))),
@@ -533,6 +534,53 @@ fn dragging_a_checked_row_drags_the_whole_checked_set() {
             "a checked row drags the whole checked set"
         );
         assert!(uploads.borrow().is_empty(), "single-item upload must not run");
+    })
+    .join()
+    .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Tab menu: start / stop a session log (#535)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tab_menu_session_log_item_toggles_that_tab() {
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(false, 700.0, 0.0, 1400, 900, "right");
+        let toggled = Rc::new(RefCell::new(Vec::<String>::new()));
+        ui.on_tab_log_active(|_tab: SharedString| false);
+        {
+            let toggled = toggled.clone();
+            ui.on_tab_log_toggle(move |tab: SharedString| toggled.borrow_mut().push(tab.to_string()));
+        }
+        render_frame(&window, 1400, 900);
+        let right_click = |x: f32, y: f32| {
+            window.dispatch_event(WindowEvent::PointerPressed {
+                position: LogicalPosition::new(x, y),
+                button: PointerEventButton::Right,
+            });
+            window.dispatch_event(WindowEvent::PointerReleased {
+                position: LogicalPosition::new(x, y),
+                button: PointerEventButton::Right,
+            });
+        };
+        // The "host" tab sits at the left of the tab strip.
+        right_click(40.0, 55.0);
+        let menu = render_frame(&window, 1400, 900);
+        let bytes: Vec<u8> = menu.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/tab-log-menu-qa.png"),
+            &bytes,
+            1400,
+            900,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        // Fourth item: 4px padding + 3 × (28px item + 1px spacing) + half an item.
+        let item_y = 55.0 + 4.0 + 3.0 * 29.0 + 14.0;
+        press(&window, 100.0, item_y);
+        release(&window, 100.0, item_y);
+        assert_eq!(toggled.borrow().as_slice(), ["t1"]);
     })
     .join()
     .unwrap();

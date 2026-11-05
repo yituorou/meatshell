@@ -846,3 +846,12 @@ msgstr "不要在高级参数中填写密码或令牌；参数会保存并显示
 
 msgid "Delete checked items"
 msgstr "删除选中项"
+
+msgid "No results"
+msgstr "无结果"
+
+msgid "Stop session log"
+msgstr "停止记录会话日志"
+
+msgid "Start session log..."
+msgstr "开始记录会话日志..."

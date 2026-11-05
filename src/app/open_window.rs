@@ -641,6 +641,7 @@ pub(super) fn open_window(
         registry.clone(),
         sessions_model.clone(),
     );
+    super::tab_session_log::wire(&window, store.clone(), bufs.clone());
 
     wire_sidebar_refresh_and_theme(
         &ctx,
