@@ -211,7 +211,53 @@ const PROMPT_SETUP_SUFFIX: &str = "__ms7'";
 #[cfg(test)]
 const PROMPT_SETUP_HISTORY_MARKER: &str = "__MEATSHELL_INTERNAL_SETUP_1";
 const PROMPT_SETUP_DONE: &str = "\u{1b}]699;ready\u{07}";
-const PROMPT_BODY: &str = "test -z \"$FISH_VERSION\" && eval '__msc(){ __c=\"$(fc -ln -1 2>/dev/null)\"; [ -n \"$__c\" ] && [ \"$__c\" != \"$__cl\" ] && { __cl=\"$__c\"; printf \"\\033]697;%s\\007\" \"$__c\"; }; }; __ms7(){ printf \"\\033]7;file://%s%s\\007\" \"$HOSTNAME\" \"$PWD\"; __msc; }; if [ -n \"$ZSH_VERSION\" ]; then autoload -Uz add-zsh-hook 2>/dev/null; add-zsh-hook precmd __ms7; for __mb in \"^[[H=beginning-of-line\" \"^[OH=beginning-of-line\" \"^[[1~=beginning-of-line\" \"^[[F=end-of-line\" \"^[OF=end-of-line\" \"^[[4~=end-of-line\" \"^[[3~=delete-char\" \"^[[2~=overwrite-mode\" \"^[[5~=beginning-of-buffer-or-history\" \"^[[6~=end-of-buffer-or-history\"; do for __mm in emacs viins; do case \"$(bindkey -M $__mm \"${__mb%%=*}\" 2>/dev/null)\" in *undefined-key) bindkey -M $__mm \"${__mb%%=*}\" \"${__mb#*=}\";; esac; done; done; unset __mb __mm; else PROMPT_COMMAND=\"declare -F __ms7 >/dev/null && __ms7${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; fi; : __MEATSHELL_INTERNAL_SETUP_1; if [ -n \"$BASH_VERSION\" ]; then __md=\"$(history 2>/dev/null | { __md=\"\"; while read -r __mn __mr; do case \"$__mr\" in *\"__ms7()\"*\"PROMPT_COMMAND=\"*) __mn=\"${__mn%\\*}\"; __md=\"$__mn $__md\";; esac; done; printf \"%s\" \"$__md\"; })\"; for __mn in $__md; do history -d \"$__mn\" 2>/dev/null; done; unset __md __mn __mr; fi; __cl=\"$(fc -ln -1 2>/dev/null)\"; printf \"\\033]699;ready\\007\"; __ms7'";
+
+// The setup command is typed into the remote shell, so it must fit one
+// canonical tty line: macOS (BSD) caps that at MAX_CANON = 1024 bytes and
+// silently drops the rest, including the final `\r`. A single body for both
+// shells grew to ~1.3 KB with the zsh key bindings (#519); on macOS hosts
+// the command was cut, never ran, its completion marker never came, and the
+// terminal stayed hidden after "Last login" (#541). The probe already knows
+// the shell, so each shell gets only its own part. Each part keeps its own
+// runtime guard, so a shell swapped by an rc file just skips it.
+macro_rules! prompt_setup_head {
+    () => {
+        "test -z \"$FISH_VERSION\" && eval '__msc(){ __c=\"$(fc -ln -1 2>/dev/null)\"; [ -n \"$__c\" ] && [ \"$__c\" != \"$__cl\" ] && { __cl=\"$__c\"; printf \"\\033]697;%s\\007\" \"$__c\"; }; }; __ms7(){ printf \"\\033]7;file://%s%s\\007\" \"$HOSTNAME\" \"$PWD\"; __msc; }; "
+    };
+}
+macro_rules! prompt_setup_tail {
+    () => {
+        "__cl=\"$(fc -ln -1 2>/dev/null)\"; printf \"\\033]699;ready\\007\"; __ms7'"
+    };
+}
+/// zsh: precmd hook plus default bindings for keys left unbound (#519).
+const PROMPT_BODY_ZSH: &str = concat!(
+    prompt_setup_head!(),
+    "if [ -n \"$ZSH_VERSION\" ]; then autoload -Uz add-zsh-hook 2>/dev/null; add-zsh-hook precmd __ms7; for __mb in \"^[[H=beginning-of-line\" \"^[OH=beginning-of-line\" \"^[[1~=beginning-of-line\" \"^[[F=end-of-line\" \"^[OF=end-of-line\" \"^[[4~=end-of-line\" \"^[[3~=delete-char\" \"^[[2~=overwrite-mode\" \"^[[5~=beginning-of-buffer-or-history\" \"^[[6~=end-of-buffer-or-history\"; do for __mm in emacs viins; do case \"$(bindkey -M $__mm \"${__mb%%=*}\" 2>/dev/null)\" in *undefined-key) bindkey -M $__mm \"${__mb%%=*}\" \"${__mb#*=}\";; esac; done; done; unset __mb __mm; fi; ",
+    prompt_setup_tail!()
+);
+/// bash: PROMPT_COMMAND hook, then drop the setup line from history.
+const PROMPT_BODY_BASH: &str = concat!(
+    prompt_setup_head!(),
+    "if [ -n \"$BASH_VERSION\" ]; then PROMPT_COMMAND=\"declare -F __ms7 >/dev/null && __ms7${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"; : __MEATSHELL_INTERNAL_SETUP_1; __md=\"$(history 2>/dev/null | { __md=\"\"; while read -r __mn __mr; do case \"$__mr\" in *\"__ms7()\"*\"PROMPT_COMMAND=\"*) __mn=\"${__mn%\\*}\"; __md=\"$__mn $__md\";; esac; done; printf \"%s\" \"$__md\"; })\"; for __mn in $__md; do history -d \"$__mn\" 2>/dev/null; done; unset __md __mn __mr; fi; ",
+    prompt_setup_tail!()
+);
+
+/// Login shells that receive the prompt-integration setup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PromptShell {
+    Bash,
+    Zsh,
+}
+
+impl PromptShell {
+    fn setup_body(self) -> &'static str {
+        match self {
+            PromptShell::Bash => PROMPT_BODY_BASH,
+            PromptShell::Zsh => PROMPT_BODY_ZSH,
+        }
+    }
+}
 const PROMPT_SHELL_PROBE: &[u8] = b"if [ -n \"$BASH_VERSION\" ]; then printf '__MEATSHELL_SHELL__:bash\\n'; elif [ -n \"$ZSH_VERSION\" ]; then printf '__MEATSHELL_SHELL__:zsh\\n'; else printf '__MEATSHELL_SHELL__:other\\n'; fi";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,13 +371,15 @@ async fn open_auxiliary_channel(
     }
 }
 
-fn prompt_setup_supported(probe_output: &str) -> Option<bool> {
-    if probe_output.contains("__MEATSHELL_SHELL__:bash")
-        || probe_output.contains("__MEATSHELL_SHELL__:zsh")
-    {
-        Some(true)
+/// Read the probe's answer: `Some(Some(shell))` for bash / zsh, `Some(None)`
+/// for any other shell, `None` while the output is still inconclusive.
+fn prompt_setup_supported(probe_output: &str) -> Option<Option<PromptShell>> {
+    if probe_output.contains("__MEATSHELL_SHELL__:bash") {
+        Some(Some(PromptShell::Bash))
+    } else if probe_output.contains("__MEATSHELL_SHELL__:zsh") {
+        Some(Some(PromptShell::Zsh))
     } else if probe_output.contains("__MEATSHELL_SHELL__:other") {
-        Some(false)
+        Some(None)
     } else {
         None
     }
@@ -341,14 +389,14 @@ fn prompt_setup_supported(probe_output: &str) -> Option<bool> {
 /// never see the long interactive prompt-integration command. In particular,
 /// BusyBox ash (used by OpenWrt) ignores `PROMPT_COMMAND`; injecting into its
 /// line editor only risks a visible partial command or continuation prompt.
-async fn remote_supports_prompt_setup(handle: &Handle<ClientHandler>) -> bool {
+async fn remote_supports_prompt_setup(handle: &Handle<ClientHandler>) -> Option<PromptShell> {
     let probe = async {
         let mut channel = handle.channel_open_session().await.ok()?;
         channel.exec(true, PROMPT_SHELL_PROBE).await.ok()?;
         let _ = channel.eof().await;
 
         let mut output = String::new();
-        let mut supported: Option<bool> = None;
+        let mut supported: Option<Option<PromptShell>> = None;
         // Drain the channel fully, including the server's CHANNEL_CLOSE. Do not
         // return as soon as the marker is seen (the old code dropped the Channel
         // mid-flight) and do not just send `channel.close()` without awaiting the
@@ -364,7 +412,7 @@ async fn remote_supports_prompt_setup(handle: &Handle<ClientHandler>) -> bool {
                         if let Some(s) = prompt_setup_supported(&output) {
                             supported = Some(s);
                         } else if output.len() > 256 {
-                            supported = Some(false);
+                            supported = Some(None);
                         }
                     }
                 }
@@ -379,7 +427,7 @@ async fn remote_supports_prompt_setup(handle: &Handle<ClientHandler>) -> bool {
         .await
         .ok()
         .flatten()
-        .unwrap_or(false)
+        .flatten()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1759,8 +1807,12 @@ async fn run_session(
     // The integration body is Bash/Zsh-specific. Probe out-of-band before the
     // interactive channel exists, so ash/dash/fish/unknown shells never receive
     // (and therefore can never display or get stuck parsing) the setup command.
-    let prompt_setup_supported =
-        !session.disable_shell_integration && remote_supports_prompt_setup(&handle).await;
+    let prompt_shell = if session.disable_shell_integration {
+        None
+    } else {
+        remote_supports_prompt_setup(&handle).await
+    };
+    let prompt_setup_supported = prompt_shell.is_some();
 
     // --- Shell channel --------------------------------------------------
     let mut channel = network_stage(
@@ -1873,7 +1925,11 @@ async fn run_session(
     // The echoed setup line is discarded through the private OSC 699 completion
     // marker emitted after installation (see the suppress block below), so zsh
     // redraws and soft wrapping cannot make the internal command visible.
-    let prompt_setup = format!(" {}\r", PROMPT_BODY);
+    // Only this shell's part, so the line fits a macOS canonical tty (#541).
+    let prompt_setup = format!(
+        " {}\r",
+        prompt_shell.map(PromptShell::setup_body).unwrap_or_default()
+    );
     // --- Remote resource monitor (separate exec channel) ----------------
     // A tiny remote loop streams /proc/stat + /proc/meminfo every 2s; we parse
     // it into CPU% / mem / swap for the sidebar.  Best-effort: if the channel
@@ -3352,9 +3408,29 @@ mod prompt_setup_echo_tests {
         bound_prompt_setup_echo, is_user_keystroke, prompt_setup_echo_end, prompt_setup_supported,
         ready_for_prompt_setup, release_prompt_setup_buffer, strip_late_prompt_setup_echo,
         strip_pending_prompt_setup_echo, strip_prompt_setup_done, strip_prompt_setup_echo,
-        take_after_prompt_setup_done, track_current_line, visible_line_text, PROMPT_BODY,
-        PROMPT_SETUP_DONE, PROMPT_SETUP_HISTORY_MARKER, PROMPT_SETUP_PREFIX,
+        take_after_prompt_setup_done, track_current_line, visible_line_text, PromptShell,
+        PROMPT_BODY_BASH, PROMPT_BODY_ZSH, PROMPT_SETUP_DONE, PROMPT_SETUP_HISTORY_MARKER,
+        PROMPT_SETUP_PREFIX, PROMPT_SETUP_SUFFIX,
     };
+
+    #[test]
+    fn each_setup_line_fits_a_macos_canonical_tty_line() {
+        // #541: macOS drops a canonical-mode line beyond MAX_CANON (1024
+        // bytes), Enter included; the combined body had grown to 1297 bytes.
+        // Keep headroom so a later addition does not silently cross it.
+        for shell in [PromptShell::Bash, PromptShell::Zsh] {
+            let injected = format!(" {}\r", shell.setup_body());
+            assert!(injected.len() <= 960, "{shell:?} setup is {} bytes", injected.len());
+            let body = shell.setup_body();
+            assert!(body.starts_with(PROMPT_SETUP_PREFIX), "{shell:?}");
+            assert!(body.ends_with(PROMPT_SETUP_SUFFIX), "{shell:?}");
+            assert!(body.contains("699;ready"), "{shell:?}");
+        }
+        // Each shell gets only its own part.
+        assert!(!PROMPT_BODY_BASH.contains("bindkey"));
+        assert!(!PROMPT_BODY_ZSH.contains("history -d"));
+        assert!(!PROMPT_BODY_ZSH.contains("PROMPT_COMMAND="));
+    }
 
     #[test]
     fn banner_alone_is_not_a_prompt() {
@@ -3459,29 +3535,30 @@ mod prompt_setup_echo_tests {
     fn only_bash_and_zsh_receive_prompt_setup() {
         assert_eq!(
             prompt_setup_supported("__MEATSHELL_SHELL__:bash\n"),
-            Some(true)
+            Some(Some(PromptShell::Bash))
         );
         assert_eq!(
             prompt_setup_supported("__MEATSHELL_SHELL__:zsh\n"),
-            Some(true)
+            Some(Some(PromptShell::Zsh))
         );
         assert_eq!(
             prompt_setup_supported("__MEATSHELL_SHELL__:other\n"),
-            Some(false)
+            Some(None)
         );
         assert_eq!(prompt_setup_supported("ash: syntax error\n"), None);
     }
 
     #[test]
     fn bash_setup_removes_current_and_stale_history_entries() {
-        assert!(PROMPT_BODY.contains(PROMPT_SETUP_HISTORY_MARKER));
-        assert!(PROMPT_BODY.contains("history 2>/dev/null"));
-        assert!(PROMPT_BODY.contains("__ms7()"));
-        assert!(PROMPT_BODY.contains("history -d \"$__mn\""));
+        let body = PROMPT_BODY_BASH;
+        assert!(body.contains(PROMPT_SETUP_HISTORY_MARKER));
+        assert!(body.contains("history 2>/dev/null"));
+        assert!(body.contains("__ms7()"));
+        assert!(body.contains("history -d \"$__mn\""));
         // Re-prime command capture only after deleting the setup entry, so the
         // previous real user command does not get reported as newly executed.
-        assert!(PROMPT_BODY.find("history -d").unwrap() < PROMPT_BODY.rfind("__cl=").unwrap());
-        assert!(PROMPT_BODY.contains("699;ready"));
+        assert!(body.find("history -d").unwrap() < body.rfind("__cl=").unwrap());
+        assert!(body.contains("699;ready"));
     }
 
     #[test]
@@ -3489,17 +3566,16 @@ mod prompt_setup_echo_tests {
         // #496: when the server exports PROMPT_COMMAND, child shells (tmux,
         // `bash`, `su`) inherit "__ms7;…" but not the function, so every
         // prompt printed "__ms7: command not found". Only call it if defined.
-        assert!(PROMPT_BODY
+        assert!(PROMPT_BODY_BASH
             .contains("PROMPT_COMMAND=\"declare -F __ms7 >/dev/null && __ms7${PROMPT_COMMAND:+;"));
-        assert!(!PROMPT_BODY.contains("PROMPT_COMMAND=\"__ms7"));
+        assert!(!PROMPT_BODY_BASH.contains("PROMPT_COMMAND=\"__ms7"));
     }
 
     #[test]
     fn zsh_gets_default_bindings_only_for_unbound_keys() {
         // #519: bare / starship-only zsh has no Home/End/PageUp/PageDown/Delete
         // bindings. The setup fills them in, inside the zsh branch only.
-        let zsh = &PROMPT_BODY[PROMPT_BODY.find("if [ -n \"$ZSH_VERSION\" ]").unwrap()
-            ..PROMPT_BODY.find("else PROMPT_COMMAND=").unwrap()];
+        let zsh = &PROMPT_BODY_ZSH[PROMPT_BODY_ZSH.find("if [ -n \"$ZSH_VERSION\" ]").unwrap()..];
         for binding in [
             "^[[H=beginning-of-line",
             "^[OH=beginning-of-line",
