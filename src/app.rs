@@ -95,7 +95,7 @@ use self::window_events::*;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 #[path = "../tests/app/terminal_ingest/mod.rs"]
