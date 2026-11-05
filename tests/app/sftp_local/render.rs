@@ -537,3 +537,131 @@ fn dragging_a_checked_row_drags_the_whole_checked_set() {
     .join()
     .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Deleting checked remote entries (#531)
+// ---------------------------------------------------------------------------
+
+/// Check (or uncheck) every remote entry and update the selected count.
+fn check_all_remote(ui: &AppWindow, checked: bool) {
+    let terminals = ui.get_terminals();
+    let model = terminals
+        .as_any()
+        .downcast_ref::<VecModel<TerminalState>>()
+        .unwrap();
+    let mut row = model.row_data(0).unwrap();
+    let entries = row
+        .sftp_entries
+        .as_any()
+        .downcast_ref::<VecModel<SftpEntry>>()
+        .unwrap();
+    for i in 0..entries.row_count() {
+        let mut entry = entries.row_data(i).unwrap();
+        entry.selected = checked;
+        entries.set_row_data(i, entry);
+    }
+    row.sftp_selected_count = if checked { entries.row_count() as i32 } else { 0 };
+    model.set_row_data(0, row);
+}
+
+/// Classic (single-pane) view docked right at full height, so the context
+/// menu opens below the rows without being pushed around by the window edge.
+/// Returns the y of the last remote row (nginx.conf).
+fn classic_right_dock() -> (AppWindow, Rc<MinimalSoftwareWindow>, f32) {
+    let (ui, window) = build_ui(false, 700.0, 0.0, 1400, 900, "right");
+    check_all_remote(&ui, true);
+    let frame = render_frame(&window, 1400, 900);
+    // Checked rows paint an accent checkbox at the start of the row.
+    let bands = accent_bands(&frame, 1400, 700, 760, 0, 900);
+    let row_y = bands
+        .last()
+        .map(|(start, end)| (*start + *end) as f32 / 2.0)
+        .expect("no checked remote row");
+    (ui, window, row_y)
+}
+
+/// Centre of the red "Delete" menu item (`#d86c6c` text) in a menu opened
+/// below `below_y` (the toolbar's red delete-checked icon sits above it).
+fn find_delete_item(pixels: &[Rgb8Pixel], width: usize, height: usize, below_y: f32) -> (f32, f32) {
+    let is_red =
+        |p: Rgb8Pixel| p.r.abs_diff(216) < 24 && p.g.abs_diff(108) < 24 && p.b.abs_diff(108) < 24;
+    let (mut x0, mut x1, mut y0, mut y1) = (usize::MAX, 0, usize::MAX, 0);
+    for y in (below_y as usize + 8)..height {
+        for x in 0..width {
+            if is_red(pixels[y * width + x]) {
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+                y0 = y0.min(y);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    assert!(x0 <= x1, "Delete menu item not painted");
+    ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0)
+}
+
+#[test]
+fn context_menu_delete_on_a_checked_row_deletes_the_whole_selection() {
+    std::thread::spawn(|| {
+        let (ui, window, row_y) = classic_right_dock();
+        window.dispatch_event(WindowEvent::PointerPressed {
+            position: LogicalPosition::new(900.0, row_y),
+            button: PointerEventButton::Right,
+        });
+        window.dispatch_event(WindowEvent::PointerReleased {
+            position: LogicalPosition::new(900.0, row_y),
+            button: PointerEventButton::Right,
+        });
+        let menu = render_frame(&window, 1400, 900);
+        let bytes: Vec<u8> = menu.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/sftp-delete-menu-qa.png"),
+            &bytes,
+            1400,
+            900,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        let (x, y) = find_delete_item(&menu, 1400, 900, row_y);
+        press(&window, x, y);
+        release(&window, x, y);
+        assert!(ui.get_confirm_delete_open(), "Delete must ask for confirmation");
+        assert!(
+            ui.get_confirm_delete_batch(),
+            "right-clicking a checked row must delete every checked entry, not only that row"
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn delete_key_deletes_checked_entries_or_the_highlighted_row() {
+    std::thread::spawn(|| {
+        use slint::platform::Key;
+        let (ui, window, row_y) = classic_right_dock();
+        let delete_key = || {
+            window.dispatch_event(WindowEvent::KeyPressed { text: Key::Delete.into() });
+            window.dispatch_event(WindowEvent::KeyReleased { text: Key::Delete.into() });
+        };
+        // A plain click highlights the row and focuses the list.
+        press(&window, 900.0, row_y);
+        release(&window, 900.0, row_y);
+        delete_key();
+        assert!(ui.get_confirm_delete_open(), "Del must open the delete confirmation");
+        assert!(ui.get_confirm_delete_batch(), "Del with checked entries deletes all of them");
+
+        ui.set_confirm_delete_open(false);
+        ui.set_confirm_delete_batch(false);
+        check_all_remote(&ui, false);
+        render_frame(&window, 1400, 900);
+        press(&window, 900.0, row_y);
+        release(&window, 900.0, row_y);
+        delete_key();
+        assert!(ui.get_confirm_delete_open());
+        assert!(!ui.get_confirm_delete_batch());
+        assert_eq!(ui.get_confirm_delete_path().as_str(), "/nginx.conf");
+    })
+    .join()
+    .unwrap();
+}

@@ -846,3 +846,6 @@ msgstr "Aliases: network/网络, sound/音频, microphone/麦克风, printer/打
 
 msgid "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."
 msgstr "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."
+
+msgid "Delete checked items"
+msgstr "Delete checked items"

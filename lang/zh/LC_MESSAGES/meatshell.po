@@ -843,3 +843,6 @@ msgstr "别名：network/网络、sound/音频、microphone/麦克风、printer/
 
 msgid "Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list."
 msgstr "不要在高级参数中填写密码或令牌；参数会保存并显示在进程列表中。"
+
+msgid "Delete checked items"
+msgstr "删除选中项"

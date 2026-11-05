@@ -775,19 +775,22 @@ export component SftpPanel inherits Rectangle {
     property <length> cost-modified: 124px;
     property <length> cost-owner: 92px;
     property <length> cost-group: 92px;
-    property <bool> fit-permissions: !root.show-permissions || root.extras-w >= root.cost-permissions;
-    property <bool> show-permissions-col: root.show-permissions && root.fit-permissions;
-    property <length> used-1: root.show-permissions-col ? root.cost-permissions : 0px;
-    property <bool> fit-type: root.fit-permissions && (!root.show-type || root.extras-w - root.used-1 >= root.cost-type);
-    property <bool> show-type-col: root.show-type && root.fit-type;
-    property <length> used-2: root.used-1 + (root.show-type-col ? root.cost-type : 0px);
-    property <bool> fit-size: root.fit-type && (!root.show-size || root.extras-w - root.used-2 >= root.cost-size);
+    // Columns claim the space in on-screen order, so a narrow list drops them
+    // from the right. Permissions and Type used to be fitted first, which hid
+    // Size and Modified in an ordinary-width panel (#531).
+    property <bool> fit-size: !root.show-size || root.extras-w >= root.cost-size;
     property <bool> show-size-col: root.show-size && root.fit-size;
-    property <length> used-3: root.used-2 + (root.show-size-col ? root.cost-size : 0px);
-    property <bool> fit-modified: root.fit-size && (!root.show-modified || root.extras-w - root.used-3 >= root.cost-modified);
+    property <length> used-1: root.show-size-col ? root.cost-size : 0px;
+    property <bool> fit-modified: root.fit-size && (!root.show-modified || root.extras-w - root.used-1 >= root.cost-modified);
     property <bool> show-modified-col: root.show-modified && root.fit-modified;
-    property <length> used-4: root.used-3 + (root.show-modified-col ? root.cost-modified : 0px);
-    property <bool> fit-owner: root.fit-modified && (!root.show-owner || root.extras-w - root.used-4 >= root.cost-owner);
+    property <length> used-2: root.used-1 + (root.show-modified-col ? root.cost-modified : 0px);
+    property <bool> fit-type: root.fit-modified && (!root.show-type || root.extras-w - root.used-2 >= root.cost-type);
+    property <bool> show-type-col: root.show-type && root.fit-type;
+    property <length> used-3: root.used-2 + (root.show-type-col ? root.cost-type : 0px);
+    property <bool> fit-permissions: root.fit-type && (!root.show-permissions || root.extras-w - root.used-3 >= root.cost-permissions);
+    property <bool> show-permissions-col: root.show-permissions && root.fit-permissions;
+    property <length> used-4: root.used-3 + (root.show-permissions-col ? root.cost-permissions : 0px);
+    property <bool> fit-owner: root.fit-permissions && (!root.show-owner || root.extras-w - root.used-4 >= root.cost-owner);
     property <bool> show-owner-col: root.show-owner && root.fit-owner;
     property <length> used-5: root.used-4 + (root.show-owner-col ? root.cost-owner : 0px);
     property <bool> fit-group: root.fit-owner && (!root.show-group || root.extras-w - root.used-5 >= root.cost-group);
@@ -811,6 +814,9 @@ export component SftpPanel inherits Rectangle {
     property <string> menu-target-name;
     property <bool>   menu-target-is-dir;
     property <int>    menu-target-mode;     // permission bits for the chmod dialog
+    // The right-clicked row is one of several checked rows: Delete then acts
+    // on the whole selection, as in a file manager (#531).
+    property <bool>   menu-on-selection: false;
     property <string> panel-mode: "files";
     property <string> tunnel-kind: "local";
     property <string> tunnel-name: "";
@@ -1847,6 +1853,24 @@ export component SftpPanel inherits Rectangle {
                                         && (event.text == "v" || event.text == "V"))) {
                                 root.paste-upload(root.current-path);
                                 accept
+                            } else if ((event.text == Key.Delete
+                                        || (Theme.is-mac && event.modifiers.meta && event.text == Key.Backspace))
+                                    && !event.modifiers.control && !event.modifiers.alt
+                                    && !event.modifiers.shift) {
+                                // Del (Cmd+Backspace on macOS) deletes the checked
+                                // entries, else the highlighted row, after the
+                                // usual confirmation (#531).
+                                if (root.selected-count > 0) {
+                                    root.delete-selected();
+                                } else if (root.selected-row >= 0 && root.selected-row < root.entries.length) {
+                                    root.delete(root.entries[root.selected-row].full-path);
+                                } else {
+                                    // Nothing to delete: keep the old behaviour.
+                                    root.forward-key(event.text,
+                                        Theme.is-mac ? event.modifiers.meta : event.modifiers.control,
+                                        event.modifiers.alt, event.modifiers.shift);
+                                }
+                                accept
                             } else {
                                 root.forward-key(event.text,
                                     Theme.is-mac ? event.modifiers.meta : event.modifiers.control,
@@ -1967,6 +1991,7 @@ export component SftpPanel inherits Rectangle {
                                             root.menu-target-name = entry.name;
                                             root.menu-target-is-dir = entry.is-dir;
                                             root.menu-target-mode = entry.mode;
+                                            root.menu-on-selection = entry.selected && root.selected-count >= 2;
                                             root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
                                             root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
                                             file-menu.show();
@@ -1990,6 +2015,9 @@ export component SftpPanel inherits Rectangle {
                                         cb-ta := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => {
+                                                // Keyboard focus to the list so Del acts on
+                                                // the checked rows (#531).
+                                                file-keys.focus();
                                                 if (root.shift-click-pending) {
                                                     root.shift-click-pending = false;
                                                 } else {
@@ -2083,6 +2111,7 @@ export component SftpPanel inherits Rectangle {
                                                 && ev.button == PointerEventButton.right) {
                                             root.selected-row = -1;
                                             root.menu-target = "";
+                                            root.menu-on-selection = false;
                                             root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
                                             root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
                                             file-menu.show();
@@ -2200,11 +2229,20 @@ export component SftpPanel inherits Rectangle {
                                     enabled: (root.menu-target != "" || root.selected-count > 0) && root.transfer-targets.length > 1;
                                     clicked => { copy-target-menu.show(); }
                                 }
+                                // Right-clicking one of several checked rows
+                                // deletes all of them; an unchecked row only
+                                // itself (#531). Both paths ask for confirmation.
                                 SftpMenuItem {
-                                    label: @tr("Delete");
+                                    label: root.menu-on-selection ? @tr("Delete checked items") : @tr("Delete");
                                     tint: #d86c6c;
                                     enabled: root.menu-target != "";
-                                    clicked => { root.delete(root.menu-target); }
+                                    clicked => {
+                                        if (root.menu-on-selection) {
+                                            root.delete-selected();
+                                        } else {
+                                            root.delete(root.menu-target);
+                                        }
+                                    }
                                 }
                                 Rectangle { height: 1px; background: Theme.border-subtle; }
                                 // Upload copied files (#508): into the right-clicked
