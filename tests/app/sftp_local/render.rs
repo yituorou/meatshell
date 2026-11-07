@@ -82,6 +82,9 @@ fn terminal(
         sftp_local_pane_width: local_pane_width,
         sftp_local_quick_places: ModelRc::from(Rc::new(VecModel::default())),
         sftp_local_drive_places: ModelRc::from(Rc::new(VecModel::default())),
+        sftp_local_bookmarks: ModelRc::from(Rc::new(VecModel::default())),
+        sftp_local_recent: ModelRc::from(Rc::new(VecModel::default())),
+        sftp_local_bookmarked: false,
         font_size: 0,
         tunnels: ModelRc::from(Rc::new(VecModel::default())),
         sftp_collapsed: false,
@@ -292,6 +295,33 @@ fn split_view_honours_the_remembered_ratio() {
             "hit-test width {} should match the 30% share",
             rect.w
         );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn local_places_are_mirrored_into_tabs() {
+    // The bookmarks / recent lists are machine-wide AppWindow properties; every
+    // tab keeps a copy for its menu, and the star follows the folder it shows.
+    std::thread::spawn(|| {
+        let (ui, _window) = build_ui(true, 300.0, 0.0, 1100, 800, "bottom");
+        let folder = SharedString::from("C:\\Users\\me\\work");
+        ui.set_local_bookmarks(ModelRc::from(Rc::new(VecModel::from(vec![folder.clone()]))));
+        ui.set_local_recent(ModelRc::from(Rc::new(VecModel::from(vec![folder]))));
+        publish_local_places(&ui);
+
+        let terminals = ui.get_terminals();
+        let model = terminals
+            .as_any()
+            .downcast_ref::<VecModel<TerminalState>>()
+            .expect("terminals model");
+        let row = model.row_data(0).expect("tab");
+        assert_eq!(row.sftp_local_bookmarks.row_count(), 1);
+        assert_eq!(row.sftp_local_recent.row_count(), 1);
+        // The harness tab is showing that same folder, so the star lights up.
+        #[cfg(windows)]
+        assert!(row.sftp_local_bookmarked, "the current folder is bookmarked");
     })
     .join()
     .unwrap();

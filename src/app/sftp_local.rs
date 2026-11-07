@@ -246,16 +246,20 @@ fn publish_local_listing(
     };
     let entries = ModelRc::from(Rc::new(VecModel::from(listing.entries)));
     let shown = listing.path.clone();
+    let bookmarked = bookmarked_in(&model_strings(&window.get_local_bookmarks()), &shown);
     update_terminal_row(model, tab_id, |row| {
-        row.sftp_local_path = shown.into();
+        row.sftp_local_path = shown.clone().into();
         row.sftp_local_entries = entries.clone();
         row.sftp_local_loading = false;
         row.sftp_local_selected_count = 0;
         row.sftp_local_status = status.into();
+        row.sftp_local_bookmarked = bookmarked;
     });
     // Remember the folder for the next tab / restart (#532). Written to the
     // global property, persisted with the rest of the layout on close.
     window.set_sftp_last_local_dir(listing.path.into());
+    // Most recent first, like the remote pane's history (#500).
+    record_recent(window, &shown);
 }
 
 /// Read `dir` on a worker thread and publish it when it comes back.
@@ -560,6 +564,91 @@ fn into_slint_place(place: LocalPlace) -> SftpLocalPlace {
         path: place.path.into(),
         icon: place.icon.into(),
         current: place.current,
+    }
+}
+
+/// Slint `[string]` model → `Vec<String>` (the machine-wide places live in
+/// AppWindow properties; the config only sees them when the window closes).
+pub(super) fn model_strings(model: &ModelRc<SharedString>) -> Vec<String> {
+    model.iter().map(|item| item.to_string()).collect()
+}
+
+fn places_from(window: &AppWindow) -> crate::config::LocalPlaces {
+    crate::config::LocalPlaces {
+        bookmarks: model_strings(&window.get_local_bookmarks()),
+        recent: model_strings(&window.get_local_recent()),
+    }
+}
+
+fn bookmarked_in(bookmarks: &[String], path: &str) -> bool {
+    crate::config::LocalPlaces {
+        bookmarks: bookmarks.to_vec(),
+        recent: Vec::new(),
+    }
+    .is_bookmarked(path)
+}
+
+/// Mirror the machine-wide bookmarks / recent folders into every tab (the menu
+/// and the star read the tab's copy) and re-check the star against the folder
+/// each tab is showing.
+pub(super) fn publish_local_places(window: &AppWindow) {
+    let places = places_from(window);
+    let bookmarks = super::sftp_places::string_model(&places.bookmarks);
+    let recent = super::sftp_places::string_model(&places.recent);
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return;
+    };
+    for index in 0..model.row_count() {
+        let Some(row) = model.row_data(index) else {
+            continue;
+        };
+        let path = row.sftp_local_path.to_string();
+        let bookmarked = bookmarked_in(&places.bookmarks, &path);
+        update_terminal_row(model, row.id.as_str(), |row| {
+            row.sftp_local_bookmarks = bookmarks.clone();
+            row.sftp_local_recent = recent.clone();
+            row.sftp_local_bookmarked = bookmarked;
+        });
+    }
+}
+
+fn write_places(window: &AppWindow, places: &crate::config::LocalPlaces) {
+    window.set_local_bookmarks(super::sftp_places::string_model(&places.bookmarks));
+    window.set_local_recent(super::sftp_places::string_model(&places.recent));
+    publish_local_places(window);
+}
+
+/// Star clicked: bookmark / un-bookmark the folder the tab is showing.
+pub(super) fn toggle_bookmark(window: &AppWindow, tab_id: &str) {
+    let path = current_path(window, tab_id);
+    if path.is_empty() {
+        return;
+    }
+    let mut places = places_from(window);
+    places.toggle_bookmark(&path);
+    write_places(window, &places);
+}
+
+/// Remove a bookmark from the places menu.
+pub(super) fn remove_bookmark(window: &AppWindow, path: &str) {
+    let mut places = places_from(window);
+    places.remove_bookmark(path);
+    write_places(window, &places);
+}
+
+/// "Clear recent" in the places menu.
+pub(super) fn clear_recent(window: &AppWindow) {
+    let mut places = places_from(window);
+    places.clear_recent();
+    write_places(window, &places);
+}
+
+/// Record a folder at the top of the recent list (called when a listing lands).
+fn record_recent(window: &AppWindow, path: &str) {
+    let mut places = places_from(window);
+    if places.record_visit(path) {
+        write_places(window, &places);
     }
 }
 

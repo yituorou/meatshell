@@ -1365,18 +1365,36 @@ pub(super) fn wire_session_callbacks(
             // Each session keeps its own SFTP collapse state + sizes, seeded from
             // the global defaults (the "collapse SFTP by default" pref and the
             // persisted panel sizes) so they no longer bleed across panes (#v0.5).
-            let (sftp_collapsed_default, sftp_h_default, sftp_w_default, split_default, local_dir) =
-                weak.upgrade()
-                    .map(|w| {
-                        (
-                            w.get_collapse_sftp_default(),
-                            w.get_sftp_panel_height(),
-                            w.get_sftp_panel_width(),
-                            w.get_sftp_split_enabled(),
-                            w.get_sftp_last_local_dir().to_string(),
-                        )
-                    })
-                    .unwrap_or((false, 220.0, 380.0, false, String::new()));
+            let (
+                sftp_collapsed_default,
+                sftp_h_default,
+                sftp_w_default,
+                split_default,
+                local_dir,
+                local_bookmarks,
+                local_recent,
+            ) = weak
+                .upgrade()
+                .map(|w| {
+                    (
+                        w.get_collapse_sftp_default(),
+                        w.get_sftp_panel_height(),
+                        w.get_sftp_panel_width(),
+                        w.get_sftp_split_enabled(),
+                        w.get_sftp_last_local_dir().to_string(),
+                        w.get_local_bookmarks(),
+                        w.get_local_recent(),
+                    )
+                })
+                .unwrap_or((
+                    false,
+                    220.0,
+                    380.0,
+                    false,
+                    String::new(),
+                    ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
+                    ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
+                ));
             terminals_model.push(TerminalState {
                 id: tab_id.clone().into(),
                 status: t("连接中...", "Connecting...").into(),
@@ -1441,6 +1459,10 @@ pub(super) fn wire_session_callbacks(
                 sftp_local_drive_places: ModelRc::from(std::rc::Rc::new(
                     VecModel::<SftpLocalPlace>::default(),
                 )),
+                // Machine-wide local places; refreshed again whenever they change.
+                sftp_local_bookmarks: local_bookmarks,
+                sftp_local_recent: local_recent,
+                sftp_local_bookmarked: false,
                 font_size: 0,
                 tunnels: ModelRc::from(std::rc::Rc::new(VecModel::<TunnelInfo>::default())),
                 sftp_collapsed: !has_sftp || sftp_collapsed_default,

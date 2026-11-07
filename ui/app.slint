@@ -100,6 +100,9 @@ export struct TerminalState {
     sftp-local-pane-width: length,   // 0 = even split; set by dragging the divider
     sftp-local-quick-places: [SftpLocalPlace],
     sftp-local-drive-places: [SftpLocalPlace],
+    sftp-local-bookmarks: [string],
+    sftp-local-recent: [string],
+    sftp-local-bookmarked: bool,
     font-size: int,             // per-session zoom override in px (0 = follow window)
     tunnels: [TunnelInfo],      // runtime SSH tunnels (#206)
     sftp-collapsed: bool,       // SFTP panel minimised — per session (#v0.5)
@@ -973,6 +976,9 @@ export component AppWindow inherits Window {
     in-out property <bool> sftp-split-enabled: false;
     in-out property <string> sftp-last-local-dir;       // last local folder shown
     in-out property <float> sftp-local-split: 0.0;      // 0 = even split
+    // Local folder bookmarks + recently opened folders, machine-wide (#532).
+    in-out property <[string]> local-bookmarks;
+    in-out property <[string]> local-recent;
     callback pick-download-dir();            // open a folder picker
     callback open-download-dir();            // reveal the folder in the OS
     callback clear-transfers();              // wipe the transfer history
@@ -1403,6 +1409,10 @@ export component AppWindow inherits Window {
     callback persist-sftp-split(bool /* enabled */);
     callback persist-sftp-local-split(float /* ratio, 0 = even */);
     callback sftp-local-places-refresh(string /* tab-id */);
+    // Local bookmarks / recent folders (#532), machine-wide.
+    callback sftp-local-toggle-bookmark(string /* tab-id */);
+    callback sftp-local-remove-bookmark(string /* tab-id */, string /* path */);
+    callback sftp-local-clear-recent(string /* tab-id */);
 
     // Visual chmod dialog (#84). Rust decomposes the current mode into nine
     // bools when opening and recomposes on apply (Slint has no bitwise ops).
@@ -2270,9 +2280,21 @@ export component AppWindow inherits Window {
                         sftp-local-pane-width: term.sftp-local-pane-width;
                         sftp-local-quick-places: term.sftp-local-quick-places;
                         sftp-local-drive-places: term.sftp-local-drive-places;
+                        sftp-local-bookmarks: term.sftp-local-bookmarks;
+                        sftp-local-recent: term.sftp-local-recent;
+                        sftp-local-bookmarked: term.sftp-local-bookmarked;
                         sftp-local-split: root.sftp-local-split;
                         persist-sftp-local-pane-width(v) => {
                             root.persist-sftp-local-pane-width(term.id, v);
+                        }
+                        sftp-local-toggle-bookmark() => {
+                            root.sftp-local-toggle-bookmark(term.id);
+                        }
+                        sftp-local-remove-bookmark(path) => {
+                            root.sftp-local-remove-bookmark(term.id, path);
+                        }
+                        sftp-local-clear-recent() => {
+                            root.sftp-local-clear-recent(term.id);
                         }
                         persist-sftp-split(v) => { root.persist-sftp-split(v); }
                         persist-sftp-local-split(v) => { root.persist-sftp-local-split(v); }
