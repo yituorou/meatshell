@@ -150,3 +150,36 @@ fn entry_cap_is_documented_by_a_constant() {
     // Guards against a silent change making listings unbounded again.
     assert!(MAX_LOCAL_ENTRIES >= 1_000);
 }
+
+#[test]
+fn places_list_the_home_folder_and_mark_it_current() {
+    let home = home_display();
+    let open = quick_places(&home);
+    assert!(!open.is_empty(), "home must always be offered");
+    assert!(same_dir(&open[0].path, &home), "{:?}", open[0]);
+    assert!(open[0].current, "the pane is showing the home folder");
+
+    // A folder that is not one of the places highlights nothing.
+    let elsewhere = quick_places(r"C:\definitely\not\a\place");
+    assert!(elsewhere.iter().all(|place| !place.current));
+    // Every row carries something to render.
+    assert!(open.iter().all(|place| !place.path.is_empty() && !place.label.is_empty()));
+}
+
+#[cfg(windows)]
+#[test]
+fn places_offer_whole_drives_only() {
+    let drives = drive_places("");
+    assert!(!drives.is_empty(), "a Windows machine has at least one drive");
+    // Drive roots like `C:\`, never a folder mount point.
+    assert!(drives
+        .iter()
+        .all(|drive| drive.path.len() == 3 && drive.path.ends_with('\\')));
+    assert!(drives.iter().any(|drive| drive.path.starts_with('C')));
+    // Sorted, so the menu order does not depend on enumeration order.
+    let mut sorted: Vec<&str> = drives.iter().map(|drive| drive.path.as_str()).collect();
+    sorted.sort();
+    assert!(sorted == drives.iter().map(|drive| drive.path.as_str()).collect::<Vec<_>>());
+    // Labels fall back to the letter when the volume has no name.
+    assert!(drives.iter().all(|drive| drive.label.starts_with(&drive.path[..2])));
+}

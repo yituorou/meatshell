@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { SftpPanel, SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
+import { SftpPanel, SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "sftp_panel.slint";
 import { TabInfo } from "tabs.slint";
 import { DockExpandButton, ToolStrip } from "widgets.slint";
 
@@ -317,6 +317,13 @@ export component TerminalView inherits Rectangle {
     // Split-view divider: 0 = even split (default), else an explicit width.
     in property <length> sftp-local-pane-width: 0px;
     callback persist-sftp-local-pane-width(length);
+    // Places dropdown data + persisted split preferences (#532).
+    in property <[SftpLocalPlace]> sftp-local-quick-places;
+    in property <[SftpLocalPlace]> sftp-local-drive-places;
+    in property <float> sftp-local-split: 0.0;
+    callback persist-sftp-split(bool);
+    callback persist-sftp-local-split(float);
+    callback sftp-local-places-refresh();
 
     // Per-session now (#v0.5): the AppWindow stores these in each TerminalState
     // and writes back via the set-* callbacks, so each tab/pane keeps its own SFTP
@@ -2338,6 +2345,11 @@ export component TerminalView inherits Rectangle {
             local-selected-count: root.sftp-local-selected-count;
             local-pane-default: root.sftp-local-pane-width;
             persist-local-pane-width(v) => { root.persist-sftp-local-pane-width(v); }
+            local-quick-places: root.sftp-local-quick-places;
+            local-drive-places: root.sftp-local-drive-places;
+            local-split-ratio: root.sftp-local-split;
+            persist-local-split-ratio(v) => { root.persist-sftp-local-split(v); }
+            local-places-refresh() => { root.sftp-local-places-refresh(); }
             toggle-dual()          => { root.sftp-toggle-dual(); }
             local-navigate(path)   => { root.sftp-local-navigate(path); }
             local-up()             => { root.sftp-local-up(); }

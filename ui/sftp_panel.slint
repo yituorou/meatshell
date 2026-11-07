@@ -31,6 +31,15 @@ export struct SftpTreeNode {
     has-children: bool,
 }
 
+// One row of the local pane's places dropdown (#532): a quick location such as
+// the desktop or a drive, resolved by Rust (drive labels come from the OS).
+export struct SftpLocalPlace {
+    label: string,
+    path: string,
+    icon: string,
+    current: bool,
+}
+
 export struct TunnelInfo {
     id: string,
     name: string,
@@ -83,6 +92,8 @@ component SftpPlaceRow inherits Rectangle {
     in property <string> icon;
     in property <bool> current;      // the folder the panel is showing
     in property <bool> removable;
+    // Optional friendly name; falls back to the path when empty (remote rows).
+    in property <string> label: "";
     callback go();
     callback remove();
     height: 26px;
@@ -106,7 +117,7 @@ component SftpPlaceRow inherits Rectangle {
         }
         Text {
             horizontal-stretch: 1;
-            text: root.path;
+            text: root.label == "" ? root.path : root.label;
             color: root.current ? Theme.accent : Theme.text-primary;
             font-size: Theme.fs-sm;
             overflow: elide;
@@ -250,6 +261,75 @@ component SftpStarButton inherits Rectangle {
            horizontal-alignment: center; vertical-alignment: center; }
 }
 
+// Places dropdown for the local pane: home, desktop, downloads, documents and
+// the machine's drives (#532). Rust resolves the list, so drive labels and the
+// current-folder highlight follow the real machine.
+component LocalPlacesButton inherits Rectangle {
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
+    callback opened();
+    callback navigate(string);
+    // Rows are 26px high with 1px spacing; one 8px gap between the groups.
+    property <length> rows-h:
+        (root.quick-places.length + root.drive-places.length) * 27px
+        + (root.quick-places.length > 0 && root.drive-places.length > 0 ? 8px : 0px);
+    width: 22px; height: 22px;
+    border-radius: Theme.radius-sm;
+    background: places-ta.has-hover ? Theme.bg-hover : transparent;
+    places-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.opened();
+            places-menu.show();
+        }
+    }
+    Text {
+        text: "\u{E2C7}"; // folder
+        font-family: "Material Icons";
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    places-menu := PopupWindow {
+        x: min(0px, root.width - self.width);
+        y: root.height + 2px;
+        width: 250px;
+        height: min(360px, root.rows-h + 8px);
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000060;
+            ScrollView {
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 1px;
+                    for place in root.quick-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: place.icon;
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                    if root.quick-places.length > 0 && root.drive-places.length > 0 : Rectangle {
+                        height: 8px;
+                    }
+                    for place in root.drive-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: place.icon;
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LocalPane — this machine's folders, the left half of the split view
 // ---------------------------------------------------------------------------
@@ -265,11 +345,15 @@ component LocalPane inherits Rectangle {
     in property <bool> loading: false;
     in property <string> status: "";
     in property <int> selected-count: 0;
+    // Places dropdown data (#532), resolved by Rust for this machine.
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
 
     callback navigate(string);      // "..", "~" or a typed path
     callback up();
     callback home();
     callback refresh();
+    callback places-refresh();      // re-read drives / user folders
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
@@ -358,18 +442,13 @@ component LocalPane inherits Rectangle {
                     Text { text: "↑"; color: Theme.text-secondary; font-size: Theme.fs-md;
                            horizontal-alignment: center; vertical-alignment: center; }
                 }
-                Rectangle {
-                    width: 22px; height: 22px;
-                    border-radius: Theme.radius-sm;
-                    background: home-ta.has-hover ? Theme.bg-hover : transparent;
-                    home-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.home(); }
-                    }
-                    Text { text: "\u{E88A}"; // home
-                           font-family: "Material Icons";
-                           color: Theme.text-secondary; font-size: Theme.fs-sm;
-                           horizontal-alignment: center; vertical-alignment: center; }
+                // Places: home / desktop / downloads / documents + the machine's
+                // drives, replacing the plain "home" button (#532).
+                LocalPlacesButton {
+                    quick-places: root.quick-places;
+                    drive-places: root.drive-places;
+                    opened => { root.places-refresh(); }
+                    navigate(path) => { root.navigate(path); }
                 }
                 Rectangle {
                     width: 22px; height: 22px;
@@ -737,18 +816,27 @@ export component SftpPanel inherits Rectangle {
     in property <string> local-status: "";
     in property <bool> local-loading: false;
     in property <int> local-selected-count: 0;
+    in property <[SftpLocalPlace]> local-quick-places;
+    in property <[SftpLocalPlace]> local-drive-places;
     // 0 = split the panel in the middle (the default); dragging the divider
     // stores an explicit width, reported back through `persist-local-pane-width`
     // so Rust can hit-test drops on the local half with the same geometry.
     in property <length> local-pane-default: 0px;
     in-out property <length> local-pane-width: 0px;
+    // Persisted share of the panel (0 = even). Used when no width has been
+    // dragged in this session, so the split survives a restart (#532).
+    in property <float> local-split-ratio: 0.0;
     callback persist-local-pane-width(length);
+    callback persist-local-split-ratio(float);
     init => { root.local-pane-width = root.local-pane-default; }
     property <bool> local-resizing: false;
-    // Effective local extent: half the panel by default, the remote half always
-    // keeps ~200px so its Name column and buttons stay usable in a narrow dock.
+    // Effective local extent: the dragged width, else the saved ratio, else
+    // half the panel. The remote half always keeps ~200px so its Name column
+    // and buttons stay usable in a narrow dock.
     property <length> local-w: clamp(
-        root.local-pane-width > 0px ? root.local-pane-width : root.width / 2,
+        root.local-pane-width > 0px
+            ? root.local-pane-width
+            : (root.local-split-ratio > 0.0 ? root.width * root.local-split-ratio : root.width / 2),
         160px,
         max(160px, root.width - 200px));
     // Tree is only meaningful in the classic view.
@@ -897,6 +985,7 @@ export component SftpPanel inherits Rectangle {
     callback local-up();
     callback local-home();
     callback local-refresh();
+    callback local-places-refresh();
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
     callback local-select-range(int /* from */, int /* to */);
@@ -1606,10 +1695,13 @@ export component SftpPanel inherits Rectangle {
                 loading: root.local-loading;
                 status: root.local-status;
                 selected-count: root.local-selected-count;
+                quick-places: root.local-quick-places;
+                drive-places: root.local-drive-places;
                 navigate(path)        => { root.local-navigate(path); }
                 up()                  => { root.local-up(); }
                 home()                => { root.local-home(); }
                 refresh()             => { root.local-refresh(); }
+                places-refresh()      => { root.local-places-refresh(); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
                 select-range(a, b)    => { root.local-select-range(a, b); }
@@ -1639,6 +1731,8 @@ export component SftpPanel inherits Rectangle {
                         } else if (ev.kind == PointerEventKind.up) {
                             root.local-resizing = false;
                             root.persist-local-pane-width(root.local-pane-width);
+                            root.persist-local-split-ratio(
+                                root.width > 0px ? root.local-pane-width / root.width : 0.0);
                         }
                     }
                     moved => {
@@ -1652,6 +1746,7 @@ export component SftpPanel inherits Rectangle {
                         // Back to an even split.
                         root.local-pane-width = 0px;
                         root.persist-local-pane-width(0px);
+                        root.persist-local-split-ratio(0.0);
                     }
                 }
             }

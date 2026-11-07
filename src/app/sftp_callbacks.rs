@@ -189,14 +189,21 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
                 break;
             }
             update_terminal_row(model, &tab, |row| row.sftp_dual = enable);
+            // Remember the choice so the next launch opens the same view (#532).
+            w.set_sftp_split_enabled(enable);
+            if enable {
+                refresh_places(&w, &tab);
+            }
             if enable && !loaded {
-                let start = std::path::PathBuf::from(&path);
-                let dir = if !path.is_empty() && start.is_dir() {
-                    start
-                } else {
+                // `is_dir` used to run here, on the UI thread; a dead network
+                // drive would freeze the window. The listing thread decides and
+                // falls back to the home folder instead (#532).
+                let start = if path.is_empty() {
                     home_dir()
+                } else {
+                    std::path::PathBuf::from(&path)
                 };
-                load_dir(&w, &tab, dir);
+                load_dir_or_fallback(&w, &tab, start, home_dir());
             }
         });
     }
@@ -309,6 +316,23 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
             update_terminal_row(model, tab_id.as_str(), |row| {
                 row.sftp_local_pane_width = width;
             });
+        });
+    }
+    {
+        // The share of the panel is also stored globally (0 = even split) so the
+        // split view comes back the way it was left (#532).
+        let weak = window.as_weak();
+        window.on_persist_sftp_local_split(move |ratio: f32| {
+            let Some(w) = weak.upgrade() else { return };
+            w.set_sftp_local_split(ratio);
+        });
+    }
+    {
+        // Places menu opened: re-read drives / user folders off the UI thread.
+        let weak = window.as_weak();
+        window.on_sftp_local_places_refresh(move |tab_id: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            refresh_places(&w, tab_id.as_str());
         });
     }
     {
