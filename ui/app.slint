@@ -23,7 +23,7 @@ import { ConfirmDialog } from "confirm_dialog.slint";
 import { ModalLayer, ModalKind } from "modal.slint";
 import { LabeledInput, PrimaryButton, GhostButton, DockExpandButton, IconButton, ToolStrip } from "widgets.slint";
 import { TerminalView, TermSpan, TermMatch, QuickCmd, QuickDockPanel } from "terminal_view.slint";
-import { SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
+import { SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "sftp_panel.slint";
 import { ProcWindow, ProcRow } from "proc_window.slint";
 import { SystemInfoWindow, SysInfoRow, SysMetricRow, SysNetRow } from "system_info_window.slint";
 import { EditorWindow } from "editor_window.slint";
@@ -98,6 +98,8 @@ export struct TerminalState {
     sftp-local-loading: bool,
     sftp-local-selected-count: int,
     sftp-local-pane-width: length,   // 0 = even split; set by dragging the divider
+    sftp-local-quick-places: [SftpLocalPlace],
+    sftp-local-drive-places: [SftpLocalPlace],
     font-size: int,             // per-session zoom override in px (0 = follow window)
     tunnels: [TunnelInfo],      // runtime SSH tunnels (#206)
     sftp-collapsed: bool,       // SFTP panel minimised — per session (#v0.5)
@@ -967,6 +969,10 @@ export component AppWindow inherits Window {
     in-out property <length> sftp-panel-height: 220px; // shared; lets Rust locate the drop zone
     in-out property <length> sftp-panel-width: 380px;  // SFTP extent when docked left/right
     in-out property <string> sftp-dock: "bottom";      // SFTP dock edge, shared across tabs
+    // Split (local/remote) view state, remembered across restarts (#532).
+    in-out property <bool> sftp-split-enabled: false;
+    in-out property <string> sftp-last-local-dir;       // last local folder shown
+    in-out property <float> sftp-local-split: 0.0;      // 0 = even split
     callback pick-download-dir();            // open a folder picker
     callback open-download-dir();            // reveal the folder in the OS
     callback clear-transfers();              // wipe the transfer history
@@ -1393,6 +1399,10 @@ export component AppWindow inherits Window {
     callback sftp-download-selected-to-local(string /* tab-id */);
     // Split-view divider moved (0 = back to an even split).
     callback persist-sftp-local-pane-width(string /* tab-id */, length /* px */);
+    // Split-view preferences, remembered across restarts (#532).
+    callback persist-sftp-split(bool /* enabled */);
+    callback persist-sftp-local-split(float /* ratio, 0 = even */);
+    callback sftp-local-places-refresh(string /* tab-id */);
 
     // Visual chmod dialog (#84). Rust decomposes the current mode into nine
     // bools when opening and recomposes on apply (Slint has no bitwise ops).
@@ -2258,9 +2268,15 @@ export component AppWindow inherits Window {
                         sftp-local-loading: term.sftp-local-loading;
                         sftp-local-selected-count: term.sftp-local-selected-count;
                         sftp-local-pane-width: term.sftp-local-pane-width;
+                        sftp-local-quick-places: term.sftp-local-quick-places;
+                        sftp-local-drive-places: term.sftp-local-drive-places;
+                        sftp-local-split: root.sftp-local-split;
                         persist-sftp-local-pane-width(v) => {
                             root.persist-sftp-local-pane-width(term.id, v);
                         }
+                        persist-sftp-split(v) => { root.persist-sftp-split(v); }
+                        persist-sftp-local-split(v) => { root.persist-sftp-local-split(v); }
+                        sftp-local-places-refresh() => { root.sftp-local-places-refresh(term.id); }
                         tunnels: term.tunnels;
                         quick-commands: root.quick-commands;
                         quick-sidebar-enabled: root.quick-commands-as-sidebar;
