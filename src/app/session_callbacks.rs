@@ -1365,16 +1365,36 @@ pub(super) fn wire_session_callbacks(
             // Each session keeps its own SFTP collapse state + sizes, seeded from
             // the global defaults (the "collapse SFTP by default" pref and the
             // persisted panel sizes) so they no longer bleed across panes (#v0.5).
-            let (sftp_collapsed_default, sftp_h_default, sftp_w_default) = weak
+            let (
+                sftp_collapsed_default,
+                sftp_h_default,
+                sftp_w_default,
+                split_default,
+                local_dir,
+                local_bookmarks,
+                local_recent,
+            ) = weak
                 .upgrade()
                 .map(|w| {
                     (
                         w.get_collapse_sftp_default(),
                         w.get_sftp_panel_height(),
                         w.get_sftp_panel_width(),
+                        w.get_sftp_split_enabled(),
+                        w.get_sftp_last_local_dir().to_string(),
+                        w.get_local_bookmarks(),
+                        w.get_local_recent(),
                     )
                 })
-                .unwrap_or((false, 220.0, 380.0));
+                .unwrap_or((
+                    false,
+                    220.0,
+                    380.0,
+                    false,
+                    String::new(),
+                    ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
+                    ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
+                ));
             terminals_model.push(TerminalState {
                 id: tab_id.clone().into(),
                 status: t("连接中...", "Connecting...").into(),
@@ -1416,10 +1436,15 @@ pub(super) fn wire_session_callbacks(
                     super::sftp_places::string_model(&places.recent)
                 },
                 sftp_bookmarked: false,
-                // Split view starts off; the local pane remembers the home
-                // folder until it is first opened (listing is lazy).
-                sftp_dual: false,
-                sftp_local_path: home_display().into(),
+                // The split view and the last local folder are remembered (#532);
+                // a folder that no longer exists falls back to the home folder
+                // when the pane first lists it.
+                sftp_dual: has_sftp && split_default,
+                sftp_local_path: if local_dir.is_empty() {
+                    home_display().into()
+                } else {
+                    local_dir.clone().into()
+                },
                 sftp_local_entries: ModelRc::from(std::rc::Rc::new(
                     VecModel::<SftpEntry>::default(),
                 )),
@@ -1428,6 +1453,16 @@ pub(super) fn wire_session_callbacks(
                 sftp_local_selected_count: 0,
                 // 0 = an even local/remote split; set when the divider is dragged.
                 sftp_local_pane_width: 0.0,
+                sftp_local_quick_places: ModelRc::from(std::rc::Rc::new(
+                    VecModel::<SftpLocalPlace>::default(),
+                )),
+                sftp_local_drive_places: ModelRc::from(std::rc::Rc::new(
+                    VecModel::<SftpLocalPlace>::default(),
+                )),
+                // Machine-wide local places; refreshed again whenever they change.
+                sftp_local_bookmarks: local_bookmarks,
+                sftp_local_recent: local_recent,
+                sftp_local_bookmarked: false,
                 font_size: 0,
                 tunnels: ModelRc::from(std::rc::Rc::new(VecModel::<TunnelInfo>::default())),
                 sftp_collapsed: !has_sftp || sftp_collapsed_default,
@@ -1435,6 +1470,19 @@ pub(super) fn wire_session_callbacks(
                 sftp_panel_width: sftp_w_default,
                 sftp_saved_height: sftp_h_default,
             });
+            // A restored split view lists its remembered folder right away —
+            // the pane would otherwise stay blank until it is toggled (#532).
+            if has_sftp && split_default {
+                if let Some(w) = weak.upgrade() {
+                    let start = if local_dir.is_empty() {
+                        home_dir()
+                    } else {
+                        std::path::PathBuf::from(&local_dir)
+                    };
+                    super::sftp_local::load_dir_or_fallback(&w, &tab_id, start, home_dir());
+                    super::sftp_local::refresh_places(&w, &tab_id);
+                }
+            }
             // Create vt100 parser for this tab (default 24×80; resized on first
             // terminal-resize callback). 5000-line scrollback is stored for
             // future scroll-navigation support.

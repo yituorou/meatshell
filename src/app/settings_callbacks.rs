@@ -373,6 +373,13 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_sftp_panel_width(s.sftp_panel_width());
         window.set_sftp_panel_height(s.sftp_panel_height());
         window.set_sftp_tree_width(s.sftp_tree_width());
+        // Split view state (#532): open/closed, last local folder, divider share.
+        window.set_sftp_split_enabled(s.sftp_split_enabled());
+        window.set_sftp_local_split(s.sftp_local_split());
+        window.set_sftp_last_local_dir(s.sftp_local_dir().into());
+        let places = s.local_places();
+        window.set_local_bookmarks(super::sftp_places::string_model(&places.bookmarks));
+        window.set_local_recent(super::sftp_places::string_model(&places.recent));
         let columns = s.sftp_visible_columns();
         window.set_sftp_show_type(columns.iter().any(|column| column == "type"));
         window.set_sftp_show_size(columns.iter().any(|column| column == "size"));

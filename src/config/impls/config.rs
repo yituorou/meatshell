@@ -1607,6 +1607,65 @@ impl ConfigStore {
         }
         self.cache.sftp_visible_columns = normalized;
     }
+    /// Whether the SFTP panel opens in the split (local/remote) view (#532).
+    pub fn sftp_split_enabled(&self) -> bool {
+        self.cache.sftp_split_enabled
+    }
+    pub fn set_sftp_split_enabled(&mut self, enabled: bool) {
+        self.cache.sftp_split_enabled = enabled;
+    }
+    /// Last local folder the split view showed ("" = use the home folder).
+    pub fn sftp_local_dir(&self) -> String {
+        let dir = self.cache.sftp_local_dir.trim();
+        if dir.is_empty() || !std::path::Path::new(dir).is_absolute() {
+            String::new()
+        } else {
+            dir.to_string()
+        }
+    }
+    pub fn set_sftp_local_dir(&mut self, dir: &str) {
+        let dir = dir.trim();
+        if dir.is_empty() || !std::path::Path::new(dir).is_absolute() {
+            self.cache.sftp_local_dir.clear();
+        } else {
+            self.cache.sftp_local_dir = dir.to_string();
+        }
+    }
+    /// Local half of the split view as a share of the panel width. 0.0 keeps
+    /// the even split; anything else is held to 20–80% so neither pane can be
+    /// squeezed away on a narrow dock.
+    pub fn sftp_local_split(&self) -> f32 {
+        let ratio = self.cache.sftp_local_split;
+        if ratio > 0.0 {
+            ratio.clamp(0.2, 0.8)
+        } else {
+            0.0
+        }
+    }
+    pub fn set_sftp_local_split(&mut self, ratio: f32) {
+        self.cache.sftp_local_split = if ratio > 0.0 {
+            ratio.clamp(0.2, 0.8)
+        } else {
+            0.0
+        };
+    }
+    /// Local folder bookmarks / recent folders for the split view (#532).
+    pub fn local_places(&self) -> crate::config::LocalPlaces {
+        self.cache.local_places.normalized()
+    }
+    /// Edit the local places; empty entries are dropped so the config only
+    /// carries a `local_places` object when something is actually saved.
+    pub fn update_local_places<R>(
+        &mut self,
+        f: impl FnOnce(&mut crate::config::LocalPlaces) -> R,
+    ) -> R {
+        let places = &mut self.cache.local_places;
+        let out = f(places);
+        if places.is_empty() {
+            self.cache.local_places = Default::default();
+        }
+        out
+    }
     pub fn sftp_dock(&self) -> String {
         let d = self.cache.sftp_dock.trim();
         if d.is_empty() {
@@ -2094,6 +2153,77 @@ mod tests {
     fn missing_sftp_columns_use_the_current_default() {
         let store = temp_store();
         assert_eq!(store.sftp_visible_columns().len(), 7);
+    }
+
+    #[test]
+    fn split_view_state_round_trips_and_is_validated() {        let mut store = temp_store();
+        // Legacy configs have no split-view state: closed, home folder, even.
+        store.cache = serde_json::from_str("{}").unwrap();
+        assert!(!store.sftp_split_enabled());
+        assert_eq!(store.sftp_local_dir(), "");
+        assert_eq!(store.sftp_local_split(), 0.0);
+
+        let dir = std::env::temp_dir().join("meatshell-split-test");
+        let shown = dir.to_string_lossy().to_string();
+
+        store.set_sftp_split_enabled(true);
+        store.set_sftp_local_dir(&shown);
+        store.set_sftp_local_split(0.35);
+        assert!(store.sftp_split_enabled());
+        assert_eq!(store.sftp_local_dir(), shown);
+
+        // A ratio that would squeeze a pane away is held to 20–80%.
+        store.set_sftp_local_split(0.99);
+        assert_eq!(store.sftp_local_split(), 0.8);
+        store.set_sftp_local_split(0.35);
+
+        // Relative / blank paths are not remembered at all.
+        store.set_sftp_local_dir("relative/dir");
+        assert_eq!(store.sftp_local_dir(), "");
+        store.set_sftp_local_dir(&shown);
+
+        // Round-trips through the on-disk JSON.
+        let json = serde_json::to_string(&store.cache).unwrap();
+        let back: ConfigFile = serde_json::from_str(&json).unwrap();
+        assert!(back.sftp_split_enabled);
+        assert_eq!(back.sftp_local_dir, shown);
+        assert_eq!(back.sftp_local_split, 0.35);
+
+        // 0.0 means "back to the even split".
+        store.set_sftp_local_split(0.0);
+        assert_eq!(store.sftp_local_split(), 0.0);
+    }
+
+    #[test]
+    fn local_places_are_machine_wide_and_validated() {
+        let mut store = temp_store();
+        store.cache = serde_json::from_str("{}").unwrap();
+        assert!(store.local_places().is_empty());
+
+        let dir = std::env::temp_dir().join("meatshell-local-places");
+        let shown = dir.to_string_lossy().to_string();
+        store.update_local_places(|places| {
+            assert!(places.toggle_bookmark(&shown));
+            places.record_visit(&shown);
+        });
+        assert_eq!(store.local_places().bookmarks, [shown.clone()]);
+        assert_eq!(store.local_places().recent, [shown.clone()]);
+
+        // Round-trips through the on-disk JSON, and stays after other sessions
+        // come and go (it is not keyed by session id).
+        let json = serde_json::to_string(&store.cache).unwrap();
+        let back: ConfigFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.local_places.bookmarks, [shown.clone()]);
+
+        // Removing the last entry drops the object from the config.
+        store.update_local_places(|places| {
+            places.remove_bookmark(&shown);
+            places.clear_recent();
+        });
+        assert!(store.local_places().is_empty());
+        assert!(!serde_json::to_string(&store.cache)
+            .unwrap()
+            .contains("local_places"));
     }
 
     #[test]

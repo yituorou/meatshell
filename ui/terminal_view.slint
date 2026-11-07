@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { SftpPanel, SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
+import { SftpPanel, SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "sftp_panel.slint";
 import { TabInfo } from "tabs.slint";
 import { DockExpandButton, ToolStrip } from "widgets.slint";
 
@@ -317,6 +317,19 @@ export component TerminalView inherits Rectangle {
     // Split-view divider: 0 = even split (default), else an explicit width.
     in property <length> sftp-local-pane-width: 0px;
     callback persist-sftp-local-pane-width(length);
+    // Places dropdown data + persisted split preferences (#532).
+    in property <[SftpLocalPlace]> sftp-local-quick-places;
+    in property <[SftpLocalPlace]> sftp-local-drive-places;
+    in property <[string]> sftp-local-bookmarks;
+    in property <[string]> sftp-local-recent;
+    in property <bool> sftp-local-bookmarked: false;
+    in property <float> sftp-local-split: 0.0;
+    callback persist-sftp-split(bool);
+    callback persist-sftp-local-split(float);
+    callback sftp-local-places-refresh();
+    callback sftp-local-toggle-bookmark();
+    callback sftp-local-remove-bookmark(string);
+    callback sftp-local-clear-recent();
 
     // Per-session now (#v0.5): the AppWindow stores these in each TerminalState
     // and writes back via the set-* callbacks, so each tab/pane keeps its own SFTP
@@ -2338,6 +2351,17 @@ export component TerminalView inherits Rectangle {
             local-selected-count: root.sftp-local-selected-count;
             local-pane-default: root.sftp-local-pane-width;
             persist-local-pane-width(v) => { root.persist-sftp-local-pane-width(v); }
+            local-quick-places: root.sftp-local-quick-places;
+            local-drive-places: root.sftp-local-drive-places;
+            local-bookmarks: root.sftp-local-bookmarks;
+            local-recent: root.sftp-local-recent;
+            local-bookmarked: root.sftp-local-bookmarked;
+            local-split-ratio: root.sftp-local-split;
+            persist-local-split-ratio(v) => { root.persist-sftp-local-split(v); }
+            local-places-refresh() => { root.sftp-local-places-refresh(); }
+            local-toggle-bookmark() => { root.sftp-local-toggle-bookmark(); }
+            local-remove-bookmark(path) => { root.sftp-local-remove-bookmark(path); }
+            local-clear-recent() => { root.sftp-local-clear-recent(); }
             toggle-dual()          => { root.sftp-toggle-dual(); }
             local-navigate(path)   => { root.sftp-local-navigate(path); }
             local-up()             => { root.sftp-local-up(); }

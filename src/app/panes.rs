@@ -21,6 +21,18 @@ pub(super) fn save_layout(
     s.set_sftp_panel_width(win.get_sftp_panel_width());
     s.set_sftp_panel_height(win.get_sftp_panel_height());
     s.set_sftp_dock(win.get_sftp_dock().to_string());
+    // Split view: whether it was open, the last local folder and the divider
+    // share (#532).
+    s.set_sftp_split_enabled(win.get_sftp_split_enabled());
+    s.set_sftp_local_split(win.get_sftp_local_split());
+    s.set_sftp_local_dir(&win.get_sftp_last_local_dir());
+    // Local bookmarks / recent folders (#532); the Slint models are the live
+    // copy, the config only needs them on close.
+    let places = crate::config::LocalPlaces {
+        bookmarks: sftp_local::model_strings(&win.get_local_bookmarks()),
+        recent: sftp_local::model_strings(&win.get_local_recent()),
+    };
+    s.update_local_places(|stored| *stored = places);
     s.set_quick_panel_open(win.get_quick_panel_open());
     s.set_quick_panel_collapsed(win.get_quick_panel_collapsed());
     s.set_quick_panel_width(win.get_quick_panel_width());

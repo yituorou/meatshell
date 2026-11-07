@@ -31,6 +31,15 @@ export struct SftpTreeNode {
     has-children: bool,
 }
 
+// One row of the local pane's places dropdown (#532): a quick location such as
+// the desktop or a drive, resolved by Rust (drive labels come from the OS).
+export struct SftpLocalPlace {
+    label: string,
+    path: string,
+    icon: string,
+    current: bool,
+}
+
 export struct TunnelInfo {
     id: string,
     name: string,
@@ -83,6 +92,8 @@ component SftpPlaceRow inherits Rectangle {
     in property <string> icon;
     in property <bool> current;      // the folder the panel is showing
     in property <bool> removable;
+    // Optional friendly name; falls back to the path when empty (remote rows).
+    in property <string> label: "";
     callback go();
     callback remove();
     height: 26px;
@@ -106,7 +117,7 @@ component SftpPlaceRow inherits Rectangle {
         }
         Text {
             horizontal-stretch: 1;
-            text: root.path;
+            text: root.label == "" ? root.path : root.label;
             color: root.current ? Theme.accent : Theme.text-primary;
             font-size: Theme.fs-sm;
             overflow: elide;
@@ -250,6 +261,141 @@ component SftpStarButton inherits Rectangle {
            horizontal-alignment: center; vertical-alignment: center; }
 }
 
+// Places dropdown for the local pane: home, desktop, downloads, documents and
+// the machine's drives (#532). Rust resolves the list, so drive labels and the
+// current-folder highlight follow the real machine.
+component LocalPlacesButton inherits Rectangle {
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
+    in property <[string]> bookmarks;
+    in property <[string]> recent;
+    in property <string> current-path: "";
+    callback opened();
+    callback navigate(string);
+    callback remove-bookmark(string);
+    callback clear-recent();
+    // Section headers are 22px, rows 26px + 1px spacing; 8px between groups.
+    property <length> rows-h:
+        22px + max(1, root.bookmarks.length) * 27px
+        + (root.bookmarks.length == 0 ? 26px : 0px)
+        + 8px
+        + 22px + max(1, root.recent.length) * 27px
+        + (root.recent.length == 0 ? 26px : 0px)
+        + (root.recent.length > 0 ? 27px : 0px)
+        + 8px
+        + (root.quick-places.length + root.drive-places.length) * 27px
+        + (root.quick-places.length > 0 && root.drive-places.length > 0 ? 8px : 0px);
+    // The menu is a fixed number of rows, and it opens on whichever side of the
+    // button has room: a bottom-docked panel has no space below it (the panel
+    // sits on the window's bottom edge), a tall side dock has plenty.
+    property <length> menu-h: min(400px, root.rows-h + 8px);
+    in property <length> pane-height: 0px;
+    width: 22px; height: 22px;
+    border-radius: Theme.radius-sm;
+    background: places-ta.has-hover ? Theme.bg-hover : transparent;
+    places-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.opened();
+            places-menu.show();
+        }
+    }
+    Text {
+        text: "\u{E2C7}"; // folder
+        font-family: "Material Icons";
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    places-menu := PopupWindow {
+        x: 0px;
+        y: root.pane-height > root.menu-h + 100px ? root.height + 2px : -(root.menu-h + 4px);
+        width: 250px;
+        height: root.menu-h;
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000060;
+            ScrollView {
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 1px;
+                    Text {
+                        height: 22px;
+                        text: @tr("Bookmarks");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    if root.bookmarks.length == 0 : Text {
+                        height: 26px;
+                        text: @tr("None yet. Click ☆ to bookmark the current folder.");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for b in root.bookmarks : SftpPlaceRow {
+                        path: b;
+                        icon: "\u{E838}"; // star
+                        current: b == root.current-path;
+                        removable: true;
+                        go => { root.navigate(b); }
+                        remove => { root.remove-bookmark(b); }
+                    }
+                    Rectangle { height: 8px; }
+                    Text {
+                        height: 22px;
+                        text: @tr("Recent");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    if root.recent.length == 0 : Text {
+                        height: 26px;
+                        text: @tr("Folders you open will show up here.");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for r in root.recent : SftpPlaceRow {
+                        path: r;
+                        icon: "\u{E889}"; // history
+                        current: r == root.current-path;
+                        go => { root.navigate(r); }
+                    }
+                    if root.recent.length > 0 : SftpMenuItem {
+                        label: @tr("Clear recent");
+                        icon: "\u{E0B8}"; // clear_all
+                        clicked => { root.clear-recent(); }
+                    }
+                    Rectangle { height: 8px; }
+                    for place in root.quick-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: place.icon;
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                    if root.quick-places.length > 0 && root.drive-places.length > 0 : Rectangle {
+                        height: 8px;
+                    }
+                    for place in root.drive-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: place.icon;
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // LocalPane — this machine's folders, the left half of the split view
 // ---------------------------------------------------------------------------
@@ -265,11 +411,22 @@ component LocalPane inherits Rectangle {
     in property <bool> loading: false;
     in property <string> status: "";
     in property <int> selected-count: 0;
+    // Places dropdown data (#532), resolved by Rust for this machine.
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
+    // Local bookmarks + recent folders, machine-wide (#532).
+    in property <[string]> bookmarks;
+    in property <[string]> recent;
+    in property <bool> bookmarked: false;
 
     callback navigate(string);      // "..", "~" or a typed path
     callback up();
     callback home();
     callback refresh();
+    callback places-refresh();      // re-read drives / user folders
+    callback toggle-bookmark();
+    callback remove-bookmark(string);
+    callback clear-recent();
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
@@ -347,6 +504,12 @@ component LocalPane inherits Rectangle {
                         accepted => { root.navigate(self.text); }
                     }
                 }
+                // Bookmark the folder being shown; hidden when the pane is too
+                // narrow to spare the room (the path field would collapse).
+                if root.width > 260px : SftpStarButton {
+                    bookmarked: root.bookmarked;
+                    toggled => { root.toggle-bookmark(); }
+                }
                 Rectangle {
                     width: 22px; height: 22px;
                     border-radius: Theme.radius-sm;
@@ -358,18 +521,19 @@ component LocalPane inherits Rectangle {
                     Text { text: "↑"; color: Theme.text-secondary; font-size: Theme.fs-md;
                            horizontal-alignment: center; vertical-alignment: center; }
                 }
-                Rectangle {
-                    width: 22px; height: 22px;
-                    border-radius: Theme.radius-sm;
-                    background: home-ta.has-hover ? Theme.bg-hover : transparent;
-                    home-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.home(); }
-                    }
-                    Text { text: "\u{E88A}"; // home
-                           font-family: "Material Icons";
-                           color: Theme.text-secondary; font-size: Theme.fs-sm;
-                           horizontal-alignment: center; vertical-alignment: center; }
+                // Places: bookmarks, recent folders, user folders and drives
+                // (#532), replacing the plain "home" button.
+                LocalPlacesButton {
+                    quick-places: root.quick-places;
+                    drive-places: root.drive-places;
+                    bookmarks: root.bookmarks;
+                    recent: root.recent;
+                    current-path: root.path;
+                    pane-height: root.height;
+                    opened => { root.places-refresh(); }
+                    navigate(path) => { root.navigate(path); }
+                    remove-bookmark(path) => { root.remove-bookmark(path); }
+                    clear-recent() => { root.clear-recent(); }
                 }
                 Rectangle {
                     width: 22px; height: 22px;
@@ -737,18 +901,30 @@ export component SftpPanel inherits Rectangle {
     in property <string> local-status: "";
     in property <bool> local-loading: false;
     in property <int> local-selected-count: 0;
+    in property <[SftpLocalPlace]> local-quick-places;
+    in property <[SftpLocalPlace]> local-drive-places;
+    in property <[string]> local-bookmarks;
+    in property <[string]> local-recent;
+    in property <bool> local-bookmarked: false;
     // 0 = split the panel in the middle (the default); dragging the divider
     // stores an explicit width, reported back through `persist-local-pane-width`
     // so Rust can hit-test drops on the local half with the same geometry.
     in property <length> local-pane-default: 0px;
     in-out property <length> local-pane-width: 0px;
+    // Persisted share of the panel (0 = even). Used when no width has been
+    // dragged in this session, so the split survives a restart (#532).
+    in property <float> local-split-ratio: 0.0;
     callback persist-local-pane-width(length);
+    callback persist-local-split-ratio(float);
     init => { root.local-pane-width = root.local-pane-default; }
     property <bool> local-resizing: false;
-    // Effective local extent: half the panel by default, the remote half always
-    // keeps ~200px so its Name column and buttons stay usable in a narrow dock.
+    // Effective local extent: the dragged width, else the saved ratio, else
+    // half the panel. The remote half always keeps ~200px so its Name column
+    // and buttons stay usable in a narrow dock.
     property <length> local-w: clamp(
-        root.local-pane-width > 0px ? root.local-pane-width : root.width / 2,
+        root.local-pane-width > 0px
+            ? root.local-pane-width
+            : (root.local-split-ratio > 0.0 ? root.width * root.local-split-ratio : root.width / 2),
         160px,
         max(160px, root.width - 200px));
     // Tree is only meaningful in the classic view.
@@ -897,6 +1073,10 @@ export component SftpPanel inherits Rectangle {
     callback local-up();
     callback local-home();
     callback local-refresh();
+    callback local-places-refresh();
+    callback local-toggle-bookmark();
+    callback local-remove-bookmark(string /* path */);
+    callback local-clear-recent();
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
     callback local-select-range(int /* from */, int /* to */);
@@ -1606,10 +1786,19 @@ export component SftpPanel inherits Rectangle {
                 loading: root.local-loading;
                 status: root.local-status;
                 selected-count: root.local-selected-count;
+                quick-places: root.local-quick-places;
+                drive-places: root.local-drive-places;
+                bookmarks: root.local-bookmarks;
+                recent: root.local-recent;
+                bookmarked: root.local-bookmarked;
                 navigate(path)        => { root.local-navigate(path); }
                 up()                  => { root.local-up(); }
                 home()                => { root.local-home(); }
                 refresh()             => { root.local-refresh(); }
+                places-refresh()      => { root.local-places-refresh(); }
+                toggle-bookmark()     => { root.local-toggle-bookmark(); }
+                remove-bookmark(path) => { root.local-remove-bookmark(path); }
+                clear-recent()        => { root.local-clear-recent(); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
                 select-range(a, b)    => { root.local-select-range(a, b); }
@@ -1639,6 +1828,8 @@ export component SftpPanel inherits Rectangle {
                         } else if (ev.kind == PointerEventKind.up) {
                             root.local-resizing = false;
                             root.persist-local-pane-width(root.local-pane-width);
+                            root.persist-local-split-ratio(
+                                root.width > 0px ? root.local-pane-width / root.width : 0.0);
                         }
                     }
                     moved => {
@@ -1652,6 +1843,7 @@ export component SftpPanel inherits Rectangle {
                         // Back to an even split.
                         root.local-pane-width = 0px;
                         root.persist-local-pane-width(0px);
+                        root.persist-local-split-ratio(0.0);
                     }
                 }
             }

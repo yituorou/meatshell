@@ -3,6 +3,14 @@
 All notable changes are documented here. 本文件记录所有重要变更。
 中英对照（中文在前，English after）.
 
+## [Unreleased]
+
+- **本机侧支持收藏和最近访问（#532 后续）。** 左侧路径栏新增 ☆（面板较窄时隐藏）：点一下收藏当前文件夹，已收藏时高亮；“位置”下拉里多出“收藏”和“最近”两段，收藏可悬停删除，最近可一键清空。打开的本地文件夹会按时间倒序记入最近（去重、最多 15 条），收藏最多 50 条；两者都对整台机器生效，换会话、重启后仍在。Windows 下同一目录的不同大小写/结尾斜杠按同一个处理。
+- **Local bookmarks and recent folders in the split view (follow-up to #532).** The left path bar gained a ☆ (hidden when the pane is too narrow): click it to bookmark the current folder, highlighted while bookmarked; the places menu now has Bookmarks and Recent sections, bookmarks can be removed on hover and Recent cleared in one click. Opened local folders are remembered newest-first (de-duplicated, 15 at most), bookmarks are capped at 50, both apply to the whole machine and survive restarts and session switches. On Windows the same folder is recognised regardless of case or a trailing separator.
+
+- **双栏会记住上次的状态、本机目录和分隔比例，本机侧新增“位置”下拉（#532）。** 上次开着双栏，下次打开就还是双栏；左侧回到上次所在的文件夹（U 盘拔掉或网络盘不可用时自动回到主目录并提示），拖动过的分隔条比例也一并记住。左侧路径栏原来的“主目录”按钮换成“位置”下拉：主目录 / 桌面 / 下载 / 文档，以及本机的各个盘符（带卷标），点一下即可跳转。盘符枚举在后台线程完成，断线的网络驱动器不会卡住界面。
+- **The split view remembers its state, its local folder and the divider share, and the local side has a places menu (#532).** If the split view was open, it opens that way next time; the left pane returns to the folder it was showing (a removed USB stick or an unmounted network drive falls back to the home folder with a note), and the divider's share is remembered too. The local path bar's home button became a places menu: Home, Desktop, Downloads, Documents, and every drive on this machine (with its volume label), one click each. Drives are enumerated off the UI thread, so a dead network drive cannot stall the window.
+
 ## [0.8.1] - 2026-10-30
 
 - **SSH 保活可在设置中调整（#515）。** 新增“设置 → 连接”页：可开关 SSH 保活，设置发送间隔（5–300 秒，默认 30 秒）和断开前允许的连续无响应次数（2–10 次，默认 3 次）。保活可防止空闲连接被 NAT、防火墙或校园网关静默回收；服务器连续无响应时会直接提示连接已关闭并可按 Enter 重连，不必等到按键才发现。设置同时作用于终端、SFTP、跳板机和 MCP 连接，对新建连接生效。
