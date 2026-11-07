@@ -17,12 +17,12 @@ fn parent_navigation_joins_and_normalizes() {
     std::fs::create_dir_all(&child).unwrap();
 
     // A relative name resolves against the current folder.
-    assert_eq!(resolve_path(&display_path(&base), "child").unwrap(), child);
+    assert_eq!(resolve_path(&display_path(&base), "child"), child);
     // ".." climbs back out, and extra separators / dots collapse.
     let nested = child.join(".").join("..").join("child");
     assert_eq!(normalize(&nested), child);
     // A relative path from the current folder can climb too.
-    assert_eq!(resolve_path(&display_path(&child), "..").unwrap(), base);
+    assert_eq!(resolve_path(&display_path(&child), ".."), base);
 
     std::fs::remove_dir_all(&base).unwrap();
 }
@@ -43,30 +43,24 @@ fn root_has_no_parent_and_cannot_climb_out() {
 fn tilde_resolves_to_the_home_folder() {
     let home = home_dir();
     assert!(home.is_dir(), "home dir {} must exist", home.display());
-    assert_eq!(resolve_path("/nowhere", "~").unwrap(), home);
+    assert_eq!(resolve_path("/nowhere", "~"), home);
 }
 
 #[test]
-fn a_file_is_not_navigable() {
-    let base = temp_dir("not-a-dir");
+fn resolving_never_touches_the_filesystem() {
+    // Resolution is pure: a path that does not exist (or a dead network drive)
+    // must come back immediately; the listing thread reports the failure.
+    let base = temp_dir("pure-resolve");
+    let missing = resolve_path(&display_path(&base), "does-not-exist");
+    assert_eq!(missing, base.join("does-not-exist"));
+    assert!(list_dir(&missing).is_err());
+
+    // A file path resolves too; listing it is what fails.
     let file = base.join("note.txt");
     std::fs::write(&file, b"hi").unwrap();
+    assert_eq!(resolve_path(&display_path(&base), "note.txt"), file);
+    assert!(list_dir(&file).is_err());
 
-    let error = resolve_path(&display_path(&base), "note.txt").unwrap_err();
-    assert!(
-        error.contains("不是文件夹") || error.to_lowercase().contains("not a folder"),
-        "{error}"
-    );
-
-    std::fs::remove_dir_all(&base).unwrap();
-}
-
-#[test]
-fn missing_folder_reports_an_error_instead_of_panicking() {
-    let base = temp_dir("missing");
-    let error = resolve_path(&display_path(&base), "does-not-exist").unwrap_err();
-    assert!(!error.is_empty());
-    assert!(list_dir(&base.join("does-not-exist")).is_err());
     std::fs::remove_dir_all(&base).unwrap();
 }
 
@@ -141,6 +135,107 @@ fn copying_a_folder_tree_preserves_the_contents() {
     let copy = base.join("copy").join("deep").join("a.txt");
     copy_recursive(&source.join("a.txt"), &copy).unwrap();
     assert_eq!(std::fs::read(&copy).unwrap(), b"a");
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn copying_into_its_own_subfolder_is_refused() {
+    // Dropping a folder onto a pane that is showing one of its subfolders would
+    // otherwise copy the growing target into itself forever.
+    let base = temp_dir("self-copy");
+    let source = base.join("source");
+    std::fs::create_dir_all(source.join("inner")).unwrap();
+    std::fs::write(source.join("a.txt"), b"a").unwrap();
+
+    let inside = source.join("inner").join("source");
+    let error = copy_recursive(&source, &inside).unwrap_err();
+    assert!(
+        error.contains("子目录") || error.to_lowercase().contains("subfolder"),
+        "{error}"
+    );
+    assert!(!inside.exists(), "nothing may be written for a refused copy");
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn copying_a_symlink_loop_terminates() {
+    let base = temp_dir("loop");
+    let source = base.join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("a.txt"), b"a").unwrap();
+    // A link back to its own folder is an infinite tree for a naive copy.
+    std::os::unix::fs::symlink(&source, source.join("loop")).unwrap();
+
+    let target = base.join("target");
+    copy_recursive(&source, &target).unwrap();
+    assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), b"a");
+    assert!(
+        !target.join("loop").join("loop").exists(),
+        "the link must not be descended into again"
+    );
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn copying_a_junction_loop_terminates() {
+    let base = temp_dir("junction");
+    let source = base.join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("a.txt"), b"a").unwrap();
+
+    // A junction needs no administrator rights (unlike a symlink) and is the
+    // loop users actually hit: `mklink /J loop source`.
+    let link = source.join("loop");
+    let created = {
+        use std::os::windows::process::CommandExt as _;
+        let mut command = std::process::Command::new("cmd");
+        // `raw_arg`: cmd.exe does not undo C-runtime quoting, so a quoted
+        // argument would reach mklink with literal backslashes.
+        command.arg("/c").raw_arg(format!(
+            "mklink /J \"{}\" \"{}\"",
+            link.display(),
+            source.display()
+        ));
+        command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    };
+    if !created || !link.exists() {
+        eprintln!("skipping: cannot create a junction here");
+        std::fs::remove_dir_all(&base).ok();
+        return;
+    }
+
+    let target = base.join("target");
+    copy_recursive(&source, &target).unwrap();
+    assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), b"a");
+    assert!(
+        !target.join("loop").join("loop").exists(),
+        "the junction must not be descended into again"
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn very_deep_trees_stop_at_the_depth_limit() {
+    // Backstop for link loops `canonicalize` cannot collapse.
+    let base = temp_dir("deep");
+    let source = base.join("source");
+    let mut deep = source.clone();
+    for _ in 0..(MAX_COPY_DEPTH as usize + 5) {
+        deep = deep.join("d");
+        std::fs::create_dir_all(&deep).unwrap();
+    }
+
+    let target = base.join("target");
+    assert!(copy_recursive(&source, &target).is_err());
 
     std::fs::remove_dir_all(&base).unwrap();
 }

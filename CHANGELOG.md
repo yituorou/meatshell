@@ -3,6 +3,11 @@
 All notable changes are documented here. 本文件记录所有重要变更。
 中英对照（中文在前，English after）.
 
+## [Unreleased]
+
+- **修复双栏本地面板可能冻结窗口、以及复制含环目录会无限递归的问题（#520 后续）。** 本地路径解析不再在界面线程访问文件系统：输入指向已断开的网络盘或休眠 NAS 的路径时窗口不再卡住，找不到/不是文件夹的错误改由后台列目录线程报告。从资源管理器拖入的文件夹复制现在会跳过已复制过的物理目录（符号链接或 Windows 联接点成环时不再无限递归），拒绝把文件夹复制到它自己的子目录里，并有 32 层深度上限兜底。
+- **Fix the local pane freezing the window and copying link loops forever (follow-up to #520).** Resolving a typed local path no longer touches the filesystem on the UI thread, so a mapped drive that has gone away or a sleeping NAS cannot hang the window; the background listing thread reports "no such folder / not a folder" instead. Folder copies from the file manager now skip physical folders they have already copied (a symlink or Windows junction loop can no longer recurse), refuse to copy a folder into its own subfolder, and stop at a 32-level depth cap as a backstop.
+
 ## [0.8.1] - 2026-10-30
 
 - **SSH 保活可在设置中调整（#515）。** 新增“设置 → 连接”页：可开关 SSH 保活，设置发送间隔（5–300 秒，默认 30 秒）和断开前允许的连续无响应次数（2–10 次，默认 3 次）。保活可防止空闲连接被 NAT、防火墙或校园网关静默回收；服务器连续无响应时会直接提示连接已关闭并可按 Enter 重连，不必等到按键才发现。设置同时作用于终端、SFTP、跳板机和 MCP 连接，对新建连接生效。
