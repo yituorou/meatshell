@@ -367,9 +367,13 @@ pub(super) fn active_sftp_local_pane_rect(win: &AppWindow) -> Option<(String, Lo
     // the bare 560px.
     let toolbar = if panel.w < 560.0 { 62.0 } else { 34.0 };
     let content_h = (panel.h - toolbar - 18.0).max(0.0);
-    // Mirrors `local-w` in ui/sftp_panel.slint: 0 = even split.
+    // Mirrors `local-w` in ui/sftp_panel.slint: the dragged width, else the
+    // remembered share, else an even split.
+    let ratio = win.get_sftp_local_split();
     let wanted = if state.sftp_local_pane_width > 0.0 {
         state.sftp_local_pane_width
+    } else if ratio > 0.0 {
+        panel.w * ratio
     } else {
         panel.w / 2.0
     };
