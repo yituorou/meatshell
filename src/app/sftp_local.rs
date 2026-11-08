@@ -236,13 +236,17 @@ fn publish_local_listing(
         note.unwrap_or_default()
     };
     let entries = ModelRc::from(Rc::new(VecModel::from(listing.entries)));
+    let shown = listing.path.clone();
     update_terminal_row(model, tab_id, |row| {
-        row.sftp_local_path = listing.path.into();
+        row.sftp_local_path = shown.into();
         row.sftp_local_entries = entries.clone();
         row.sftp_local_loading = false;
         row.sftp_local_selected_count = 0;
         row.sftp_local_status = status.into();
     });
+    // Remember the folder for the next tab / restart (#532). Written to the
+    // global property, persisted with the rest of the layout on close.
+    window.set_sftp_last_local_dir(listing.path.into());
 }
 
 /// Read `dir` on a worker thread and publish it when it comes back.
@@ -281,6 +285,64 @@ pub(super) fn load_dir_with_status(
                 if let Some(model) =
                     terminals.as_any().downcast_ref::<VecModel<TerminalState>>()
                 {
+                    update_terminal_row(model, &tab, |row| {
+                        row.sftp_local_loading = false;
+                        row.sftp_local_status = message.into();
+                    });
+                }
+            }
+        });
+    });
+}
+
+/// Open a remembered folder, falling back to `fallback` when it is gone.
+///
+/// Used the first time a pane opens with a folder restored from the config: a
+/// removed USB stick or unmounted network drive should land on the home folder
+/// instead of an error strip (#532). The existence check runs on the listing
+/// thread, like every other local read.
+pub(super) fn load_dir_or_fallback(
+    window: &AppWindow,
+    tab_id: &str,
+    dir: PathBuf,
+    fallback: PathBuf,
+) {
+    {
+        let terminals = window.get_terminals();
+        if let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() {
+            update_terminal_row(model, tab_id, |row| row.sftp_local_loading = true);
+        }
+    }
+    let weak = window.as_weak();
+    let tab = tab_id.to_string();
+    std::thread::spawn(move || {
+        let (result, note) = match list_dir(&dir) {
+            Ok(listing) => (Ok(listing), None),
+            Err(message) => {
+                if !same_dir(&display_path(&dir), &display_path(&fallback)) {
+                    match list_dir(&fallback) {
+                        Ok(listing) => (
+                            Ok(listing),
+                            Some(format!(
+                                "{}: {message}",
+                                t(
+                                    "上次的本地目录不可用，已回到主目录",
+                                    "Last local folder is gone — opened the home folder instead"
+                                )
+                            )),
+                        ),
+                        Err(_) => (Err(message), None),
+                    }
+                } else {
+                    (Err(message), None)
+                }
+            }
+        };
+        let _ = weak.upgrade_in_event_loop(move |window| match result {
+            Ok(listing) => publish_local_listing(&window, &tab, listing, note),
+            Err(message) => {
+                let terminals = window.get_terminals();
+                if let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() {
                     update_terminal_row(model, &tab, |row| {
                         row.sftp_local_loading = false;
                         row.sftp_local_status = message.into();
@@ -390,6 +452,131 @@ pub(super) fn select_range(model: &VecModel<TerminalState>, tab_id: &str, from: 
         return count;
     }
     0
+}
+
+// ---------------------------------------------------------------------------
+// Places dropdown (#532): user folders + drives
+// ---------------------------------------------------------------------------
+
+/// One row of the local pane's places dropdown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LocalPlace {
+    pub label: String,
+    pub path: String,
+    pub icon: &'static str,
+    /// The pane is showing this folder.
+    pub current: bool,
+}
+
+fn home_place(current: &str) -> LocalPlace {
+    let path = home_display();
+    LocalPlace {
+        label: t("主目录", "Home").to_string(),
+        current: same_dir(&path, current),
+        path,
+        icon: "\u{E88A}",
+    }
+}
+
+/// Home, desktop, downloads and documents — whichever of them exist.
+pub(super) fn quick_places(current: &str) -> Vec<LocalPlace> {
+    let Some(dirs) = directories::UserDirs::new() else {
+        return vec![home_place(current)];
+    };
+    let mut places = vec![home_place(current)];
+    for (zh, en, dir, icon) in [
+        ("桌面", "Desktop", dirs.desktop_dir(), "\u{E30C}"),
+        ("下载", "Downloads", dirs.download_dir(), "\u{E2C4}"),
+        ("文档", "Documents", dirs.document_dir(), "\u{E24D}"),
+    ] {
+        let Some(dir) = dir else { continue };
+        let path = display_path(dir);
+        places.push(LocalPlace {
+            label: t(zh, en).to_string(),
+            current: same_dir(&path, current),
+            path,
+            icon,
+        });
+    }
+    places
+}
+
+/// Drives (Windows) / mount points, labelled with the volume name when known.
+///
+/// `sysinfo` asks the OS for every drive's volume information, so this runs
+/// off the UI thread (see [`refresh_places`]): a mapped drive that has gone
+/// away can otherwise wait for a network timeout.
+pub(super) fn drive_places(current: &str) -> Vec<LocalPlace> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut seen = HashSet::new();
+    let mut places = Vec::new();
+    for disk in disks.list() {
+        let path = display_path(disk.mount_point());
+        // Windows also reports folder mount points inside a drive; the menu
+        // only wants whole drives (`C:\`).
+        #[cfg(windows)]
+        if path.len() != 3 || !path.ends_with('\\') {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let label = disk.name().to_string_lossy().trim().to_string();
+        let letter = path.trim_end_matches(['\\', '/']);
+        places.push(LocalPlace {
+            label: if label.is_empty() {
+                letter.to_string()
+            } else {
+                format!("{letter} — {label}")
+            },
+            current: same_dir(&path, current),
+            path,
+            icon: "\u{E30C}",
+        });
+    }
+    places.sort_by(|a, b| a.path.cmp(&b.path));
+    places
+}
+
+fn into_slint_place(place: LocalPlace) -> SftpLocalPlace {
+    SftpLocalPlace {
+        label: place.label.into(),
+        path: place.path.into(),
+        icon: place.icon.into(),
+        current: place.current,
+    }
+}
+
+/// Rebuild the places dropdown for a tab and publish it.
+///
+/// Runs off the UI thread because enumerating drives asks the OS for volume
+/// information and may wait on a dead network drive.
+pub(super) fn refresh_places(window: &AppWindow, tab_id: &str) {
+    let current = current_path(window, tab_id);
+    let weak = window.as_weak();
+    let tab = tab_id.to_string();
+    std::thread::spawn(move || {
+        let quick: Vec<SftpLocalPlace> = quick_places(&current)
+            .into_iter()
+            .map(into_slint_place)
+            .collect();
+        let drives: Vec<SftpLocalPlace> = drive_places(&current)
+            .into_iter()
+            .map(into_slint_place)
+            .collect();
+        let _ = weak.upgrade_in_event_loop(move |window| {
+            let terminals = window.get_terminals();
+            let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+                return;
+            };
+            let quick = ModelRc::from(Rc::new(VecModel::from(quick)));
+            let drives = ModelRc::from(Rc::new(VecModel::from(drives)));
+            update_terminal_row(model, &tab, |row| {
+                row.sftp_local_quick_places = quick.clone();
+                row.sftp_local_drive_places = drives.clone();
+            });
+        });
+    });
 }
 
 /// Copy a path dropped from the OS file manager into `dir` (the split view's

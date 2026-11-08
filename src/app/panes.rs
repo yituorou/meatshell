@@ -21,6 +21,11 @@ pub(super) fn save_layout(
     s.set_sftp_panel_width(win.get_sftp_panel_width());
     s.set_sftp_panel_height(win.get_sftp_panel_height());
     s.set_sftp_dock(win.get_sftp_dock().to_string());
+    // Split view: whether it was open, the last local folder and the divider
+    // share (#532).
+    s.set_sftp_split_enabled(win.get_sftp_split_enabled());
+    s.set_sftp_local_split(win.get_sftp_local_split());
+    s.set_sftp_local_dir(&win.get_sftp_last_local_dir());
     s.set_quick_panel_open(win.get_quick_panel_open());
     s.set_quick_panel_collapsed(win.get_quick_panel_collapsed());
     s.set_quick_panel_width(win.get_quick_panel_width());
