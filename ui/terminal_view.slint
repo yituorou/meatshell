@@ -39,6 +39,13 @@ export struct TermMatch {
     len: int,
 }
 
+// Find-bar position across the whole buffer (#535): `current` is 1-based,
+// 0 when there is no match.
+export struct FindStatus {
+    current: int,
+    total: int,
+}
+
 // One saved quick command (#55): a name shown on the chip + the text to send.
 // Grouped like the welcome session list: group-header is non-empty on the first
 // row of each group; collapsed hides the group's rows in the popup; orig-index
@@ -288,6 +295,7 @@ export component TerminalView inherits Rectangle {
     in property <bool>   is-alt-screen;
     in property <bool>   mouse-tracked;   // remote app wants mouse events (btop/htop/mc)
     in property <[TermMatch]> find-matches; // search-highlight rectangles
+    in property <TermMatch> find-current;   // the match Enter/▲/▼ is on; len 0 = none visible (#535)
     in property <[TermMatch]> selection;    // drag-selection highlight rectangles
 
     in property <string>  sftp-path: "/";
@@ -481,6 +489,11 @@ export component TerminalView inherits Rectangle {
     callback copy-terminal-text();
     callback clear-terminal();              // wipe this session's screen buffer
     callback find-query-changed(string);    // recompute search highlights
+    // The pointer entered (true) or left (false) the terminal output (#540).
+    callback output-hover(bool);
+    // Move to a match across scrollback + screen (#535): dir 0 = settle on a
+    // match for a new query, 1 = next, -1 = previous (both wrap around).
+    callback find-step(string /* query */, int /* dir */) -> FindStatus;
     callback terminal-scroll(float);         // scroll history by fractional lines (+ = up); Rust keeps the sub-line remainder so momentum decays smoothly
     // Wheel inside an alt-screen app (tmux/less/vim): forward to the program so it
     // scrolls, instead of doing nothing (#170). dir = +1 up / -1 down; col/row =
@@ -506,6 +519,7 @@ export component TerminalView inherits Rectangle {
     property <length> ctx-x;
     property <length> ctx-y;
     property <bool> find-active: false;
+    property <FindStatus> find-status;
     // A context-menu click creates the conditional find bar while Slint is
     // still dispatching the popup event. Focusing its TextInput synchronously
     // can re-enter the Windows IME/accessibility plumbing and panic (#343).
@@ -942,6 +956,17 @@ export component TerminalView inherits Rectangle {
                             background: Theme.warning.with-alpha(0.45);
                             border-radius: 2px;
                         }
+                        // The current match stands out from the others (#535).
+                        if root.find-current.len > 0 : Rectangle {
+                            x: root.find-current.col * root.cell-w;
+                            y: root.find-current.row * root.cell-h;
+                            width: root.find-current.len * root.cell-w;
+                            height: root.cell-h;
+                            background: Theme.warning.with-alpha(0.85);
+                            border-width: 1px;
+                            border-color: Theme.warning;
+                            border-radius: 2px;
+                        }
 
                         // Each span = a background fill (transparent for the
                         // default bg) with its text on top.  Wrapping the Text in
@@ -1035,6 +1060,11 @@ export component TerminalView inherits Rectangle {
                             width: parent.width;
                             height: parent.height;
                             mouse-cursor: text;
+                            // The macOS wheel fallback only claims the wheel
+                            // while Slint itself says the pointer is over the
+                            // terminal output, not over the SFTP panel or a
+                            // popup next to or above it (#540).
+                            changed has-hover => { root.output-hover(self.has-hover); }
                             pointer-event(ev) => {
                                 if (ev.kind == PointerEventKind.down) {
                                     ime-input.focus();
@@ -1422,18 +1452,76 @@ export component TerminalView inherits Rectangle {
                             // have completed; synchronous focus crashes on
                             // Windows when opened from right-click (#343).
                             init => { root.find-focus-pending = true; }
-                            edited => { root.find-query-changed(self.text); }
+                            edited => {
+                                root.find-query-changed(self.text);
+                                root.find-status = root.find-step(self.text, 0);
+                            }
                             key-pressed(e) => {
                                 if (e.text == "\u{001b}") {       // Esc closes find
                                     root.find-active = false;
                                     root.find-query-changed("");
+                                    root.find-status = { current: 0, total: 0 };
                                     self.text = "";
                                     ime-input.focus();
+                                    accept
+                                } else if (e.text == "\u{000a}" || e.text == "\u{000d}") {
+                                    // Enter: next match, Shift+Enter: previous;
+                                    // both wrap around (#535).
+                                    root.find-status = root.find-step(self.text, e.modifiers.shift ? -1 : 1);
                                     accept
                                 } else {
                                     reject
                                 }
                             }
+                        }
+                    }
+                    // "3/12", or a hint when the query matches nothing (#535).
+                    if find-input.text != "" : Text {
+                        text: root.find-status.total == 0
+                            ? @tr("No results")
+                            : root.find-status.current + "/" + root.find-status.total;
+                        color: root.find-status.total == 0 ? Theme.warning : Theme.text-secondary;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 24px;
+                        border-radius: 3px;
+                        background: find-prev-ta.has-hover ? Theme.bg-hover : transparent;
+                        find-prev-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.find-status = root.find-step(find-input.text, -1);
+                                find-input.focus();
+                            }
+                        }
+                        Text {
+                            text: "\u{E5CE}"; // expand_less: previous match
+                            font-family: "Material Icons";
+                            color: find-prev-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            font-size: Theme.fs-md;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle {
+                        width: 24px;
+                        border-radius: 3px;
+                        background: find-next-ta.has-hover ? Theme.bg-hover : transparent;
+                        find-next-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.find-status = root.find-step(find-input.text, 1);
+                                find-input.focus();
+                            }
+                        }
+                        Text {
+                            text: "\u{E5CF}"; // expand_more: next match
+                            font-family: "Material Icons";
+                            color: find-next-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            font-size: Theme.fs-md;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
                     }
                     Rectangle {
@@ -1443,6 +1531,7 @@ export component TerminalView inherits Rectangle {
                             clicked => {
                                 root.find-active = false;
                                 root.find-query-changed("");
+                                root.find-status = { current: 0, total: 0 };
                                 find-input.text = "";
                                 ime-input.focus();
                             }

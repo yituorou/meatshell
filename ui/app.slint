@@ -22,6 +22,8 @@ import { SessionDialog, SessionDraft, PortFwd, TriggerDraft, JumpHop } from "ses
 import { ConfirmDialog } from "confirm_dialog.slint";
 import { ModalLayer, ModalKind } from "modal.slint";
 import { LabeledInput, PrimaryButton, GhostButton, DockExpandButton, IconButton, ToolStrip } from "widgets.slint";
+import { TerminalView, TermSpan, TermMatch, FindStatus, QuickCmd, QuickDockPanel } from "terminal_view.slint";
+import { SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
 import { TerminalView, TermSpan, TermMatch, QuickCmd, QuickDockPanel } from "terminal_view.slint";
 import { SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "sftp_panel.slint";
 import { ProcWindow, ProcRow } from "proc_window.slint";
@@ -73,6 +75,7 @@ export struct TerminalState {
     is-alt-screen: bool,
     mouse-tracked: bool,     // remote app wants mouse events (btop/htop/mc)
     find-matches: [TermMatch], // search-highlight rectangles
+    find-current: TermMatch,   // the current find match on screen; len 0 = none (#535)
     selection: [TermMatch],    // drag-selection highlight rectangles
 
     // SFTP panel state
@@ -1277,6 +1280,9 @@ export component AppWindow inherits Window {
     callback tab-rename-request(string /* tab-id */);
     // Save the ssh connection running in a local tab as a session (#501).
     callback tab-save-session(string /* tab-id */);
+    // Session log from the tab menu (#535).
+    callback tab-log-active(string /* tab-id */) -> bool;
+    callback tab-log-toggle(string /* tab-id */);
     callback rename-tab(string /* tab-id */, string /* new-title */);
     in-out property <bool> tab-rename-open: false;
     in-out property <string> tab-rename-id: "";
@@ -1435,6 +1441,11 @@ export component AppWindow inherits Window {
     callback clear-terminal(string /* tab-id */);
     // Recompute search highlights for a session's visible screen.
     callback find-query-changed(string /* tab-id */, string /* query */);
+    // Pointer over a tab's terminal output, from Slint's own hit testing; gates
+    // the macOS wheel fallback (#540).
+    callback terminal-output-hover(string /* tab-id */, bool /* hovered */);
+    // Step through find matches across scrollback (#535); dir 0/1/-1.
+    callback find-step(string /* tab-id */, string /* query */, int /* dir */) -> FindStatus;
     // Scroll a session's scrollback history by N lines (+ = up/older).
     callback terminal-scroll(string /* tab-id */, float /* delta-lines (fractional, momentum-aware) */);
     // Wheel forwarded to an alt-screen program (#170): tab-id, dir (+1 up/-1 down), col, row.
@@ -2136,6 +2147,8 @@ export component AppWindow inherits Window {
                         tab-duplicate(id) => { root.tab-duplicate(id); }
                         tab-rename-request(id) => { root.tab-rename-request(id); }
                         tab-save-session(id) => { root.tab-save-session(id); }
+                        tab-log-active(id) => { return root.tab-log-active(id); }
+                        tab-log-toggle(id) => { root.tab-log-toggle(id); }
                         tab-drag-move(id, ax, ay, own-strip) => {
                             root.tab-drag-px = ax - pane-area.absolute-position.x;
                             root.tab-drag-py = ay - pane-area.absolute-position.y;
@@ -2242,6 +2255,7 @@ export component AppWindow inherits Window {
                         is-alt-screen: term.is-alt-screen;
                         mouse-tracked: term.mouse-tracked;
                         find-matches: term.find-matches;
+                        find-current: term.find-current;
                         selection: term.selection;
                         sftp-panel-height: term.sftp-panel-height;
                         set-sftp-panel-height(v) => { root.set-pane-sftp-height(term.id, v); }
@@ -2450,6 +2464,8 @@ export component AppWindow inherits Window {
                         copy-terminal-text() => { root.copy-terminal-text(term.id); }
                         clear-terminal() => { root.clear-terminal(term.id); }
                         find-query-changed(q) => { root.find-query-changed(term.id, q); }
+                        output-hover(h) => { root.terminal-output-hover(term.id, h); }
+                        find-step(q, d) => { return root.find-step(term.id, q, d); }
                         terminal-scroll(d) => { root.terminal-scroll(term.id, d); }
                         terminal-wheel(d, c, r) => { root.terminal-wheel(term.id, d, c, r); }
                         terminal-scroll-to(o) => { root.terminal-scroll-to(term.id, o); }

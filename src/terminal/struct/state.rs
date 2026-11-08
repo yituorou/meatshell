@@ -15,6 +15,9 @@ pub(crate) enum CtrlKeySide {
 pub(crate) struct TermBuffer {
     pub(crate) parser: vt100::Parser,
     pub(crate) find_query: String,
+    /// The find match Enter/▲/▼ is on, as (combined-buffer row, char index)
+    /// (#535). Combined rows keep their index as output scrolls into history.
+    pub(crate) find_cursor: Option<(usize, usize)>,
     pub(crate) is_dark: bool,
     pub(crate) output_highlight: OutputHighlightPreset,
     pub(crate) custom_highlight_rules: Vec<CompiledOutputRule>,

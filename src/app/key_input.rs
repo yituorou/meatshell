@@ -282,12 +282,7 @@ pub(super) fn wire_key_input(
         let weak = window.as_weak();
         let collapsed = collapsed_quick_groups.clone();
         window.on_move_quick_command(move |index: i32, group: SharedString| {
-            let target = group.to_string();
-            let target = if target == "default" {
-                String::new()
-            } else {
-                target
-            };
+            let target = crate::config::QuickCommand::normalize_group(&group);
             {
                 let mut s = store_rc.borrow_mut();
                 let mut v = s.quick_commands().to_vec();
@@ -976,6 +971,7 @@ pub(super) fn wire_key_input(
                 set_terminal_row(&win, &tid, |row| {
                     row.spans = ModelRc::from(Rc::new(VecModel::<TermSpan>::default()));
                     row.find_matches = ModelRc::from(Rc::new(VecModel::<TermMatch>::default()));
+                    row.find_current = TermMatch::default();
                     row.selection = ModelRc::from(Rc::new(VecModel::<TermMatch>::default()));
                     row.cursor_row = 0;
                     row.cursor_col = 0;
@@ -998,6 +994,10 @@ pub(super) fn wire_key_input(
             let tid = tab_id.to_string();
             let q = query.to_string();
             let (matches, jumped) = with_term_buf(&bufs_find, &tid, |buf| {
+                if buf.find_query != q {
+                    // A new query starts over from the screen (#535).
+                    buf.find_cursor = None;
+                }
                 buf.find_query = q.clone();
                 let mut matches = compute_find_matches(&buf.displayed_text, &q);
                 let jumped = matches.is_empty() && buf.scroll_to_first_find_match(&q);
@@ -1016,7 +1016,34 @@ pub(super) fn wire_key_input(
                 let model = ModelRc::from(Rc::new(VecModel::from(matches)));
                 set_terminal_row(&win, &tid, |row| {
                     row.find_matches = model.clone();
+                    row.find_current = TermMatch::default();
                 });
+            }
+        });
+    }
+
+    // Find bar ▲/▼/Enter (#535): step through matches across scrollback,
+    // scroll the current one into view and report "current/total".
+    {
+        let bufs_step = bufs.clone();
+        let weak = window.as_weak();
+        window.on_find_step(move |tab_id: SharedString, query: SharedString, dir: i32| {
+            let tid = tab_id.to_string();
+            let q = query.to_string();
+            let (current, total) = with_term_buf(&bufs_step, &tid, |buf| {
+                if buf.find_query != q {
+                    buf.find_cursor = None;
+                    buf.find_query = q.clone();
+                }
+                buf.find_step(&q, dir)
+            })
+            .unwrap_or_default();
+            if let Some(win) = weak.upgrade() {
+                rebuild_tab_display(&win, &bufs_step, &tid);
+            }
+            crate::ui::FindStatus {
+                current: current as i32,
+                total: total as i32,
             }
         });
     }

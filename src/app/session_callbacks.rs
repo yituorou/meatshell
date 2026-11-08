@@ -1407,6 +1407,7 @@ pub(super) fn wire_session_callbacks(
                 is_alt_screen: false,
                 mouse_tracked: false,
                 find_matches: ModelRc::from(std::rc::Rc::new(VecModel::<TermMatch>::default())),
+                find_current: TermMatch::default(),
                 selection: ModelRc::from(std::rc::Rc::new(VecModel::<TermMatch>::default())),
                 sftp_path: "/".into(),
                 sftp_entries: ModelRc::from(std::rc::Rc::new(VecModel::<SftpEntry>::default())),
@@ -1502,6 +1503,7 @@ pub(super) fn wire_session_callbacks(
                 Arc::new(Mutex::new(TermBuffer {
                     parser: vt100::Parser::new(24, 80, 5000),
                     find_query: String::new(),
+                    find_cursor: None,
                     is_dark: is_dark_now,
                     output_highlight,
                     custom_highlight_rules,

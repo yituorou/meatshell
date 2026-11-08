@@ -463,19 +463,86 @@ pub(super) fn builtin_local_session(id: &str, name: impl Into<String>, host: &st
     s
 }
 
+/// Whether Quick connect should offer WSL: at least one distribution is
+/// registered for this user.
+///
+/// This used to run `wsl.exe --status` on the UI thread while the first
+/// session list was built, before the main window appeared. With a damaged
+/// WSL install (MSIX present, COM/MSI registration broken) every `wsl.exe`
+/// call attempts an MSI self-repair and fails after about a minute, so the
+/// process sat in Task Manager with no window for 1–10 minutes (#537).
+/// Every distribution, inbox or Store, registers a subkey under
+/// `HKCU\…\Lxss`, so counting those answers the question in microseconds
+/// without starting a process. A registered but broken WSL still shows the
+/// entry; opening it then reports wsl.exe's own error in that tab instead of
+/// stalling startup.
 #[cfg(windows)]
 pub(super) fn wsl_available() -> bool {
-    use std::os::windows::process::CommandExt;
+    wsl_distribution_count() > 0
+}
 
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        std::process::Command::new("wsl.exe")
-            .arg("--status")
-            .creation_flags(0x08000000)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    })
+#[cfg(windows)]
+fn wsl_distribution_count() -> u32 {
+    use ::windows::core::{w, PWSTR};
+    use ::windows::Win32::Foundation::ERROR_SUCCESS;
+    use ::windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryInfoKeyW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
+
+    let mut key = HKEY::default();
+    // SAFETY: plain Win32 registry calls on a key this function owns and
+    // closes; every out-pointer refers to a live local.
+    unsafe {
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss"),
+            0,
+            KEY_READ,
+            &mut key,
+        ) != ERROR_SUCCESS
+        {
+            return 0; // WSL never set up for this user
+        }
+        let mut subkeys = 0u32;
+        let status = RegQueryInfoKeyW(
+            key,
+            PWSTR::null(),
+            None,
+            None,
+            Some(&mut subkeys),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let _ = RegCloseKey(key);
+        if status == ERROR_SUCCESS {
+            subkeys
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod wsl_probe_tests {
+    #[test]
+    fn wsl_probe_never_waits_on_wsl_exe() {
+        // #537: the probe runs while the first window is being built, so it
+        // must stay a registry read even on a machine where wsl.exe hangs.
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            let _ = super::wsl_available();
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(500),
+            "100 probes took {:?}",
+            start.elapsed()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

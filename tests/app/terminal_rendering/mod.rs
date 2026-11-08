@@ -20,6 +20,7 @@ fn make_buf(
     TermBuffer {
         parser,
         find_query: String::new(),
+        find_cursor: None,
         is_dark: false,
         output_highlight: OutputHighlightPreset::Log,
         custom_highlight_rules: Vec::new(),
@@ -262,4 +263,80 @@ fn compact_history_line_keeps_wrap_flag_and_plain_text() {
     assert_eq!(compact.plain(), "hello");
     assert!(compact.wrapped);
     assert!(compact.spans().is_empty());
+}
+
+// ---- Find navigation and tab-menu session logs (#535) ----------------------
+
+#[test]
+fn find_steps_through_scrollback_wrapping_both_ways() {
+    // 3-row screen, 5 history rows: matches at combined rows 0, 2 and 5.
+    let mut buffer = make_buf(3, 20, &["err 1", "ok", "Err 2", "ok", "ok"], &["ERR 3", "$ "], 0);
+    buffer.find_query = "err".into();
+    assert_eq!(buffer.find_all("err"), vec![(0, 0), (2, 0), (5, 0)]);
+
+    // A new query settles on the match already on screen.
+    assert_eq!(buffer.find_step("err", 0), (3, 3));
+    assert_eq!(buffer.view_offset, 0, "no scroll for a visible match");
+
+    // Next wraps to the oldest match and scrolls it into view.
+    assert_eq!(buffer.find_step("err", 1), (1, 3));
+    assert_eq!(buffer.vis_to_abs(0), 0);
+    let rect = buffer.find_current_rect().expect("current match on screen");
+    assert_eq!((rect.row, rect.col, rect.len), (0, 0, 3));
+
+    assert_eq!(buffer.find_step("err", 1), (2, 3));
+    assert_eq!(buffer.find_step("err", -1), (1, 3));
+    // Previous wraps to the newest match, back on the live rows.
+    assert_eq!(buffer.find_step("err", -1), (3, 3));
+    assert!((buffer.vis_to_abs(0)..buffer.vis_to_abs(2) + 1).contains(&5));
+}
+
+#[test]
+fn find_without_matches_reports_zero_and_clears_the_cursor() {
+    let mut buffer = make_buf(3, 20, &["a"], &["b"], 0);
+    buffer.find_cursor = Some((0, 0));
+    assert_eq!(buffer.find_step("zzz", 1), (0, 0));
+    assert!(buffer.find_cursor.is_none());
+    assert!(buffer.find_current_rect().is_none());
+}
+
+#[test]
+fn find_current_rect_counts_wide_characters_as_two_cells() {
+    let mut buffer = make_buf(3, 20, &["中文 err"], &["$ "], 0);
+    buffer.find_query = "err".into();
+    assert_eq!(buffer.find_step("err", 0), (1, 1));
+    let rect = buffer.find_current_rect().unwrap();
+    assert_eq!((rect.col, rect.len), (5, 3));
+}
+
+#[test]
+fn tab_menu_session_log_starts_and_stops_independently_of_the_setting() {
+    let dir = std::env::temp_dir().join(format!("ms-tablog-{}", uuid::Uuid::new_v4()));
+    let path = dir.join("picked.log");
+    let mut buffer = make_buf(3, 20, &[], &["Router> "], 0);
+    buffer.session_log_spec = Some(crate::terminal::SessionLogSpec {
+        name: "core switch".into(),
+        target: "serial COM3 @9600".into(),
+        mode: crate::config::SessionLogMode::Default,
+    });
+    let name = buffer.default_session_log_file_name().unwrap();
+    assert!(name.starts_with("core switch_") && name.ends_with(".log"), "{name}");
+
+    buffer.start_session_log_at(&path).unwrap();
+    assert_eq!(buffer.session_log_path().as_deref(), Some(path.as_path()));
+    // Turning the global setting off must not stop a manual recording.
+    buffer.apply_session_log(false, &dir).unwrap();
+    assert!(buffer.session_log.is_some());
+    let _ = buffer.ingest(b"show version\r\n");
+
+    assert_eq!(buffer.stop_session_log().as_deref(), Some(path.as_path()));
+    // Nor may turning it on restart a recording the user stopped.
+    buffer.apply_session_log(true, &dir).unwrap();
+    assert!(buffer.session_log.is_none());
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("core switch (serial COM3 @9600)"));
+    assert!(text.contains("show version"));
+    assert!(text.contains("session log closed"));
+    let _ = std::fs::remove_dir_all(dir);
 }

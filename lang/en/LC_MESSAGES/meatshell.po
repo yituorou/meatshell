@@ -849,3 +849,12 @@ msgstr "Do not put passwords or tokens in advanced arguments. They are stored an
 
 msgid "Delete checked items"
 msgstr "Delete checked items"
+
+msgid "No results"
+msgstr "No results"
+
+msgid "Stop session log"
+msgstr "Stop session log"
+
+msgid "Start session log..."
+msgstr "Start session log..."
