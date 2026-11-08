@@ -13,6 +13,7 @@
 
 use super::*;
 
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 /// A local listing can be huge (`C:\Windows\WinSxS` has 100k+ entries) and the
@@ -80,7 +81,12 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Resolve what the user typed (or `..`, `~`) against the pane's current folder.
-pub(super) fn resolve_path(current: &str, input: &str) -> Result<PathBuf, String> {
+///
+/// Pure path arithmetic: this never touches the filesystem. The listing thread
+/// reports "no such folder" / "not a folder" instead, because probing the path
+/// here ran on the UI thread and a dead mapped drive or sleeping NAS could
+/// freeze the whole window while `std::fs::metadata` waited for a timeout.
+pub(super) fn resolve_path(current: &str, input: &str) -> PathBuf {
     let trimmed = input.trim();
     let target = if trimmed.is_empty() || trimmed == "~" {
         home_dir()
@@ -99,22 +105,7 @@ pub(super) fn resolve_path(current: &str, input: &str) -> Result<PathBuf, String
             Path::new(current).join(typed)
         }
     };
-    let resolved = normalize(&target);
-    let meta = std::fs::metadata(&resolved).map_err(|e| {
-        format!(
-            "{} {}: {e}",
-            t("无法访问", "Cannot open"),
-            display_path(&resolved)
-        )
-    })?;
-    if !meta.is_dir() {
-        return Err(format!(
-            "{}: {}",
-            t("不是文件夹", "Not a folder"),
-            display_path(&resolved)
-        ));
-    }
-    Ok(resolved)
+    normalize(&target)
 }
 
 /// `C:` / `D:` without a separator are drive roots, not relative names.
@@ -363,19 +354,12 @@ pub(super) fn load_dir_or_fallback(
 }
 
 /// Navigate the local pane: `..`, `~`, an absolute path, or a folder name.
+///
+/// Resolution is pure; the folder is read (and any "not found / not a folder"
+/// error reported) by the listing thread.
 pub(super) fn navigate(window: &AppWindow, tab_id: &str, input: &str) {
     let current = current_path(window, tab_id);
-    match resolve_path(&current, input) {
-        Ok(dir) => load_dir(window, tab_id, dir),
-        Err(message) => {
-            let terminals = window.get_terminals();
-            if let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() {
-                update_terminal_row(model, tab_id, |row| {
-                    row.sftp_local_status = message.into();
-                });
-            }
-        }
-    }
+    load_dir(window, tab_id, resolve_path(&current, input));
 }
 
 /// Go to the parent folder (no-op at a drive root).
@@ -640,17 +624,82 @@ pub(super) fn copy_into(window: &AppWindow, tab_id: &str, dir: PathBuf, source: 
     });
 }
 
-/// Recursively copy a file or a whole folder (symlinks are followed, like a
-/// normal file-manager copy).
+/// How deep a folder copy may descend. A symbolic-link or junction loop that
+/// `canonicalize` cannot collapse would otherwise recurse until the stack (or
+/// the disk) gives out.
+const MAX_COPY_DEPTH: u32 = 32;
+
+/// Recursively copy a file or a whole folder, like a file manager's copy.
+///
+/// Symlinks are followed (a linked folder is copied by content), but a physical
+/// folder that was already copied is skipped, so `C:\a\loop -> C:\a` cannot
+/// recurse forever. Copying a folder into its own subtree is refused up front:
+/// the new folder would appear inside the tree being walked and grow without
+/// end.
 fn copy_recursive(source: &Path, target: &Path) -> Result<(), String> {
     let meta = std::fs::metadata(source).map_err(|e| format!("{}: {e}", display_path(source)))?;
+    if meta.is_dir() && target_lies_inside(source, target) {
+        return Err(t(
+            "不能把文件夹复制到它自己的子目录里",
+            "Cannot copy a folder into its own subfolder",
+        )
+        .to_string());
+    }
+    let mut visited = HashSet::new();
+    copy_tree(source, target, 0, &mut visited)
+}
+
+/// True when the folder `target` would end up inside `source` (lexically or
+/// through links). `target` need not exist yet: its parent is resolved.
+fn target_lies_inside(source: &Path, target: &Path) -> bool {
+    let Ok(source_canon) = std::fs::canonicalize(source) else {
+        // Unresolvable source (already an error elsewhere): fall back to the
+        // lexical check so an obvious `a` → `a/b` still gets caught.
+        return target.starts_with(source);
+    };
+    let probe = target.parent().unwrap_or(target);
+    let Ok(probe) = std::fs::canonicalize(probe) else {
+        return target.starts_with(&source_canon);
+    };
+    probe.starts_with(&source_canon)
+}
+
+fn copy_tree(
+    source: &Path,
+    target: &Path,
+    depth: u32,
+    visited: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(format!(
+            "{} ({})",
+            t(
+                "目录层级过深，可能遇到符号链接环",
+                "Folder nesting too deep — possible symlink loop"
+            ),
+            display_path(source)
+        ));
+    }
+    let meta = std::fs::metadata(source).map_err(|e| format!("{}: {e}", display_path(source)))?;
     if meta.is_dir() {
+        // A link/junction that leads back into a folder we already copied is
+        // skipped instead of duplicating its contents (or looping).
+        if let Ok(identity) = std::fs::canonicalize(source) {
+            if !visited.insert(identity) {
+                return Ok(());
+            }
+        }
         std::fs::create_dir_all(target).map_err(|e| format!("{}: {e}", display_path(target)))?;
         let entries =
             std::fs::read_dir(source).map_err(|e| format!("{}: {e}", display_path(source)))?;
         for entry in entries {
             let entry = entry.map_err(|e| format!("{}: {e}", display_path(source)))?;
-            copy_recursive(&entry.path(), &target.join(entry.file_name()))?;
+            copy_tree(
+                &entry.path(),
+                &target.join(entry.file_name()),
+                depth + 1,
+                visited,
+            )?;
         }
         return Ok(());
     }

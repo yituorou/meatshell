@@ -5,8 +5,13 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+
 - **双栏会记住上次的状态、本机目录和分隔比例，本机侧新增“位置”下拉（#532）。** 上次开着双栏，下次打开就还是双栏；左侧回到上次所在的文件夹（U 盘拔掉或网络盘不可用时自动回到主目录并提示），拖动过的分隔条比例也一并记住。左侧路径栏原来的“主目录”按钮换成“位置”下拉：主目录 / 桌面 / 下载 / 文档，以及本机的各个盘符（带卷标），点一下即可跳转。盘符枚举在后台线程完成，断线的网络驱动器不会卡住界面。
 - **The split view remembers its state, its local folder and the divider share, and the local side has a places menu (#532).** If the split view was open, it opens that way next time; the left pane returns to the folder it was showing (a removed USB stick or an unmounted network drive falls back to the home folder with a note), and the divider's share is remembered too. The local path bar's home button became a places menu: Home, Desktop, Downloads, Documents, and every drive on this machine (with its volume label), one click each. Drives are enumerated off the UI thread, so a dead network drive cannot stall the window.
+
+- **修复双栏本地面板可能冻结窗口、以及复制含环目录会无限递归的问题（#520 后续）。** 本地路径解析不再在界面线程访问文件系统：输入指向已断开的网络盘或休眠 NAS 的路径时窗口不再卡住，找不到/不是文件夹的错误改由后台列目录线程报告。从资源管理器拖入的文件夹复制现在会跳过已复制过的物理目录（符号链接或 Windows 联接点成环时不再无限递归），拒绝把文件夹复制到它自己的子目录里，并有 32 层深度上限兜底。
+- **Fix the local pane freezing the window and copying link loops forever (follow-up to #520).** Resolving a typed local path no longer touches the filesystem on the UI thread, so a mapped drive that has gone away or a sleeping NAS cannot hang the window; the background listing thread reports "no such folder / not a folder" instead. Folder copies from the file manager now skip physical folders they have already copied (a symlink or Windows junction loop can no longer recurse), refuse to copy a folder into its own subfolder, and stop at a 32-level depth cap as a backstop.
+
 
 ## [0.8.1] - 2026-10-30
 
