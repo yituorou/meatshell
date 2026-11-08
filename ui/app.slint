@@ -1432,6 +1432,9 @@ export component AppWindow inherits Window {
     callback sftp-local-toggle-hidden(string /* tab-id */);
     callback sftp-local-sort(string /* tab-id */, string /* column */);
     callback sftp-local-set-filter(string /* tab-id */, string /* text */);
+    callback sftp-local-remove-recent(string /* tab-id */, string /* path */);
+    callback sftp-local-move-bookmark(string /* tab-id */, string /* path */, int /* delta */);
+    callback sftp-local-reveal(string /* tab-id */);
 
     // Visual chmod dialog (#84). Rust decomposes the current mode into nine
     // bools when opening and recomposes on apply (Slint has no bitwise ops).
@@ -2336,6 +2339,15 @@ export component AppWindow inherits Window {
                         }
                         sftp-local-set-filter(text) => {
                             root.sftp-local-set-filter(term.id, text);
+                        }
+                        sftp-local-remove-recent(path) => {
+                            root.sftp-local-remove-recent(term.id, path);
+                        }
+                        sftp-local-move-bookmark(path, delta) => {
+                            root.sftp-local-move-bookmark(term.id, path, delta);
+                        }
+                        sftp-local-reveal() => {
+                            root.sftp-local-reveal(term.id);
                         }
                         persist-sftp-split(v) => { root.persist-sftp-split(v); }
                         persist-sftp-local-split(v) => { root.persist-sftp-local-split(v); }

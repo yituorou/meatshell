@@ -92,10 +92,14 @@ component SftpPlaceRow inherits Rectangle {
     in property <string> icon;
     in property <bool> current;      // the folder the panel is showing
     in property <bool> removable;
+    // Reorderable (bookmarks): hover shows ↑ / ↓ next to the remove button.
+    in property <bool> movable: false;
     // Optional friendly name; falls back to the path when empty (remote rows).
     in property <string> label: "";
     callback go();
     callback remove();
+    callback move-up();
+    callback move-down();
     height: 26px;
     border-radius: Theme.radius-sm;
     background: row-ta.has-hover ? Theme.bg-hover : transparent;
@@ -122,6 +126,38 @@ component SftpPlaceRow inherits Rectangle {
             font-size: Theme.fs-sm;
             overflow: elide;
             vertical-alignment: center;
+        }
+        if root.movable && row-ta.has-hover : Rectangle {
+            width: 18px;
+            border-radius: Theme.radius-sm;
+            background: up-ta.has-hover ? Theme.bg-active : transparent;
+            up-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.move-up(); }
+            }
+            Text {
+                text: "↑";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        if root.movable && row-ta.has-hover : Rectangle {
+            width: 18px;
+            border-radius: Theme.radius-sm;
+            background: down-ta.has-hover ? Theme.bg-active : transparent;
+            down-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.move-down(); }
+            }
+            Text {
+                text: "↓";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
         if root.removable && row-ta.has-hover : Rectangle {
             width: 20px;
@@ -273,7 +309,10 @@ component LocalPlacesButton inherits Rectangle {
     callback opened();
     callback navigate(string);
     callback remove-bookmark(string);
+    callback remove-recent(string);
+    callback move-bookmark(string, int);
     callback clear-recent();
+    callback reveal();
     // Section headers are 22px, rows 26px + 1px spacing; 8px between groups.
     property <length> rows-h:
         22px + max(1, root.bookmarks.length) * 27px
@@ -282,6 +321,7 @@ component LocalPlacesButton inherits Rectangle {
         + 22px + max(1, root.recent.length) * 27px
         + (root.recent.length == 0 ? 26px : 0px)
         + (root.recent.length > 0 ? 27px : 0px)
+        + 27px
         + 8px
         + (root.quick-places.length + root.drive-places.length) * 27px
         + (root.quick-places.length > 0 && root.drive-places.length > 0 ? 8px : 0px);
@@ -343,8 +383,11 @@ component LocalPlacesButton inherits Rectangle {
                         icon: "\u{E838}"; // star
                         current: b == root.current-path;
                         removable: true;
+                        movable: true;
                         go => { root.navigate(b); }
                         remove => { root.remove-bookmark(b); }
+                        move-up => { root.move-bookmark(b, -1); }
+                        move-down => { root.move-bookmark(b, 1); }
                     }
                     Rectangle { height: 8px; }
                     Text {
@@ -365,12 +408,19 @@ component LocalPlacesButton inherits Rectangle {
                         path: r;
                         icon: "\u{E889}"; // history
                         current: r == root.current-path;
+                        removable: true;
                         go => { root.navigate(r); }
+                        remove => { root.remove-recent(r); }
                     }
                     if root.recent.length > 0 : SftpMenuItem {
                         label: @tr("Clear recent");
                         icon: "\u{E0B8}"; // clear_all
                         clicked => { root.clear-recent(); }
+                    }
+                    SftpMenuItem {
+                        label: @tr("Open in file manager");
+                        icon: "\u{E2C7}"; // folder
+                        clicked => { root.reveal(); }
                     }
                     Rectangle { height: 8px; }
                     for place in root.quick-places : SftpPlaceRow {
@@ -431,10 +481,13 @@ component LocalPane inherits Rectangle {
     callback places-refresh();      // re-read drives / user folders
     callback toggle-bookmark();
     callback remove-bookmark(string);
+    callback remove-recent(string);
+    callback move-bookmark(string, int);
     callback clear-recent();
     callback toggle-hidden();
     callback sort(string);          // column clicked
     callback set-filter(string);
+    callback reveal();
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
@@ -541,7 +594,10 @@ component LocalPane inherits Rectangle {
                     opened => { root.places-refresh(); }
                     navigate(path) => { root.navigate(path); }
                     remove-bookmark(path) => { root.remove-bookmark(path); }
+                    remove-recent(path) => { root.remove-recent(path); }
+                    move-bookmark(path, delta) => { root.move-bookmark(path, delta); }
                     clear-recent() => { root.clear-recent(); }
+                    reveal() => { root.reveal(); }
                 }
                 Rectangle {
                     width: 22px; height: 22px;
@@ -1175,6 +1231,9 @@ export component SftpPanel inherits Rectangle {
     callback local-toggle-hidden();
     callback local-sort(string /* column */);
     callback local-set-filter(string /* text */);
+    callback local-remove-recent(string /* path */);
+    callback local-move-bookmark(string /* path */, int /* -1 up, +1 down */);
+    callback local-reveal();
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
     callback local-select-range(int /* from */, int /* to */);
@@ -1904,6 +1963,9 @@ export component SftpPanel inherits Rectangle {
                 toggle-hidden()       => { root.local-toggle-hidden(); }
                 sort(column)          => { root.local-sort(column); }
                 set-filter(text)      => { root.local-set-filter(text); }
+                remove-recent(path)   => { root.local-remove-recent(path); }
+                move-bookmark(path, delta) => { root.local-move-bookmark(path, delta); }
+                reveal()              => { root.local-reveal(); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
                 select-range(a, b)    => { root.local-select-range(a, b); }
