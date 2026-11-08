@@ -95,11 +95,11 @@ jobs:
             target: aarch64-unknown-linux-gnu  # builds the Linux ARM64 .tar.gz (#82)
             name: linux-aarch64
             bin: meatshell
-          - os: macos-14               # Apple Silicon
+          - os: macos-15               # Apple Silicon (macos-14 retired 2026-11-02)
             target: aarch64-apple-darwin
             name: macos-aarch64
             bin: meatshell
-          - os: macos-14               # Cross-compile Intel Mac on Apple Silicon
+          - os: macos-15               # Cross-compile Intel Mac on Apple Silicon
             target: x86_64-apple-darwin
             name: macos-x86_64
             bin: meatshell
