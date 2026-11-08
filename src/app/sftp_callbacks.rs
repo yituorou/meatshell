@@ -336,6 +336,29 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         });
     }
     {
+        // Local bookmarks / recent folders (#532): machine-wide, mirrored into
+        // every tab so the star and the menu stay in sync.
+        let weak = window.as_weak();
+        window.on_sftp_local_toggle_bookmark(move |tab_id: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            toggle_bookmark(&w, tab_id.as_str());
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_remove_bookmark(move |_tab: SharedString, path: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            remove_bookmark(&w, path.as_str());
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_clear_recent(move |_tab: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            clear_recent(&w);
+        });
+    }
+    {
         let sftp_handles = sftp_handles.clone();
         let weak = window.as_weak();
         window.on_sftp_download_to_local(
