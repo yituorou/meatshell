@@ -418,6 +418,11 @@ component LocalPane inherits Rectangle {
     in property <[string]> bookmarks;
     in property <[string]> recent;
     in property <bool> bookmarked: false;
+    // List options (#532 follow-up): hidden files, sort column, filter text.
+    in property <bool> show-hidden: false;
+    in property <string> sort-key;
+    in property <int> sort-dir: 0;
+    in property <string> filter: "";
 
     callback navigate(string);      // "..", "~" or a typed path
     callback up();
@@ -427,6 +432,9 @@ component LocalPane inherits Rectangle {
     callback toggle-bookmark();
     callback remove-bookmark(string);
     callback clear-recent();
+    callback toggle-hidden();
+    callback sort(string);          // column clicked
+    callback set-filter(string);
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
@@ -573,10 +581,66 @@ component LocalPane inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                // Show hidden / system entries (eye) and the filter box.
+                if root.width > 260px : Rectangle {
+                    width: 22px; height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: hid-ta.has-hover ? Theme.bg-hover : transparent;
+                    hid-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.toggle-hidden(); }
+                    }
+                    Text {
+                        text: root.show-hidden ? "\u{E8F4}" : "\u{E8F5}"; // visibility / off
+                        font-family: "Material Icons";
+                        color: root.show-hidden ? Theme.accent : Theme.text-secondary;
+                        font-size: Theme.fs-sm;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
             }
         }
         Rectangle { height: 1px; background: Theme.border-subtle; }
 
+        // --- Filter row -----------------------------------------------------
+        if root.width > 320px : Rectangle {
+            height: 26px;
+            background: Theme.bg-panel-alt;
+            HorizontalLayout {
+                padding-left: 6px; padding-right: 6px; spacing: 4px;
+                Text {
+                    width: 14px;
+                    text: "\u{E8B6}";
+                    font-family: "Material Icons";
+                    color: Theme.text-muted; font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 20px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg-root;
+                    border-width: 1px;
+                    border-color: filter-input.has-focus ? Theme.accent : Theme.border-subtle;
+                    filter-input := TextInput {
+                        x: 6px; width: parent.width - 12px; height: parent.height;
+                        text: root.filter;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                        single-line: true;
+                        edited => { root.set-filter(filter-input.text); }
+                    }
+                    if filter-input.text == "" : Text {
+                        x: 6px; height: parent.height;
+                        text: @tr("Filter names");
+                        color: Theme.text-muted; font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
         // --- Column headers -------------------------------------------------
         Rectangle {
             height: 20px;
@@ -584,21 +648,47 @@ component LocalPane inherits Rectangle {
             HorizontalLayout {
                 padding-left: 8px; padding-right: 8px; spacing: 8px;
                 Rectangle { width: 16px; }
-                Text {
-                    text: @tr("Name");
-                    color: Theme.text-muted; font-size: Theme.fs-xs;
+                Rectangle {
                     horizontal-stretch: 1; min-width: 90px;
-                    horizontal-alignment: left; vertical-alignment: center;
+                    background: name-ta.has-hover ? Theme.bg-hover : transparent;
+                    name-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.sort("name"); }
+                    }
+                    Text {
+                        text: @tr("Name") + (root.sort-key == "name" ? (root.sort-dir > 0 ? " ↑" : " ↓") : "");
+                        color: root.sort-key == "name" ? Theme.accent : Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: left; vertical-alignment: center;
+                    }
                 }
-                if root.show-size : Text {
-                    text: @tr("Size");
-                    color: Theme.text-muted; font-size: Theme.fs-xs;
-                    width: 64px; horizontal-alignment: right; vertical-alignment: center;
+                if root.show-size : Rectangle {
+                    width: 64px;
+                    background: size-ta.has-hover ? Theme.bg-hover : transparent;
+                    size-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.sort("size"); }
+                    }
+                    Text {
+                        text: @tr("Size") + (root.sort-key == "size" ? (root.sort-dir > 0 ? " ↑" : " ↓") : "");
+                        color: root.sort-key == "size" ? Theme.accent : Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: right; vertical-alignment: center;
+                    }
                 }
-                if root.show-modified : Text {
-                    text: @tr("Modified");
-                    color: Theme.text-muted; font-size: Theme.fs-xs;
-                    width: 104px; horizontal-alignment: right; vertical-alignment: center;
+                if root.show-modified : Rectangle {
+                    width: 104px;
+                    background: mod-ta.has-hover ? Theme.bg-hover : transparent;
+                    mod-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.sort("modified"); }
+                    }
+                    Text {
+                        text: @tr("Modified") + (root.sort-key == "modified" ? (root.sort-dir > 0 ? " ↑" : " ↓") : "");
+                        color: root.sort-key == "modified" ? Theme.accent : Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        horizontal-alignment: right; vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -902,6 +992,11 @@ export component SftpPanel inherits Rectangle {
     in property <bool> local-loading: false;
     in property <int> local-selected-count: 0;
     in property <[SftpLocalPlace]> local-quick-places;
+    // Local list options (#532 follow-up).
+    in property <bool> local-show-hidden: false;
+    in property <string> local-sort-key;
+    in property <int> local-sort-dir: 0;
+    in property <string> local-filter;
     in property <[SftpLocalPlace]> local-drive-places;
     in property <[string]> local-bookmarks;
     in property <[string]> local-recent;
@@ -1077,6 +1172,9 @@ export component SftpPanel inherits Rectangle {
     callback local-toggle-bookmark();
     callback local-remove-bookmark(string /* path */);
     callback local-clear-recent();
+    callback local-toggle-hidden();
+    callback local-sort(string /* column */);
+    callback local-set-filter(string /* text */);
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
     callback local-select-range(int /* from */, int /* to */);
@@ -1791,6 +1889,10 @@ export component SftpPanel inherits Rectangle {
                 bookmarks: root.local-bookmarks;
                 recent: root.local-recent;
                 bookmarked: root.local-bookmarked;
+                show-hidden: root.local-show-hidden;
+                sort-key: root.local-sort-key;
+                sort-dir: root.local-sort-dir;
+                filter: root.local-filter;
                 navigate(path)        => { root.local-navigate(path); }
                 up()                  => { root.local-up(); }
                 home()                => { root.local-home(); }
@@ -1799,6 +1901,9 @@ export component SftpPanel inherits Rectangle {
                 toggle-bookmark()     => { root.local-toggle-bookmark(); }
                 remove-bookmark(path) => { root.local-remove-bookmark(path); }
                 clear-recent()        => { root.local-clear-recent(); }
+                toggle-hidden()       => { root.local-toggle-hidden(); }
+                sort(column)          => { root.local-sort(column); }
+                set-filter(text)      => { root.local-set-filter(text); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
                 select-range(a, b)    => { root.local-select-range(a, b); }

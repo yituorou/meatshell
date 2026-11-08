@@ -359,6 +359,28 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         });
     }
     {
+        // Local list options (#532 follow-up): hidden files, sort column, filter.
+        let weak = window.as_weak();
+        window.on_sftp_local_toggle_hidden(move |tab_id: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            toggle_hidden(&w, tab_id.as_str());
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_sort(move |tab_id: SharedString, key: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            sort_by(&w, tab_id.as_str(), key.as_str());
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_set_filter(move |tab_id: SharedString, text: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            set_filter(&w, tab_id.as_str(), text.as_str());
+        });
+    }
+    {
         let sftp_handles = sftp_handles.clone();
         let weak = window.as_weak();
         window.on_sftp_download_to_local(

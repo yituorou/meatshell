@@ -377,6 +377,10 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_sftp_split_enabled(s.sftp_split_enabled());
         window.set_sftp_local_split(s.sftp_local_split());
         window.set_sftp_last_local_dir(s.sftp_local_dir().into());
+        // Local list options (#532 follow-up).
+        window.set_sftp_local_show_hidden(s.sftp_local_show_hidden());
+        window.set_sftp_local_sort_key(s.sftp_local_sort_key().into());
+        window.set_sftp_local_sort_dir(s.sftp_local_sort_dir());
         let places = s.local_places();
         window.set_local_bookmarks(super::sftp_places::string_model(&places.bookmarks));
         window.set_local_recent(super::sftp_places::string_model(&places.recent));

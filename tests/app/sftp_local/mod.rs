@@ -53,13 +53,13 @@ fn resolving_never_touches_the_filesystem() {
     let base = temp_dir("pure-resolve");
     let missing = resolve_path(&display_path(&base), "does-not-exist");
     assert_eq!(missing, base.join("does-not-exist"));
-    assert!(list_dir(&missing).is_err());
+    assert!(list_dir(&missing, &ListOptions::default()).is_err());
 
     // A file path resolves too; listing it is what fails.
     let file = base.join("note.txt");
     std::fs::write(&file, b"hi").unwrap();
     assert_eq!(resolve_path(&display_path(&base), "note.txt"), file);
-    assert!(list_dir(&file).is_err());
+    assert!(list_dir(&file, &ListOptions::default()).is_err());
 
     std::fs::remove_dir_all(&base).unwrap();
 }
@@ -71,7 +71,7 @@ fn listing_puts_folders_first_and_describes_entries() {
     std::fs::write(base.join("b.txt"), b"12345").unwrap();
     std::fs::write(base.join("a.txt"), b"123").unwrap();
 
-    let listing = list_dir(&base).unwrap();
+    let listing = list_dir(&base, &ListOptions::default()).unwrap();
     assert!(!listing.truncated);
     assert_eq!(listing.path, display_path(&base));
     let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
@@ -244,6 +244,123 @@ fn very_deep_trees_stop_at_the_depth_limit() {
 fn entry_cap_is_documented_by_a_constant() {
     // Guards against a silent change making listings unbounded again.
     assert!(MAX_LOCAL_ENTRIES >= 1_000);
+}
+
+#[test]
+fn filter_matches_names_case_insensitively() {
+    let base = temp_dir("filter");
+    std::fs::create_dir_all(base.join("Src")).unwrap();
+    std::fs::write(base.join("notes.txt"), b"a").unwrap();
+    std::fs::write(base.join("build.log"), b"b").unwrap();
+
+    let listing = list_dir(&base, &ListOptions::default()).unwrap();
+    let names = |needle: &str| -> Vec<String> {
+        filter_entries(&listing.entries, needle)
+            .into_iter()
+            .map(|entry| entry.name.to_string())
+            .collect()
+    };
+    // Empty or whitespace-only filters keep everything.
+    assert_eq!(names("").len(), 3);
+    assert_eq!(names("   ").len(), 3);
+    // Case-insensitive substring, and folders are matched too.
+    assert_eq!(names("SRC"), ["Src".to_string()]);
+    assert_eq!(names(".TXT"), ["notes.txt".to_string()]);
+    assert!(names("nope").is_empty());
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn hidden_entries_are_listed_only_when_asked() {
+    let base = temp_dir("hidden");
+    std::fs::write(base.join("visible.txt"), b"a").unwrap();
+    let hidden = base.join("secret.txt");
+    std::fs::write(&hidden, b"a").unwrap();
+    // `attrib +H` is what Explorer's "hidden" checkbox sets; no extra crate.
+    let marked = std::process::Command::new("attrib")
+        .arg("+H")
+        .arg(&hidden)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !marked {
+        eprintln!("skipping: cannot set the hidden attribute here");
+        std::fs::remove_dir_all(&base).ok();
+        return;
+    }
+
+    let names = |show_hidden: bool| -> Vec<String> {
+        list_dir(
+            &base,
+            &ListOptions {
+                show_hidden,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.name.to_string())
+        .collect()
+    };
+    assert_eq!(names(false), ["visible.txt".to_string()]);
+    assert_eq!(
+        names(true),
+        ["secret.txt".to_string(), "visible.txt".to_string()]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn dotfiles_are_listed_only_when_asked() {
+    let base = temp_dir("dotfiles");
+    std::fs::write(base.join("visible.txt"), b"a").unwrap();
+    std::fs::write(base.join(".hidden"), b"a").unwrap();
+
+    let plain = list_dir(&base, &ListOptions::default()).unwrap();
+    assert_eq!(plain.entries.len(), 1);
+    let with_hidden = list_dir(
+        &base,
+        &ListOptions {
+            show_hidden: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(with_hidden.entries.len(), 2);
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn listing_honours_the_sort_column() {
+    let base = temp_dir("sort");
+    std::fs::write(base.join("small.txt"), b"1").unwrap();
+    std::fs::write(base.join("large.txt"), b"123456").unwrap();
+
+    let opts = |key: &str, dir: i32| ListOptions {
+        sort_key: key.to_string(),
+        sort_dir: dir,
+        ..Default::default()
+    };
+    let names = |options: &ListOptions| -> Vec<String> {
+        list_dir(&base, options)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.name.to_string())
+            .collect()
+    };
+    // Default: natural name order.
+    assert_eq!(names(&ListOptions::default()), ["large.txt", "small.txt"]);
+    assert_eq!(names(&opts("size", 1)), ["small.txt", "large.txt"]);
+    assert_eq!(names(&opts("size", -1)), ["large.txt", "small.txt"]);
+
+    std::fs::remove_dir_all(&base).unwrap();
 }
 
 #[test]
