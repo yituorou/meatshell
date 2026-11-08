@@ -269,6 +269,10 @@ pub struct ConfigFile {
     /// Local pane's share of the SFTP panel (0.0 = even split, else 0.2–0.8).
     #[serde(default)]
     pub sftp_local_split: f32,
+    /// Local folder bookmarks + recent folders for the split view (#532).
+    /// Machine-wide: the same folders exist for every session.
+    #[serde(default, skip_serializing_if = "super::LocalPlaces::is_empty")]
+    pub local_places: super::LocalPlaces,
     /// Last window size in logical px (0 = unset → use the built-in default).
     /// Lets users keep their preferred window size across restarts.
     #[serde(default)]
