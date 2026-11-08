@@ -1419,6 +1419,9 @@ export component AppWindow inherits Window {
     callback clear-terminal(string /* tab-id */);
     // Recompute search highlights for a session's visible screen.
     callback find-query-changed(string /* tab-id */, string /* query */);
+    // Pointer over a tab's terminal output, from Slint's own hit testing; gates
+    // the macOS wheel fallback (#540).
+    callback terminal-output-hover(string /* tab-id */, bool /* hovered */);
     // Step through find matches across scrollback (#535); dir 0/1/-1.
     callback find-step(string /* tab-id */, string /* query */, int /* dir */) -> FindStatus;
     // Scroll a session's scrollback history by N lines (+ = up/older).
@@ -2421,6 +2424,7 @@ export component AppWindow inherits Window {
                         copy-terminal-text() => { root.copy-terminal-text(term.id); }
                         clear-terminal() => { root.clear-terminal(term.id); }
                         find-query-changed(q) => { root.find-query-changed(term.id, q); }
+                        output-hover(h) => { root.terminal-output-hover(term.id, h); }
                         find-step(q, d) => { return root.find-step(term.id, q, d); }
                         terminal-scroll(d) => { root.terminal-scroll(term.id, d); }
                         terminal-wheel(d, c, r) => { root.terminal-wheel(term.id, d, c, r); }

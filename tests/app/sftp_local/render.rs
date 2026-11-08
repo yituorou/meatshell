@@ -540,6 +540,53 @@ fn dragging_a_checked_row_drags_the_whole_checked_set() {
 }
 
 // ---------------------------------------------------------------------------
+// Wheel scrolling in the remote file list (#540)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wheel_over_file_rows_scrolls_the_list() {
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(false, 700.0, 0.0, 1400, 900, "right");
+        // Enough folders to overflow the list (folder icons are accent-coloured).
+        {
+            let terminals = ui.get_terminals();
+            let model = terminals.as_any().downcast_ref::<VecModel<TerminalState>>().unwrap();
+            let mut row = model.row_data(0).unwrap();
+            let entries: Vec<SftpEntry> =
+                (0..80).map(|i| self::row(&format!("dir{i:02}"), true, "", "2026-11-01 10:00")).collect();
+            row.sftp_entries = ModelRc::from(Rc::new(VecModel::from(entries)));
+            model.set_row_data(0, row);
+        }
+        // The file-name column's pixels: rows move in whole-row steps, so a
+        // scroll shows up as different names, not as a shifted first row.
+        let name_column = |window: &MinimalSoftwareWindow| -> Vec<(u8, u8, u8)> {
+            let frame = render_frame(window, 1400, 900);
+            (160..880)
+                .flat_map(|y| (745..800).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    let p = frame[y * 1400 + x];
+                    (p.r, p.g, p.b)
+                })
+                .collect()
+        };
+        let wheel = |x: f32, y: f32, dy: f32| {
+            window.dispatch_event(WindowEvent::PointerMoved { position: LogicalPosition::new(x, y) });
+            window.dispatch_event(WindowEvent::PointerScrolled {
+                position: LogicalPosition::new(x, y),
+                delta_x: 0.0,
+                delta_y: dy,
+            });
+        };
+        let top = name_column(&window);
+        // Over a row's file name, the list itself must scroll.
+        wheel(770.0, 400.0, -120.0);
+        assert!(name_column(&window) != top, "wheel over a file name did not scroll the list");
+    })
+    .join()
+    .unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // Tab menu: start / stop a session log (#535)
 // ---------------------------------------------------------------------------
 

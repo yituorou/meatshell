@@ -29,6 +29,62 @@ pub(super) fn macos_terminal_wheel_can_target_terminal(modal_open: bool) -> bool
     !modal_open
 }
 
+/// Which tab's terminal output the pointer is over, as Slint's own hit
+/// testing reports it (#540).
+///
+/// `terminal_wheel_hit` rebuilds the terminal's rectangle by mirroring the
+/// window layout; any mismatch let the macOS fallback claim wheel events over
+/// the neighbouring SFTP file list, so its file-name column would not scroll.
+/// The fallback now claims a wheel only while this says the active tab's
+/// output is under the pointer; the mirrored geometry merely maps the pointer
+/// to a terminal cell.
+#[derive(Default)]
+pub(super) struct HoveredTerminal(RefCell<Option<String>>);
+
+impl HoveredTerminal {
+    /// Record a hover change. Enter/leave between two tabs can arrive in either
+    /// order, so a leave only clears the tab that left.
+    pub(super) fn set(&self, tab_id: &str, hovered: bool) {
+        let mut current = self.0.borrow_mut();
+        if hovered {
+            *current = Some(tab_id.to_string());
+        } else if current.as_deref() == Some(tab_id) {
+            *current = None;
+        }
+    }
+
+    /// Whether the pointer is over `active_tab`'s terminal output.
+    pub(super) fn is(&self, active_tab: &str) -> bool {
+        self.0.borrow().as_deref() == Some(active_tab)
+    }
+}
+
+#[cfg(test)]
+mod hovered_terminal_tests {
+    use super::HoveredTerminal;
+
+    #[test]
+    fn only_the_hovered_active_terminal_may_claim_the_wheel() {
+        let hovered = HoveredTerminal::default();
+        assert!(!hovered.is("t1"), "nothing hovered yet: never claim");
+        hovered.set("t1", true);
+        assert!(hovered.is("t1"));
+        assert!(!hovered.is("t2"), "another pane's tab is not the active one");
+        // Pointer moved onto the SFTP file list next to the terminal.
+        hovered.set("t1", false);
+        assert!(!hovered.is("t1"));
+    }
+
+    #[test]
+    fn enter_before_leave_between_panes_keeps_the_new_tab() {
+        let hovered = HoveredTerminal::default();
+        hovered.set("t1", true);
+        hovered.set("t2", true); // entered t2 before t1's leave arrived
+        hovered.set("t1", false);
+        assert!(hovered.is("t2"));
+    }
+}
+
 pub(super) fn terminal_wheel_hit(
     win: &AppWindow,
     bufs: &TermBuffers,

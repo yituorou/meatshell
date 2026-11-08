@@ -476,6 +476,8 @@ export component TerminalView inherits Rectangle {
     callback copy-terminal-text();
     callback clear-terminal();              // wipe this session's screen buffer
     callback find-query-changed(string);    // recompute search highlights
+    // The pointer entered (true) or left (false) the terminal output (#540).
+    callback output-hover(bool);
     // Move to a match across scrollback + screen (#535): dir 0 = settle on a
     // match for a new query, 1 = next, -1 = previous (both wrap around).
     callback find-step(string /* query */, int /* dir */) -> FindStatus;
@@ -1045,6 +1047,11 @@ export component TerminalView inherits Rectangle {
                             width: parent.width;
                             height: parent.height;
                             mouse-cursor: text;
+                            // The macOS wheel fallback only claims the wheel
+                            // while Slint itself says the pointer is over the
+                            // terminal output, not over the SFTP panel or a
+                            // popup next to or above it (#540).
+                            changed has-hover => { root.output-hover(self.has-hover); }
                             pointer-event(ev) => {
                                 if (ev.kind == PointerEventKind.down) {
                                     ime-input.focus();

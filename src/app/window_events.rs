@@ -49,6 +49,13 @@ pub(super) fn install_window_event_hook(
         let ev_pending_window_size_restore = pending_window_size_restore.clone();
         let mut last_cursor_logical: Option<(f32, f32)> = None;
         let mut macos_wheel_accum = 0.0_f32;
+        let hovered_terminal = Rc::new(HoveredTerminal::default());
+        {
+            let hovered = hovered_terminal.clone();
+            window.on_terminal_output_hover(move |tab_id: SharedString, on: bool| {
+                hovered.set(tab_id.as_str(), on);
+            });
+        }
         // Track the inputs that make up WinActivity; recompute on each change.
         let mut focused = true;
         let mut minimized = false;
@@ -158,6 +165,13 @@ pub(super) fn install_window_event_hook(
                         if !macos_terminal_wheel_can_target_terminal(win.get_modal_open()) {
                             // Do not carry a partially accumulated modal gesture
                             // into the terminal after the modal closes.
+                            macos_wheel_accum = 0.0;
+                            return EventResult::Propagate;
+                        }
+                        // Only over the active tab's terminal output, by Slint's
+                        // own hit testing. Over the SFTP file list (or anything
+                        // else), let Slint scroll it natively (#540).
+                        if !hovered_terminal.is(win.get_active_tab_id().as_str()) {
                             macos_wheel_accum = 0.0;
                             return EventResult::Propagate;
                         }
