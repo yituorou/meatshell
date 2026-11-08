@@ -97,6 +97,111 @@ fn choose_batch_download_conflict(
     }
 }
 
+/// Names of the entries the tab's remote listing currently shows (the SFTP
+/// panel keeps them in `TerminalState`, so no extra round-trip is needed).
+fn remote_names(window: &AppWindow, tab_id: &str) -> Vec<String> {
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return Vec::new();
+    };
+    for index in 0..model.row_count() {
+        let Some(row) = model.row_data(index) else {
+            continue;
+        };
+        if row.id.as_str() != tab_id {
+            continue;
+        }
+        return (0..row.sftp_entries.row_count())
+            .filter_map(|i| row.sftp_entries.row_data(i))
+            .map(|entry| entry.name.to_string())
+            .collect();
+    }
+    Vec::new()
+}
+
+/// Top-level names of `paths` that the remote listing already has. Exact match:
+/// the server may be case-sensitive, and a wrong "no clash" here only means the
+/// overwrite happens without a prompt (it is still reported afterwards).
+fn conflicting_names(paths: &[std::path::PathBuf], existing: &[String]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for path in paths {
+        let Some(name) = path.file_name().map(|name| name.to_string_lossy().to_string()) else {
+            continue;
+        };
+        if existing.iter().any(|entry| entry == &name) && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Ask once for a whole upload batch that would land on existing names; the
+/// mirror image of [`choose_batch_download_conflict`]. `None` = cancelled.
+pub(super) fn resolve_upload_conflict(
+    window: &AppWindow,
+    tab_id: &str,
+    paths: &[std::path::PathBuf],
+) -> Option<UploadConflict> {
+    let clashes = conflicting_names(paths, &remote_names(window, tab_id));
+    if clashes.is_empty() {
+        return Some(UploadConflict::Replace);
+    }
+    choose_batch_upload_conflict(
+        DialogOwner::of(window.window()),
+        &clashes,
+        &active_sftp_path(window, tab_id),
+    )
+}
+
+/// The dialog itself: replace / keep both / cancel, once per batch.
+fn choose_batch_upload_conflict(
+    owner: DialogOwner,
+    clashes: &[String],
+    remote_dir: &str,
+) -> Option<UploadConflict> {
+    let replace = t("替换", "Replace");
+    let keep_both = t("保留两份", "Keep both");
+    let cancel = t("取消", "Cancel");
+    let mut shown: Vec<&str> = clashes.iter().take(3).map(|name| name.as_str()).collect();
+    if clashes.len() > shown.len() {
+        shown.push("…");
+    }
+    let result = owner
+        .message()
+        .set_title(t("目标文件夹已有同名项", "Name already exists"))
+        .set_description(format!(
+            "{remote_dir}\n{}\n{}",
+            format!(
+                "{} {}: {}",
+                clashes.len(),
+                t("项与目标文件夹里的名称重复", "items already exist in the target folder"),
+                shown.join("、")
+            ),
+            t(
+                "“替换”会覆盖同名文件（文件夹则合并）；“保留两份”会以“名称 (1)”上传。",
+                "\"Replace\" overwrites the existing files (folders are merged); \"Keep both\" uploads as \"name (1)\"."
+            )
+        ))
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+            replace.to_string(),
+            keep_both.to_string(),
+            cancel.to_string(),
+        ))
+        .show();
+    match result {
+        rfd::MessageDialogResult::Yes => Some(UploadConflict::Replace),
+        rfd::MessageDialogResult::No => Some(UploadConflict::KeepBoth),
+        rfd::MessageDialogResult::Custom(value) if value == replace => {
+            Some(UploadConflict::Replace)
+        }
+        rfd::MessageDialogResult::Custom(value) if value == keep_both => {
+            Some(UploadConflict::KeepBoth)
+        }
+        _ => None,
+    }
+}
+
 /// Copy local paths into the tab's current remote directory.
 fn upload_local_paths(
     window: &AppWindow,
@@ -111,12 +216,17 @@ fn upload_local_paths(
     if remote_dir.is_empty() {
         return;
     }
+    let locals: Vec<std::path::PathBuf> = paths.into_iter().map(std::path::PathBuf::from).collect();
+    let Some(conflict) = resolve_upload_conflict(window, tab_id, &locals) else {
+        set_sftp_status(window, tab_id, t("已取消上传", "Upload cancelled"));
+        return;
+    };
     if let Ok(handles) = sftp_handles.lock() {
         let Some(handle) = handles.get(tab_id) else {
             return;
         };
-        for path in paths {
-            handle.upload(std::path::PathBuf::from(path), remote_dir.clone());
+        for path in locals {
+            handle.upload(path, remote_dir.clone(), conflict);
         }
         window.set_download_open(true);
     }
@@ -548,6 +658,9 @@ pub(super) fn wire_sftp_callbacks(
                     .upgrade()
                     .map(|w| DialogOwner::of(w.window()))
                     .unwrap_or_default();
+                // The thread reports the picked paths back to the UI thread,
+                // where the overwrite question can read the remote listing.
+                let weak = weak.clone();
                 std::thread::spawn(move || {
                     // The remote SFTP upload handles a file or a whole directory;
                     // only the local picker differs (#85). Folder uploads one dir;
@@ -568,7 +681,22 @@ pub(super) fn wire_sftp_callbacks(
                     if locals.is_empty() {
                         return;
                     }
-                    queue_uploads(&sftp_handles, &tab_id, &remote_dir, &locals, &sync_targets);
+                    // The overwrite question needs the remote listing, which lives
+                    // on the UI thread; ask there before queueing the batch.
+                    let _ = weak.upgrade_in_event_loop(move |w| {
+                        let Some(conflict) = resolve_upload_conflict(&w, &tab_id, &locals) else {
+                            set_sftp_status(&w, &tab_id, t("已取消上传", "Upload cancelled"));
+                            return;
+                        };
+                        queue_uploads(
+                            &sftp_handles,
+                            &tab_id,
+                            &remote_dir,
+                            &locals,
+                            &sync_targets,
+                            conflict,
+                        );
+                    });
                 });
             },
         );
@@ -600,7 +728,18 @@ pub(super) fn wire_sftp_callbacks(
                 return;
             }
             let sync_targets = upload_sync_targets(&w, &sftp_handles, &tab_id);
-            queue_uploads(&sftp_handles, &tab_id, &remote_dir, &locals, &sync_targets);
+            let Some(conflict) = resolve_upload_conflict(&w, &tab_id, &locals) else {
+                set_sftp_status(&w, &tab_id, t("已取消上传", "Upload cancelled"));
+                return;
+            };
+            queue_uploads(
+                &sftp_handles,
+                &tab_id,
+                &remote_dir,
+                &locals,
+                &sync_targets,
+                conflict,
+            );
             w.set_download_open(true);
             set_sftp_status(
                 &w,
@@ -1207,19 +1346,20 @@ fn queue_uploads(
     remote_dir: &str,
     locals: &[std::path::PathBuf],
     sync_targets: &[(String, String)],
+    conflict: UploadConflict,
 ) {
     let Ok(handles) = sftp_handles.lock() else {
         return;
     };
     if let Some(h) = handles.get(tab_id) {
         for local in locals {
-            h.upload(local.clone(), remote_dir.to_string());
+            h.upload(local.clone(), remote_dir.to_string(), conflict);
         }
     }
     for (id, dir) in sync_targets {
         if let Some(h) = handles.get(id) {
             for local in locals {
-                h.upload(local.clone(), dir.clone());
+                h.upload(local.clone(), dir.clone(), conflict);
             }
         }
     }
@@ -1283,7 +1423,7 @@ fn set_sftp_status(w: &AppWindow, tab_id: &str, message: &str) {
 
 #[cfg(test)]
 mod paste_upload_tests {
-    use super::{upload_candidates, upload_summary_parts};
+    use super::{conflicting_names, upload_candidates, upload_summary_parts};
     use std::path::PathBuf;
 
     /// Real OS clipboard: copy two files as a file list (what Explorer /
@@ -1341,6 +1481,36 @@ mod paste_upload_tests {
                 PathBuf::from("c"),
             ]),
             Some(("app.jar".to_string(), 2))
+        );
+    }
+
+    #[test]
+    fn upload_clashes_only_match_existing_top_level_names() {
+        let existing = vec!["a.txt".to_string(), "docs".to_string()];
+        // A file or a folder with the same name both count.
+        assert_eq!(
+            conflicting_names(
+                &[PathBuf::from("/x/a.txt"), PathBuf::from("/x/docs")],
+                &existing
+            ),
+            ["a.txt".to_string(), "docs".to_string()]
+        );
+        // A single file picked from a subfolder still lands under its own name,
+        // so that is what the clash check compares.
+        assert_eq!(
+            conflicting_names(&[PathBuf::from("/x/nested/a.txt")], &existing),
+            ["a.txt".to_string()]
+        );
+        assert!(conflicting_names(&[PathBuf::from("/x/b.txt")], &existing).is_empty());
+        // The server may be case-sensitive, so the check stays exact.
+        assert!(conflicting_names(&[PathBuf::from("/x/A.TXT")], &existing).is_empty());
+        // The same name twice asks once.
+        assert_eq!(
+            conflicting_names(
+                &[PathBuf::from("/x/a.txt"), PathBuf::from("/y/a.txt")],
+                &existing
+            ),
+            ["a.txt".to_string()]
         );
     }
 }

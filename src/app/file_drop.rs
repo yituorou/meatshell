@@ -119,10 +119,16 @@ pub(super) fn handle_file_drop_at(
     } else {
         HashMap::new()
     };
+    // Ask once if the file name is already taken remotely (dropping a file onto
+    // the terminal used to overwrite silently). Done before taking the handles
+    // lock: the dialog blocks, and nothing else may wait on that mutex.
+    let Some(conflict) = resolve_upload_conflict(win, &active, std::slice::from_ref(&path)) else {
+        return;
+    };
     if let Ok(handles) = sftp_handles.lock() {
         if let Some(h) = handles.get(&active) {
             win.set_download_open(true);
-            h.upload(path.clone(), dir);
+            h.upload(path.clone(), dir, conflict);
         }
         if sync {
             for (id, h) in handles.iter() {
@@ -130,7 +136,7 @@ pub(super) fn handle_file_drop_at(
                     continue;
                 }
                 if let Some(d) = other_dirs.get(id).filter(|d| !d.is_empty()) {
-                    h.upload(path.clone(), d.clone());
+                    h.upload(path.clone(), d.clone(), conflict);
                 }
             }
         }

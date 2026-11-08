@@ -117,7 +117,9 @@ use crate::resource::system::{format_bytes_per_sec, format_mem};
 use crate::resource::{LocalSnap, NetHist, TabStatus, TabStatuses};
 use crate::resource::{SystemSampler, SystemSnapshot};
 use crate::session::{ConnectCtx, PendingCred, PendingHostKey, PendingMfa};
-use crate::sftp::{download_target_path, spawn_sftp, DownloadConflict, SftpHandles, SftpLastCwd};
+use crate::sftp::{
+    download_target_path, spawn_sftp, DownloadConflict, SftpHandles, SftpLastCwd, UploadConflict,
+};
 use crate::ssh::{
     format_mtime, format_size, spawn_session, test_session_auth, ProcInfo, SessionCommand,
     SessionEvent, SessionHandle, SystemDetails,
