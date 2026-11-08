@@ -718,7 +718,7 @@ pub(super) fn wire_key_input(
             let bytes = if back_tab {
                 BACK_TAB_BYTES.to_vec()
             } else {
-                key_to_pty_bytes(key.as_str(), ctrl, alt, app_cursor)
+                key_to_pty_bytes(key.as_str(), ctrl, alt, shift, app_cursor)
             };
             if cfg!(target_os = "macos")
                 && (ctrl || key.chars().any(|c| (0x10..=0x18).contains(&(c as u32))))
@@ -1292,6 +1292,23 @@ pub(super) fn wire_key_input(
                 }
                 _ => {}
             }
+            if let Some(win) = weak.upgrade() {
+                refresh_terminal_selection(&win, &bufs_sel, &tid);
+            }
+        });
+    }
+    // Drop the local selection without touching the clipboard (#542): Esc
+    // while one is shown, or a plain click forwarded to a mouse-tracking app.
+    {
+        let bufs_sel = bufs.clone();
+        let weak = window.as_weak();
+        window.on_term_select_clear(move |tab_id: SharedString| {
+            let tid = tab_id.to_string();
+            with_term_buf(&bufs_sel, &tid, |buf| {
+                buf.sel_anchor = None;
+                buf.sel_focus = None;
+                buf.sel_ranges.clear();
+            });
             if let Some(win) = weak.upgrade() {
                 refresh_terminal_selection(&win, &bufs_sel, &tid);
             }

@@ -265,6 +265,38 @@ fn compact_history_line_keeps_wrap_flag_and_plain_text() {
     assert!(compact.spans().is_empty());
 }
 
+#[test]
+fn inline_tui_insert_before_keeps_live_view_at_bottom() {
+    // #542: 10-row screen; an inline TUI owns the bottom rows (input box) and
+    // inserts transcript lines above it via a scroll region, like ratatui's
+    // insert_before (Codex CLI). Following output must show the newest line
+    // and the input box; a reader scrolled back must stay anchored.
+    for start_offset in [0usize, 2] {
+        let mut b = make_buf(10, 30, &[], &[], 0);
+        let _ = b.ingest(b"\x1b[8;1H> input box\r\n  status\r\n");
+        let _ = b.render();
+        b.prev.clear();
+        b.view_offset = start_offset;
+        for i in 0..20 {
+            let line = format!("\x1b[1;7r\x1b[7;1H\x1b[1S\x1b[7;1Hline {i:02}\x1b[r\x1b[8;1H> input box");
+            let _ = b.ingest(line.as_bytes());
+        }
+        let _ = b.render();
+        let shown: Vec<String> = b.displayed_text.iter().map(|r| r.trim_end().to_string()).collect();
+        assert_eq!(b.history.len(), 19, "scrolled-off transcript lines reach history");
+        if start_offset == 0 {
+            assert_eq!(b.view_offset, 0, "following output stays at the bottom");
+            assert_eq!(shown[6], "line 19", "{shown:?}");
+            assert_eq!(shown[7], "> input box", "{shown:?}");
+            assert_eq!(shown[8], "  status", "{shown:?}");
+        } else {
+            assert!(b.view_offset > start_offset, "scrolled-back view is anchored");
+            assert!(shown.iter().any(|r| r == "line 00"), "{shown:?}");
+            assert!(!shown.iter().any(|r| r == "line 19"), "{shown:?}");
+        }
+    }
+}
+
 // ---- Find navigation and tab-menu session logs (#535) ----------------------
 
 #[test]

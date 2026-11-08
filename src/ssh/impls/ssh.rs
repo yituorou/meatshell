@@ -654,21 +654,60 @@ fn visible_line_text(raw: &str) -> String {
 
 /// Whether the row the cursor is on looks like an idle shell prompt that can
 /// safely receive the setup command (#524). An empty row means the shell (or
-/// an rc file) is still working; a row ending in `:` or `?` is a question
-/// such as `Password:`, `Select [1-3]:` or `Continue (y/n)?` that our command
-/// must never answer. Failing this check only costs shell integration for the
-/// session, never a usable terminal.
+/// an rc file) is still working. A question must never be answered by our
+/// command: rows ending in `:` / `?` (`Password:`, `Select [1-3]:`), or in
+/// `)` / `]` like `Activate env (y/n)` / `cd to workdir [Y/n]`, and any row
+/// offering y/n or yes/no, as interactive login scripts do (#542). Failing
+/// this check only costs shell integration until a real prompt shows.
 fn ready_for_prompt_setup(current_line: &str) -> bool {
     let text = visible_line_text(current_line);
     let text = text.trim_end();
-    !text.is_empty() && !text.ends_with([':', '?', '：', '？'])
+    if text.is_empty() || text.ends_with([':', '?', '：', '？', ')', ']', '）', '】']) {
+        return false;
+    }
+    let lower = text.to_ascii_lowercase();
+    !(lower.contains("y/n") || lower.contains("yes/no"))
 }
 
-/// Whether terminal input before the setup was typed came from the user, as
-/// opposed to an automatic terminal reply (cursor report, device attributes,
-/// focus events) which always starts with ESC (#524).
-fn is_user_keystroke(bytes: &[u8]) -> bool {
-    bytes.first().is_some_and(|&b| b != 0x1b)
+/// What input typed before the setup went out means for injecting it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreSetupInput {
+    /// An automatic terminal reply (cursor position, device attributes,
+    /// focus in/out, OSC): not the user, changes nothing.
+    TerminalReply,
+    /// The user is editing a line (text, arrows, Backspace): hold the setup
+    /// back so it never lands in the middle of their input.
+    Editing,
+    /// Enter, Ctrl+C or Ctrl+D ended the line; the setup may go out once the
+    /// shell is idle at a prompt again.
+    Submitted,
+}
+
+fn classify_pre_setup_input(bytes: &[u8]) -> PreSetupInput {
+    if bytes.iter().any(|&b| matches!(b, b'\r' | b'\n' | 0x03 | 0x04)) {
+        return PreSetupInput::Submitted;
+    }
+    let is_reply = match bytes {
+        [0x1b, b']', ..] => true,                       // OSC reply (colours)
+        [0x1b, b'[', b'I'] | [0x1b, b'[', b'O'] => true, // focus in / out
+        [0x1b, b'[', rest @ ..] => {
+            // CPR `ESC [ r ; c R` and device attributes `ESC [ ? … c` / `ESC [ > … c`.
+            let (last, body) = match rest.split_last() {
+                Some((last, body)) => (*last, body),
+                None => (0, &[][..]),
+            };
+            let params = body.strip_prefix(b"?").or_else(|| body.strip_prefix(b">")).unwrap_or(body);
+            (last == b'R' || last == b'c')
+                && !params.is_empty()
+                && params.iter().all(|&b| b.is_ascii_digit() || b == b';')
+        }
+        _ => false,
+    };
+    if is_reply {
+        PreSetupInput::TerminalReply
+    } else {
+        PreSetupInput::Editing
+    }
 }
 
 /// Find a meatshell command-capture sequence (`ESC ] 697 ; <command> BEL|ST`)
@@ -1876,11 +1915,13 @@ async fn run_session(
     // `inject_deadline` is pushed back by every output chunk, and
     // `setup_current_line` holds the row the remote cursor is on so the
     // setup is never typed into an rc-file menu or a `Password:` question.
-    // `prompt_setup_cancelled` turns integration off for this session once
-    // the user types before the setup went out, so the two never interleave.
+    // `user_line_dirty` holds the setup back while the user has typed into
+    // the current line (a login-script answer, a command) and not yet
+    // submitted it, so the two never interleave. Answering login questions
+    // no longer turns integration off for the whole session (#542).
     let mut inject_deadline: Option<tokio::time::Instant> = None;
     let mut setup_current_line = String::new();
-    let mut prompt_setup_cancelled = false;
+    let mut user_line_dirty = false;
     // After a ZMODEM transfer finishes we briefly ignore ZMODEM detection so the
     // sender's lingering close frames can't spawn a spurious second receive (#76).
     let mut zmodem_done_at: Option<std::time::Instant> = None;
@@ -2026,7 +2067,7 @@ async fn run_session(
             } => {
                 inject_deadline = None;
                 if !prompt_injected
-                    && !prompt_setup_cancelled
+                    && !user_line_dirty
                     && ready_for_prompt_setup(&setup_current_line)
                 {
                     // A separate exec probe already confirmed bash or zsh, and
@@ -2118,21 +2159,19 @@ async fn run_session(
                         // Only log the byte count — never the bytes themselves,
                         // which are raw keystrokes and may contain passwords (#15).
                         tracing::debug!("ssh channel.data len={} bytes", bytes.len());
-                        if !prompt_injected
-                            && !prompt_setup_cancelled
-                            && prompt_setup_supported
-                            && is_user_keystroke(&bytes)
-                        {
-                            // The user is already talking to the remote side
-                            // (a shell, an rc-file menu, a login question).
-                            // Typing our setup now would mix with their input,
-                            // so run this session without integration (#524).
-                            prompt_setup_cancelled = true;
-                            inject_deadline = None;
-                            tracing::info!(
-                                "[SESSION_START] id={} user typed before shell integration setup; skipping it",
-                                session.id
-                            );
+                        if !prompt_injected && prompt_setup_supported {
+                            // The user is already talking to the remote side (a
+                            // login question, an rc-file menu, the shell). Hold
+                            // the setup back until their line is submitted and
+                            // the shell is idle at a prompt again (#524, #542).
+                            match classify_pre_setup_input(&bytes) {
+                                PreSetupInput::TerminalReply => {}
+                                PreSetupInput::Editing => {
+                                    user_line_dirty = true;
+                                    inject_deadline = None;
+                                }
+                                PreSetupInput::Submitted => user_line_dirty = false,
+                            }
                         }
                         cwd_tracker.input(&bytes);
                         let bytes = terminal_encoder.encode(&bytes);
@@ -2343,7 +2382,7 @@ async fn run_session(
                         // as it arrives and pushes the injection back until the
                         // shell has been quiet for PROMPT_SETUP_SETTLE (see the
                         // `inject_deadline` arm above).
-                        if !prompt_injected && !prompt_setup_cancelled && prompt_setup_supported {
+                        if !prompt_injected && prompt_setup_supported {
                             track_current_line(&mut setup_current_line, &chunk);
                             if inject_deadline.is_some() || !chunk.trim().is_empty() {
                                 inject_deadline =
@@ -3405,7 +3444,8 @@ mod keepalive_tests {
 #[cfg(test)]
 mod prompt_setup_echo_tests {
     use super::{
-        bound_prompt_setup_echo, is_user_keystroke, prompt_setup_echo_end, prompt_setup_supported,
+        bound_prompt_setup_echo, classify_pre_setup_input, prompt_setup_echo_end,
+        prompt_setup_supported, PreSetupInput,
         ready_for_prompt_setup, release_prompt_setup_buffer, strip_late_prompt_setup_echo,
         strip_pending_prompt_setup_echo, strip_prompt_setup_done, strip_prompt_setup_echo,
         take_after_prompt_setup_done, track_current_line, visible_line_text, PromptShell,
@@ -3493,12 +3533,42 @@ mod prompt_setup_echo_tests {
 
     #[test]
     fn terminal_replies_do_not_count_as_typing() {
-        assert!(is_user_keystroke(b"l"));
-        assert!(is_user_keystroke(b"\r"));
-        assert!(is_user_keystroke(&[3]));
-        assert!(!is_user_keystroke(b"\x1b[24;80R"));
-        assert!(!is_user_keystroke(b"\x1b[?62;22c"));
-        assert!(!is_user_keystroke(b""));
+        use PreSetupInput::*;
+        assert_eq!(classify_pre_setup_input(b"\x1b[24;80R"), TerminalReply);
+        assert_eq!(classify_pre_setup_input(b"\x1b[?62;22c"), TerminalReply);
+        assert_eq!(classify_pre_setup_input(b"\x1b[>0;95;0c"), TerminalReply);
+        assert_eq!(classify_pre_setup_input(b"\x1b[I"), TerminalReply);
+        assert_eq!(classify_pre_setup_input(b"\x1b]11;rgb:0000/0000/0000\x07"), TerminalReply);
+        // Typing, including arrows / Backspace editing the line.
+        assert_eq!(classify_pre_setup_input(b"y"), Editing);
+        assert_eq!(classify_pre_setup_input(b"\x1b[A"), Editing);
+        assert_eq!(classify_pre_setup_input(b"\x1bOD"), Editing);
+        assert_eq!(classify_pre_setup_input(&[0x7f]), Editing);
+        // Ending the line.
+        assert_eq!(classify_pre_setup_input(b"\r"), Submitted);
+        assert_eq!(classify_pre_setup_input(b"y\r"), Submitted);
+        assert_eq!(classify_pre_setup_input(&[3]), Submitted);
+    }
+
+    #[test]
+    fn login_script_yes_no_questions_are_not_prompts() {
+        // #542: interactive login scripts ask before the shell prompt appears.
+        for row in [
+            "Change to the work directory? [Y/n]",
+            "Activate the conda environment (y/n)",
+            "Enter zsh [yes/no]",
+            "进入工作目录 (Y/n) ",
+            "继续【是/否】",
+        ] {
+            let mut line = String::new();
+            track_current_line(&mut line, row);
+            assert!(!ready_for_prompt_setup(&line), "{row:?}");
+        }
+        for prompt in ["(base) user@host:~$ ", "user@host ~ % ", "[root@host ~]# "] {
+            let mut line = String::new();
+            track_current_line(&mut line, prompt);
+            assert!(ready_for_prompt_setup(&line), "{prompt:?}");
+        }
     }
 
     #[test]

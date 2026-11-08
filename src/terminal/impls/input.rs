@@ -299,7 +299,56 @@ pub(crate) fn is_back_tab(key: &str, ctrl: bool, alt: bool, shift: bool) -> bool
 
 pub(crate) const BACK_TAB_BYTES: &[u8] = b"\x1b[Z";
 
-pub(crate) fn key_to_pty_bytes(key: &str, ctrl: bool, alt: bool, app_cursor: bool) -> Vec<u8> {
+/// xterm's encoding of a special key pressed with modifiers (#542):
+/// `CSI 1 ; m X` for cursor keys, Home/End and F1–F4, `CSI n ; m ~` for the
+/// tilde keys, where m = 1 + Shift(1) + Alt(2) + Ctrl(4). Shift+Left used to
+/// arrive as a plain Left, so TUIs such as Codex could not tell them apart
+/// (and Ctrl/Alt+arrow word jumps were lost the same way). Modified cursor
+/// keys always use the CSI form, also in application-cursor mode, as xterm
+/// does. `None` for keys without a modified form or with no modifier held.
+fn modified_special_key(key: &str, shift: bool, alt: bool, ctrl: bool) -> Option<Vec<u8>> {
+    let m = 1 + u8::from(shift) + 2 * u8::from(alt) + 4 * u8::from(ctrl);
+    if m == 1 {
+        return None;
+    }
+    let letter = |final_byte: char| format!("\x1b[1;{m}{final_byte}").into_bytes();
+    let tilde = |number: u8| format!("\x1b[{number};{m}~").into_bytes();
+    Some(match key {
+        "\u{F700}" => letter('A'),
+        "\u{F701}" => letter('B'),
+        "\u{F702}" => letter('D'),
+        "\u{F703}" => letter('C'),
+        "\u{F729}" => letter('H'),
+        "\u{F72B}" => letter('F'),
+        "\u{F704}" => letter('P'),
+        "\u{F705}" => letter('Q'),
+        "\u{F706}" => letter('R'),
+        "\u{F707}" => letter('S'),
+        "\u{F72C}" => tilde(5),
+        "\u{F72D}" => tilde(6),
+        "\u{007F}" | "\u{F728}" => tilde(3),
+        "\u{F708}" => tilde(15),
+        "\u{F709}" => tilde(17),
+        "\u{F70A}" => tilde(18),
+        "\u{F70B}" => tilde(19),
+        "\u{F70C}" => tilde(20),
+        "\u{F70D}" => tilde(21),
+        "\u{F70E}" => tilde(23),
+        "\u{F70F}" => tilde(24),
+        _ => return None,
+    })
+}
+
+pub(crate) fn key_to_pty_bytes(
+    key: &str,
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    app_cursor: bool,
+) -> Vec<u8> {
+    if let Some(sequence) = modified_special_key(key, shift, alt, ctrl) {
+        return sequence;
+    }
     let special: Option<&[u8]> = match key {
         "\u{F700}" => Some(if app_cursor { b"\x1bOA" } else { b"\x1b[A" }),
         "\u{F701}" => Some(if app_cursor { b"\x1bOB" } else { b"\x1b[B" }),
@@ -416,14 +465,37 @@ mod back_tab_tests {
     #[test]
     fn plain_tab_is_not_back_tab() {
         assert!(!is_back_tab("\t", false, false, false));
-        assert_eq!(key_to_pty_bytes("\t", false, false, false), vec![0x09]);
+        assert_eq!(key_to_pty_bytes("\t", false, false, false, false), vec![0x09]);
+    }
+
+    #[test]
+    fn modified_arrows_and_editing_keys_keep_their_modifiers() {
+        // #542: Shift+Left used to be sent as a plain Left.
+        let k = |key: &str, ctrl, alt, shift, app| key_to_pty_bytes(key, ctrl, alt, shift, app);
+        assert_eq!(k("\u{F702}", false, false, true, false), b"\x1b[1;2D");
+        assert_eq!(k("\u{F703}", false, false, true, true), b"\x1b[1;2C", "CSI form in app-cursor mode");
+        assert_eq!(k("\u{F702}", true, false, false, false), b"\x1b[1;5D");
+        assert_eq!(k("\u{F700}", false, true, false, false), b"\x1b[1;3A");
+        assert_eq!(k("\u{F701}", true, false, true, false), b"\x1b[1;6B");
+        assert_eq!(k("\u{F729}", false, false, true, false), b"\x1b[1;2H");
+        assert_eq!(k("\u{F72B}", false, false, true, false), b"\x1b[1;2F");
+        assert_eq!(k("\u{F728}", false, false, true, false), b"\x1b[3;2~");
+        assert_eq!(k("\u{F72C}", true, false, false, false), b"\x1b[5;5~");
+        assert_eq!(k("\u{F704}", false, false, true, false), b"\x1b[1;2P");
+        assert_eq!(k("\u{F708}", true, false, false, false), b"\x1b[15;5~");
+        // Unmodified keys are unchanged.
+        assert_eq!(k("\u{F702}", false, false, false, false), b"\x1b[D");
+        assert_eq!(k("\u{F702}", false, false, false, true), b"\x1bOD");
+        assert_eq!(k("\u{F728}", false, false, false, false), b"\x1b[3~");
+        // Shift on ordinary text does not change the bytes.
+        assert_eq!(k("A", false, false, true, false), b"A");
     }
 
     #[test]
     fn ctrl_y_still_sends_em() {
         assert!(!is_back_tab("\u{0019}", true, false, false));
         assert!(!is_back_tab("\u{0019}", true, false, true));
-        assert_eq!(key_to_pty_bytes("\u{0019}", true, false, false), vec![0x19]);
+        assert_eq!(key_to_pty_bytes("\u{0019}", true, false, false, false), vec![0x19]);
     }
 
     #[test]

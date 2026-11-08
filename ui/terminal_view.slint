@@ -506,6 +506,7 @@ export component TerminalView inherits Rectangle {
     callback select-start(int, int, bool, bool); // row, col, ctrl, shift
     callback select-update(int, int);       // extend drag-selection to (row, col)
     callback select-end();                  // finish selection → copy to clipboard
+    callback select-clear();                // drop the local selection, no copy (#542)
     callback select-word(int, int);         // double-click word → select + copy (#287)
     callback select-autoscroll(int);        // auto-scroll while dragging past edge (dir: -1 up / +1 down)
 
@@ -1071,6 +1072,11 @@ export component TerminalView inherits Rectangle {
                                         // Mouse-tracking TUI (btop/htop/mc): forward the
                                         // press so the remote acts on it (#terminal-mouse).
                                         // Shift+click still selects locally (xterm-style).
+                                        // A plain click also drops a local selection made
+                                        // with Shift+drag, which nothing else cleared (#542).
+                                        if (root.selection.length > 0) {
+                                            root.select-clear();
+                                        }
                                         root.terminal-mouse(0, 0,
                                             floor(self.mouse-y / root.cell-h),
                                             floor(self.mouse-x / root.cell-w));
@@ -1325,6 +1331,15 @@ export component TerminalView inherits Rectangle {
                     // ── macOS: swallow any other ⌘ combo (control == Cmd here) so it
                     // isn't typed into the shell as a literal character. ──
                     } else if (Theme.is-mac && event.modifiers.control) {
+                        accept
+                    // ── Esc with a local selection on screen clears it and is
+                    // not sent, like Windows Terminal: pressing Esc to dismiss
+                    // a highlight must not also cancel Codex/vim (#542). With
+                    // no selection, Esc reaches the program as usual.
+                    } else if (event.text == Key.Escape && root.selection.length > 0
+                            && !event.modifiers.control && !event.modifiers.meta
+                            && !event.modifiers.alt && !event.modifiers.shift) {
+                        root.select-clear();
                         accept
                     // ── Local history navigation ────────────────────────────
                     // Only Rust can authoritatively tell whether this normal
