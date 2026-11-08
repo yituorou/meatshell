@@ -624,6 +624,12 @@ impl TermBuffer {
                         self.csi_pending.push(byte);
                         self.csi_state = CsiState::Designate(byte);
                     } else {
+                        if byte == b'c' {
+                            // RIS (`ESC c`, what `reset` sends) restores G0/G1
+                            // to US-ASCII, so a TUI that died in line-drawing
+                            // mode can't leave the shell drawn as `q x l` (#543).
+                            self.charset = crate::terminal::CharsetTracker::default();
+                        }
                         display.extend(self.csi_pending.drain(..));
                         if byte == 0x1b {
                             self.csi_pending.push(byte);

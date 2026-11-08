@@ -55,6 +55,50 @@ fn disabled_vt100_drawing_passes_letters_through() {
 }
 
 #[test]
+fn issue_543_box_and_degree_sign_render_with_session_defaults() {
+    // The reporter's repro, plus nvtop's `35°C` (0x66 = degree sign), with
+    // the line-drawing flag taken from a default session.
+    let mut buffer = make_buf(4, 40, &[], &[], 0);
+    buffer.vt100_drawing = crate::config::Session::new_empty().vt100_drawing;
+    let _ = buffer.ingest(b"\x1b(0lqqqqqqk\r\nmqqqqqqj\x1b(B\r\n35\x1b(0f\x1b(BC");
+    buffer.render();
+
+    assert_eq!(buffer.displayed_text[0], "┌──────┐");
+    assert_eq!(buffer.displayed_text[1], "└──────┘");
+    assert_eq!(buffer.displayed_text[2], "35°C");
+}
+
+#[test]
+fn reset_restores_ascii_after_a_tui_dies_in_line_drawing_mode() {
+    let mut buffer = make_buf(4, 40, &[], &[], 0);
+    let _ = buffer.ingest(b"\x1b(0\x1b)0\x0e");
+    let _ = buffer.ingest(b"\x1bcls -l");
+    buffer.render();
+
+    assert_eq!(buffer.displayed_text[0], "ls -l");
+}
+
+#[test]
+fn line_drawing_defaults_on_even_for_configs_saved_while_it_was_opt_in() {
+    use crate::config::Session;
+    let mut json = serde_json::to_value(Session::new_empty()).unwrap();
+    let obj = json.as_object_mut().unwrap();
+    assert_eq!(obj.get("vt100_line_drawing"), Some(&serde_json::Value::Bool(true)));
+
+    // A pre-#543 config carries the old key, usually as the old default.
+    obj.remove("vt100_line_drawing");
+    obj.insert("vt100_drawing".into(), serde_json::Value::Bool(false));
+    let old: Session = serde_json::from_value(json.clone()).unwrap();
+    assert!(old.vt100_drawing);
+
+    // Turning it off now sticks.
+    let obj = json.as_object_mut().unwrap();
+    obj.insert("vt100_line_drawing".into(), serde_json::Value::Bool(false));
+    let off: Session = serde_json::from_value(json).unwrap();
+    assert!(!off.vt100_drawing);
+}
+
+#[test]
 fn osc_payload_is_never_charset_translated() {
     let mut buffer = make_buf(4, 40, &[], &[], 0);
     // Window-title OSC emitted while DEC Special Graphics is active: its

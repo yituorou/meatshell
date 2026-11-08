@@ -65,7 +65,7 @@ fn default_encoding() -> String {
 }
 
 fn default_vt100_drawing() -> bool {
-    false
+    true
 }
 
 /// Terminal type reported to the server (#498): the SSH `pty-req` TERM, the
@@ -299,8 +299,13 @@ pub struct Session {
 
     /// Honor VT100 line drawing (DEC Special Graphics via `ESC ( 0` and SO/SI)
     /// even when the encoding is UTF-8 (#376). PuTTY's "Enable VT100 line
-    /// drawing even in UTF-8 mode"; opt-in, off for new/existing sessions.
-    #[serde(default = "default_vt100_drawing")]
+    /// drawing even in UTF-8 mode". On by default like xterm, VTE and Windows
+    /// Terminal, so ncurses borders (nvtop, mc) aren't shown as `lqqk` (#543).
+    /// It was opt-in under the key `vt100_drawing`; a stored `false` there was
+    /// almost always the old default, so that key is no longer read and every
+    /// session starts with line drawing on. Turning it off is saved under
+    /// the new key.
+    #[serde(rename = "vt100_line_drawing", default = "default_vt100_drawing")]
     pub vt100_drawing: bool,
 
     /// Terminal type (`TERM`) announced to the server (#498). Some programs
