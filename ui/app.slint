@@ -2283,9 +2283,15 @@ export component AppWindow inherits Window {
                         sftp-local-loading: term.sftp-local-loading;
                         sftp-local-selected-count: term.sftp-local-selected-count;
                         sftp-local-pane-width: term.sftp-local-pane-width;
+                        sftp-local-quick-places: term.sftp-local-quick-places;
+                        sftp-local-drive-places: term.sftp-local-drive-places;
+                        sftp-local-split: root.sftp-local-split;
                         persist-sftp-local-pane-width(v) => {
                             root.persist-sftp-local-pane-width(term.id, v);
                         }
+                        persist-sftp-split(v) => { root.persist-sftp-split(v); }
+                        persist-sftp-local-split(v) => { root.persist-sftp-local-split(v); }
+                        sftp-local-places-refresh() => { root.sftp-local-places-refresh(term.id); }
                         tunnels: term.tunnels;
                         quick-commands: root.quick-commands;
                         quick-sidebar-enabled: root.quick-commands-as-sidebar;
