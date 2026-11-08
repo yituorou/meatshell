@@ -1,6 +1,6 @@
 [package]
 name = "meatshell"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 authors = ["meatshell contributors"]
 description = "A lightweight FinalShell-style SSH/terminal client written in Rust + Slint"

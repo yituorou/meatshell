@@ -5,6 +5,19 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-08
+
+- **标签页菜单可记录会话日志，查找显示数量并支持跳转（#535）。** SSH、Telnet、串口和本地终端标签页的右键菜单新增“开始记录会话日志...”：选择保存位置（默认为会话日志目录下的 `<名称>_<时间戳>.log`），先写入当前屏幕内容，记录期间该项变为“停止记录会话日志”。查找栏现在同时搜索回滚历史和当前屏幕，显示“当前/总数”（无匹配时显示“无结果”），可用 Enter / Shift+Enter 或上下按钮跳转，两端循环并自动滚动到匹配处，当前匹配项高亮更明显。
+- **Session log from the tab menu, and find shows a count and steps through matches (#535).** The tab context menu of SSH, Telnet, serial and local tabs gains "Start session log...": pick where to save (the session-log folder and `<name>_<timestamp>.log` are proposed), the current screen is written first, and while recording the item reads "Stop session log". The find bar now searches scrollback as well as the screen, shows "current/total" (or "No results"), and steps with Enter / Shift+Enter or the up/down buttons, wrapping at both ends and scrolling the match into view; the current match gets a stronger highlight.
+
+- **RDP 会话支持更多 FreeRDP 选项（#530）。** 会话编辑窗口新增：FreeRDP 服务器兼容模式（Linux / macOS）、旧版 TLS、管理员会话（/admin）、智能缩放、证书策略（忽略 / 首次信任 / 拒绝不受信任）、网络类型、声音重定向、剪贴板共享、图形加速（GFX），以及每行一个的高级 FreeRDP 参数（支持中文别名，如 `网络=局域网`、`音频=开`）。感谢 @andnnl。
+- **More FreeRDP options for RDP sessions (#530).** The session editor gains FreeRDP server compatibility (Linux / macOS), legacy TLS, administrative session (/admin), smart sizing, a certificate policy (ignore / trust on first use / reject untrusted), a network profile, sound redirection, clipboard sharing, graphics acceleration (GFX), and advanced FreeRDP arguments, one per line, with Chinese aliases such as `网络=局域网` and `音频=开`. Thanks @andnnl.
+
+- **默认启用 VT100 线条绘制（#543）。** nvtop、mc 等 ncurses 程序用 `ESC ( 0` 绘制的边框、坐标轴和进度条不再显示成 q x l k m 字母（温度 `35°C` 也不再显示成 `35fC`），与 xterm、Windows Terminal、PuTTY 一致。已有会话同样默认开启，如有需要可在会话设置中关闭。`reset` 命令现在也会恢复普通字符集，TUI 异常退出后终端不会一直显示成线条字符。
+- **VT100 line drawing is on by default (#543).** Borders, axes and bars that ncurses programs such as nvtop and mc draw with `ESC ( 0` no longer show up as the letters q x l k m (and `35°C` no longer as `35fC`), matching xterm, Windows Terminal and PuTTY. Existing sessions get it too; it can still be turned off in the session settings. `reset` now also restores the normal character set, so a TUI that crashes cannot leave the terminal drawing letters as lines.
+
+- **大量日志输出时渲染更流畅、内存占用更低。** 持续输出时以 60 Hz 渲染（原为 30 Hz），每帧原地更新而不再重建所有文字元素；回滚历史改用紧凑存储，10 万行彩色日志的内存从约 72 MB 降到约 40 MB，彩色日志的处理速度约提升一倍。
+- **Smoother rendering and lower memory under heavy log output.** Sustained output renders at 60 Hz (was 30 Hz) and updates text in place instead of rebuilding every text element each frame; scrollback uses a compact layout, so 100k coloured log lines take about 40 MB instead of 72 MB, and coloured log streams are processed about twice as fast.
 
 - **本机侧支持收藏和最近访问（#532 后续）。** 左侧路径栏新增 ☆（面板较窄时隐藏）：点一下收藏当前文件夹，已收藏时高亮；“位置”下拉里多出“收藏”和“最近”两段，收藏可悬停删除，最近可一键清空。打开的本地文件夹会按时间倒序记入最近（去重、最多 15 条），收藏最多 50 条；两者都对整台机器生效，换会话、重启后仍在。Windows 下同一目录的不同大小写/结尾斜杠按同一个处理。
 - **Local bookmarks and recent folders in the split view (follow-up to #532).** The left path bar gained a ☆ (hidden when the pane is too narrow): click it to bookmark the current folder, highlighted while bookmarked; the places menu now has Bookmarks and Recent sections, bookmarks can be removed on hover and Recent cleared in one click. Opened local folders are remembered newest-first (de-duplicated, 15 at most), bookmarks are capped at 50, both apply to the whole machine and survive restarts and session switches. On Windows the same folder is recognised regardless of case or a trailing separator.
@@ -15,6 +28,35 @@ All notable changes are documented here. 本文件记录所有重要变更。
 - **修复双栏本地面板可能冻结窗口、以及复制含环目录会无限递归的问题（#520 后续）。** 本地路径解析不再在界面线程访问文件系统：输入指向已断开的网络盘或休眠 NAS 的路径时窗口不再卡住，找不到/不是文件夹的错误改由后台列目录线程报告。从资源管理器拖入的文件夹复制现在会跳过已复制过的物理目录（符号链接或 Windows 联接点成环时不再无限递归），拒绝把文件夹复制到它自己的子目录里，并有 32 层深度上限兜底。
 - **Fix the local pane freezing the window and copying link loops forever (follow-up to #520).** Resolving a typed local path no longer touches the filesystem on the UI thread, so a mapped drive that has gone away or a sleeping NAS cannot hang the window; the background listing thread reports "no such folder / not a folder" instead. Folder copies from the file manager now skip physical folders they have already copied (a symlink or Windows junction loop can no longer recurse), refuse to copy a folder into its own subfolder, and stop at a 32-level depth cap as a backstop.
 
+- **修复登录后终端只显示“Last login”、没有提示符也无法输入的问题（#524）。** Shell 集成初始化命令以前在 `Last login:` 提示后立即输入，若登录脚本启动了菜单、`read` 或堡垒机选择界面，命令会被当作它们的输入，终端看起来就卡死了。现在会等 shell 在提示符上安静下来后再输入，不会输入到 `Password:`、`Select [1-3]:` 之类的提问中；即使初始化没有完成，输出也会在 5 秒内正常显示。
+- **Fix the terminal showing only "Last login" with no prompt and no input (#524).** The shell-integration setup used to be typed right after the `Last login:` banner, so a menu, `read` or bastion picker started by the login scripts took it as input and the terminal looked frozen. It is now typed only once the shell sits quietly at a prompt, never into questions such as `Password:` or `Select [1-3]:`, and output is shown within 5 s even if the setup never completes.
+
+- **修复连接 macOS 主机后 “Last login” 之后没有任何输出的问题（#541）。** 0.8.1 加入的 zsh 按键绑定让初始化命令超过了 macOS 终端单行 1024 字节的限制，命令被截断而没有执行。现在 bash 和 zsh 只接收各自需要的部分，两者都保持在限制以内。
+- **Fix macOS hosts showing nothing after "Last login" (#541).** The zsh key bindings added in 0.8.1 pushed the setup line past macOS's 1024-byte terminal line limit, so it was cut off and never ran. Bash and zsh now each receive only their own part, both well under the limit.
+
+- **修复 Shift + 方向键、选区和登录脚本提问相关的问题（#542）。** Shift / Alt / Ctrl 与方向键、Home/End、PageUp/PageDown、Delete、F1–F12 组合时不再丢失修饰键，Shift + 左/右 可在 TUI 中选择文本；按 Esc 或在启用鼠标的程序中左键单击会清除终端选区；登录脚本询问 `(y/n)`、`[Y/n]`、`yes/no` 等问题时不再输入 Shell 集成命令，在提问处打字只会暂缓初始化，回车后在真正的提示符出现时继续。
+- **Fix Shift+arrow keys, selection clearing and login-script questions (#542).** Shift / Alt / Ctrl combined with the arrow keys, Home/End, PageUp/PageDown, Delete and F1–F12 keep their modifier, so Shift+Left/Right select text in TUIs; Esc, or a left click in a mouse-aware program, clears the terminal selection; and the shell-integration setup is no longer typed into login-script questions such as `(y/n)`, `[Y/n]` or `yes/no` — typing at such a question only delays the setup until Enter, after which it goes out at the real prompt.
+
+- **修复展开高级选项后会话窗口底部按钮被遮挡的问题（#525）。** “测试连接 / 取消 / 创建”现在固定在窗口底部，不再随内容一起被裁掉。
+- **Fix the session dialog's buttons disappearing with advanced options open (#525).** Test connection / Cancel / Create are now pinned to the bottom of the dialog instead of being clipped off with the content.
+
+- **SFTP 删除会删除所有勾选项，支持 Del 键，并优先显示修改时间（#531）。** 右键已勾选的行会显示“删除选中项”并删除全部勾选项；文件列表中按 Del（macOS 上为 Cmd+Backspace）删除勾选项或高亮行，不再转发给终端；普通宽度的面板也能看到修改时间列。
+- **SFTP deletes every checked entry, supports the Del key and shows Modified sooner (#531).** Right-clicking a checked row offers "Delete checked items" and deletes the whole selection; Del (Cmd+Backspace on macOS) in the file list deletes the checked entries or the highlighted row instead of going to the terminal; and an ordinary-width panel now has room for the Modified column.
+
+- **修复串口按键卡顿、松开后仍继续响应的问题（#534）。** Windows 串口的写入不再等待读超时，按住方向键松开后光标会立即停下，回车也不再迟钝。
+- **Fix serial keystrokes lagging and replaying after release (#534).** Writes to Windows COM ports no longer wait behind the read timeout, so the cursor stops as soon as a held arrow key is released and Enter responds at once.
+
+- **修复快捷命令中名为 “default” 的分组重复出现的问题（#534）。** 任何大小写的 “default” 现在都视为默认分组，列表中只显示一个，保存在其中的命令也能正常显示。
+- **Fix a quick-command group named "default" appearing twice (#534).** "default" in any case now means the built-in group, so the list shows it once and the commands saved under it are visible.
+
+- **修复 WSL 损坏时 MeatShell 启动后长时间不显示窗口的问题（#537）。** 判断是否显示 WSL 时改为读取注册表，不再在启动时运行 `wsl.exe`。
+- **Fix MeatShell taking minutes to show its window when WSL is broken (#537).** Whether to list WSL is now read from the registry instead of running `wsl.exe` at startup.
+
+- **修复 macOS 上 SFTP 文件列表在文件名列上无法滚动的问题（#540）。** 触控板滚动只在指针确实位于终端输出上时才交给终端。
+- **Fix the SFTP file list not scrolling over the file names on macOS (#540).** Trackpad scrolling now goes to the terminal only while the pointer is actually over the terminal output.
+
+- **修复 macOS 上“打开下载目录”和 SFTP “用外部程序打开”无反应的问题。** 现在使用 macOS 的 `open` 命令。感谢 @qingbinzeng。
+- **Fix "Open download folder" and SFTP "Open externally" doing nothing on macOS.** They now use macOS's `open` command. Thanks @qingbinzeng.
 
 ## [0.8.1] - 2026-10-30
 
