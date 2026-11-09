@@ -331,6 +331,11 @@ export component TerminalView inherits Rectangle {
     in property <[string]> sftp-local-bookmarks;
     in property <[string]> sftp-local-recent;
     in property <bool> sftp-local-bookmarked: false;
+    // Local list options (#532 follow-up).
+    in property <bool> sftp-local-show-hidden: false;
+    in property <string> sftp-local-sort-key;
+    in property <int> sftp-local-sort-dir: 0;
+    in property <string> sftp-local-filter;
     in property <float> sftp-local-split: 0.0;
     callback persist-sftp-split(bool);
     callback persist-sftp-local-split(float);
@@ -338,6 +343,9 @@ export component TerminalView inherits Rectangle {
     callback sftp-local-toggle-bookmark();
     callback sftp-local-remove-bookmark(string);
     callback sftp-local-clear-recent();
+    callback sftp-local-toggle-hidden();
+    callback sftp-local-sort(string);
+    callback sftp-local-set-filter(string);
 
     // Per-session now (#v0.5): the AppWindow stores these in each TerminalState
     // and writes back via the set-* callbacks, so each tab/pane keeps its own SFTP
@@ -2460,12 +2468,19 @@ export component TerminalView inherits Rectangle {
             local-bookmarks: root.sftp-local-bookmarks;
             local-recent: root.sftp-local-recent;
             local-bookmarked: root.sftp-local-bookmarked;
+            local-show-hidden: root.sftp-local-show-hidden;
+            local-sort-key: root.sftp-local-sort-key;
+            local-sort-dir: root.sftp-local-sort-dir;
+            local-filter: root.sftp-local-filter;
             local-split-ratio: root.sftp-local-split;
             persist-local-split-ratio(v) => { root.persist-sftp-local-split(v); }
             local-places-refresh() => { root.sftp-local-places-refresh(); }
             local-toggle-bookmark() => { root.sftp-local-toggle-bookmark(); }
             local-remove-bookmark(path) => { root.sftp-local-remove-bookmark(path); }
             local-clear-recent() => { root.sftp-local-clear-recent(); }
+            local-toggle-hidden() => { root.sftp-local-toggle-hidden(); }
+            local-sort(column) => { root.sftp-local-sort(column); }
+            local-set-filter(text) => { root.sftp-local-set-filter(text); }
             toggle-dual()          => { root.sftp-toggle-dual(); }
             local-navigate(path)   => { root.sftp-local-navigate(path); }
             local-up()             => { root.sftp-local-up(); }

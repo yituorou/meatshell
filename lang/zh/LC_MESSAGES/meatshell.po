@@ -855,3 +855,6 @@ msgstr "停止记录会话日志"
 
 msgid "Start session log..."
 msgstr "开始记录会话日志..."
+
+msgid "Filter names"
+msgstr "筛选名称"

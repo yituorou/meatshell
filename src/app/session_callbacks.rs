@@ -1373,6 +1373,9 @@ pub(super) fn wire_session_callbacks(
                 local_dir,
                 local_bookmarks,
                 local_recent,
+                local_show_hidden,
+                local_sort_key,
+                local_sort_dir,
             ) = weak
                 .upgrade()
                 .map(|w| {
@@ -1384,6 +1387,9 @@ pub(super) fn wire_session_callbacks(
                         w.get_sftp_last_local_dir().to_string(),
                         w.get_local_bookmarks(),
                         w.get_local_recent(),
+                        w.get_sftp_local_show_hidden(),
+                        w.get_sftp_local_sort_key().to_string(),
+                        w.get_sftp_local_sort_dir(),
                     )
                 })
                 .unwrap_or((
@@ -1394,6 +1400,9 @@ pub(super) fn wire_session_callbacks(
                     String::new(),
                     ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
                     ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
+                    false,
+                    String::new(),
+                    0,
                 ));
             terminals_model.push(TerminalState {
                 id: tab_id.clone().into(),
@@ -1464,6 +1473,13 @@ pub(super) fn wire_session_callbacks(
                 sftp_local_bookmarks: local_bookmarks,
                 sftp_local_recent: local_recent,
                 sftp_local_bookmarked: false,
+                sftp_local_show_hidden: local_show_hidden,
+                sftp_local_sort_key: local_sort_key.into(),
+                sftp_local_sort_dir: local_sort_dir,
+                sftp_local_filter: "".into(),
+                sftp_local_all_entries: ModelRc::from(std::rc::Rc::new(
+                    VecModel::<SftpEntry>::default(),
+                )),
                 font_size: 0,
                 tunnels: ModelRc::from(std::rc::Rc::new(VecModel::<TunnelInfo>::default())),
                 sftp_collapsed: !has_sftp || sftp_collapsed_default,
