@@ -56,6 +56,7 @@ export struct TransferInfo {
     id: string,
     name: string,
     detail: string,   // "2.3 MB/5.0 MB" | "已完成" | "失败"
+    speed: string,    // recent SFTP speed, empty outside active transfers
     percent: float,   // 0.0..1.0
     state: int,       // 0 active / 1 done / 2 error
     is-upload: bool,
@@ -3308,6 +3309,7 @@ export component AppWindow inherits Window {
                                         text: t.name;
                                         color: Theme.text-primary;
                                         font-size: Theme.fs-xs;
+                                        min-width: 24px;
                                         horizontal-stretch: 1;
                                         overflow: elide;
                                         vertical-alignment: center;
@@ -3318,6 +3320,19 @@ export component AppWindow inherits Window {
                                              : t.state == 1 ? Theme.success
                                              : Theme.text-muted;
                                         font-size: Theme.fs-xs;
+                                        min-width: 0px;
+                                        max-width: max(0px, root.dl-w - 44px) * 0.6;
+                                        horizontal-stretch: 0;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    if t.state == 0 && t.speed != "" : Text {
+                                        text: " · " + t.speed;
+                                        color: Theme.text-muted;
+                                        font-size: Theme.fs-xs;
+                                        // Leave room for Cancel; shrink metadata first.
+                                        width: min(self.preferred-width, max(0px, root.dl-w - 44px) * 0.5);
+                                        overflow: elide;
                                         vertical-alignment: center;
                                     }
                                     // Cancel button — only while the transfer is

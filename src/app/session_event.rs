@@ -393,7 +393,19 @@ pub(super) fn apply_session_event_to_window(
             total,
             state,
             msg,
+            sampled_at,
         } => {
+            let speeds = NEW_WINDOW_CORE.with(|slot| {
+                slot.borrow().as_ref().and_then(|core| {
+                    core.window_states
+                        .borrow()
+                        .get(&window_id)
+                        .map(|state| state.transfer_speeds.clone())
+                })
+            });
+            let speed = speeds
+                .map(|speeds| speeds.observe(&id, transferred, state, sampled_at))
+                .unwrap_or_default();
             let detail = match state {
                 // On error, show the actual message when we have one.
                 2 => {
@@ -427,6 +439,7 @@ pub(super) fn apply_session_event_to_window(
                 id: id.clone().into(),
                 name: name.into(),
                 detail: detail.into(),
+                speed,
                 percent,
                 state: state as i32,
                 is_upload,

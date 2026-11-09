@@ -491,6 +491,7 @@ pub(super) fn open_window(
     // Repeated timers created below (system sampler). Parked in WindowState
     // so closing the window stops them instead of leaking.
     let window_timers: Rc<RefCell<Vec<slint::Timer>>> = Rc::new(RefCell::new(Vec::new()));
+    let transfer_speeds = super::transfer_speeds::TransferSpeeds::new(&window);
 
     // Expose this window's state to the rest of the process so tabs can be
     // dragged out into a new window or merged into another one (#tab-detach).
@@ -515,6 +516,7 @@ pub(super) fn open_window(
             panes_model: panes_model.clone(),
             splitters_model: splitters_model.clone(),
             timers: window_timers.clone(),
+            transfer_speeds: transfer_speeds.clone(),
             content_size: content_size.clone(),
             proc_win: proc_win.clone(),
             sys_win: sys_win.clone(),
@@ -661,7 +663,10 @@ pub(super) fn open_window(
     window.set_transfers(ModelRc::from(transfers_model.clone()));
     {
         let tm = transfers_model.clone();
-        window.on_clear_transfers(move || tm.set_vec(Vec::<TransferInfo>::new()));
+        window.on_clear_transfers(move || {
+            transfer_speeds.clear();
+            tm.set_vec(Vec::<TransferInfo>::new());
+        });
     }
     {
         // Cancel a transfer by id. The id is a UUID unique across sessions, so we

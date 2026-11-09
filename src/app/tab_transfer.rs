@@ -508,6 +508,7 @@ pub(super) fn forget_window_state(core: &Rc<AppCore>, window_id: u64) {
         // Deterministic teardown: stop this window's repeated timers and hide
         // its monitor windows now rather than relying on the handle drops.
         st.timers.borrow_mut().clear();
+        st.transfer_speeds.clear();
         let _ = st.proc_win.hide();
         let _ = st.sys_win.hide();
         let _ = st.editor_win.hide();
