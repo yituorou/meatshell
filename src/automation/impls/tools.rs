@@ -217,6 +217,9 @@ async fn upload_file(arguments: &Value, frontend: Frontend) -> Result<Value> {
             local: local_path,
             remote_dir: args.remote_directory.to_string(),
             cleanup_after: None,
+            // Headless automation has nobody to ask; overwriting is the
+            // documented behaviour of the upload tool.
+            conflict: crate::sftp::UploadConflict::Replace,
         },
         true,
         args.target.timeout,

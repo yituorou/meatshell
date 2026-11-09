@@ -33,7 +33,9 @@ use crate::i18n::t;
 use crate::ssh::{format_mtime, format_size, RemoteEntry, RemoteTreeNode, SessionEvent};
 
 use super::elevation::Elevation;
-use super::transfer::{DownloadConflict, SftpCommand, SftpHandle};
+use super::transfer::{
+    numbered_name, DownloadConflict, SftpCommand, SftpHandle, UploadConflict,
+};
 
 impl SftpHandle {
     pub fn list_dir(&self, path: String) {
@@ -72,11 +74,12 @@ impl SftpHandle {
     pub fn cancel_transfer(&self, id: String) {
         let _ = self.commands.send(SftpCommand::CancelTransfer(id));
     }
-    pub fn upload(&self, local: PathBuf, remote_dir: String) {
+    pub fn upload(&self, local: PathBuf, remote_dir: String, conflict: UploadConflict) {
         let _ = self.commands.send(SftpCommand::Upload {
             local,
             remote_dir,
             cleanup_after: None,
+            conflict,
         });
     }
     pub fn copy_to(
@@ -1008,6 +1011,7 @@ async fn run_sftp(
                 local,
                 remote_dir,
                 cleanup_after,
+                conflict,
             } => {
                 // Run on its own task so the command loop stays free to list /
                 // switch directories during the transfer (#116-2).
@@ -1051,7 +1055,29 @@ async fn run_sftp(
                             t("上传文件夹", "Uploading folder"),
                             dirname
                         )));
-                        let res = upload_dir(&handle, &sftp, &local, &remote_dir, &events).await;
+                        // "Keep both" uploads under a free folder name instead of
+                        // merging into the existing one.
+                        let remote_name = match conflict {
+                            UploadConflict::Replace => dirname.clone(),
+                            UploadConflict::KeepBoth => {
+                                available_remote_name(&sftp, &remote_dir, &dirname).await
+                            }
+                        };
+                        let target = format!(
+                            "{}/{}",
+                            remote_dir.trim_end_matches('/'),
+                            remote_name
+                        );
+                        let existed = sftp.metadata(&target).await.is_ok();
+                        let res = upload_dir(
+                            &handle,
+                            &sftp,
+                            &local,
+                            &remote_dir,
+                            &remote_name,
+                            &events,
+                        )
+                        .await;
                         if let Ok(entries) = list_dir_impl(&sftp, &remote_dir).await {
                             publish_dir_entries(
                                 &handle,
@@ -1066,9 +1092,14 @@ async fn run_sftp(
                         match res {
                             Ok(_) => {
                                 let _ = events.send(SessionEvent::SftpStatus(format!(
-                                    "{}: {}",
+                                    "{}: {}{}",
                                     t("上传完成", "Uploaded"),
-                                    dirname
+                                    remote_name,
+                                    if existed {
+                                        t("（已覆盖）", " (overwritten)")
+                                    } else {
+                                        ""
+                                    }
                                 )));
                             }
                             Err(e) => {
@@ -1093,19 +1124,28 @@ async fn run_sftp(
                                 return;
                             }
                         };
+                        // "Keep both" uploads under a free name instead of
+                        // overwriting the existing file.
+                        let remote_name = match conflict {
+                            UploadConflict::Replace => filename.clone(),
+                            UploadConflict::KeepBoth => {
+                                available_remote_name(&sftp, &remote_dir, &filename).await
+                            }
+                        };
                         let remote_path =
-                            format!("{}/{}", remote_dir.trim_end_matches('/'), filename);
+                            format!("{}/{}", remote_dir.trim_end_matches('/'), remote_name);
+                        let existed = sftp.metadata(&remote_path).await.is_ok();
                         let id = up_id.clone();
                         let _ = events.send(SessionEvent::SftpStatus(format!(
                             "{} {}...",
                             t("上传", "Uploading"),
-                            filename
+                            remote_name
                         )));
                         match upload_pipelined(
                             &handle,
                             &local,
                             &remote_path,
-                            &filename,
+                            &remote_name,
                             &id,
                             &events,
                             &cancel,
@@ -1125,9 +1165,14 @@ async fn run_sftp(
                                     .await;
                                 }
                                 let _ = events.send(SessionEvent::SftpStatus(format!(
-                                    "{}: {}",
+                                    "{}: {}{}",
                                     t("上传完成", "Uploaded"),
-                                    filename
+                                    remote_name,
+                                    if existed {
+                                        t("（已覆盖）", " (overwritten)")
+                                    } else {
+                                        ""
+                                    }
                                 )));
                             }
                             Ok(false) => {
@@ -1241,6 +1286,9 @@ async fn run_sftp(
                                     local,
                                     remote_dir: target_dir.clone(),
                                     cleanup_after: Some(cleanup_root),
+                                    // Copying between sessions replaces by design:
+                                    // the user picked "copy here", not "ask me".
+                                    conflict: UploadConflict::Replace,
                                 });
                             }
                             Err(e) => {
@@ -2955,18 +3003,32 @@ async fn remove_dir_recursive(sftp: &SftpSession, root: &str) -> Result<()> {
 /// Iterative work-stack: mirror each local dir to the remote (create_dir, whose
 /// "already exists" error is ignored), then upload its files with the pipelined
 /// path. Symlinks and other special files are skipped.
+/// First remote name that does not exist yet in `dir`: the name itself when it
+/// is free, otherwise `name (1)`, `name (2)`, … (the "keep both" upload policy).
+async fn available_remote_name(sftp: &SftpSession, dir: &str, name: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    let mut candidate = name.to_string();
+    for n in 1..=99u32 {
+        if sftp.metadata(&format!("{dir}/{candidate}")).await.is_err() {
+            return candidate;
+        }
+        candidate = numbered_name(name, n);
+    }
+    candidate
+}
+
 async fn upload_dir(
     handle: &SftpLink,
     sftp: &SftpSession,
     local_root: &Path,
     remote_parent: &str,
+    remote_name: &str,
     events: &UnboundedSender<SessionEvent>,
 ) -> Result<()> {
     // Folder uploads aren't individually cancellable from the UI; a throwaway
     // never-set flag satisfies upload_pipelined's signature.
     let no_cancel = Arc::new(AtomicBool::new(false));
-    let root_name = local_file_name_utf8(local_root)?;
-    let remote_root = format!("{}/{}", remote_parent.trim_end_matches('/'), root_name);
+    let remote_root = format!("{}/{}", remote_parent.trim_end_matches('/'), remote_name);
     let mut stack = vec![(local_root.to_path_buf(), remote_root)];
     while let Some((ldir, rdir)) = stack.pop() {
         // Best-effort mkdir; an error usually just means the dir already exists.
