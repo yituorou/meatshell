@@ -8,5 +8,5 @@ mod transfer;
 pub(crate) use sftp::*;
 pub(crate) use transfer::{
     DownloadConflict, DragTransfer, ExportEntry, SftpCommand, SftpHandle, SftpHandles,
-    SftpLastCwd,
+    SftpLastCwd, UploadConflict,
 };

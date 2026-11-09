@@ -7,6 +7,10 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 - **本机侧列表支持隐藏文件开关、点列头排序和按名称筛选。** 路径栏新增“眼睛”按钮切换隐藏/系统项（Windows 属性、Unix 点文件），默认隐藏，AppData、$RECYCLE.BIN 不再占满列表；名称、大小、修改时间列头可点击，按升序 → 降序 → 默认（文件夹在前、自然名称序）循环，当前排序列高亮并带箭头；面板够宽时路径栏下多一行筛选框，输入即按名称过滤（大小写不敏感），切换目录保留。隐藏开关与排序列随布局保存。
 - **The local list gained a hidden-files toggle, clickable column headers and a name filter.** The path bar has an eye button for hidden/system entries (Windows attributes, dotfiles on Unix), off by default so AppData and $RECYCLE.BIN no longer flood the list. Name/size/modified headers cycle ascending → descending → default (folders first, natural name order), with the active column highlighted and arrowed. Wide panes get a filter row under the path bar: typing filters by name (case-insensitive) and survives navigation. The hidden-files and sort preferences are saved with the layout.
+
+- **上传到远端时遇到同名文件会先询问（替换 / 保留两份 / 取消），不再静默覆盖。** 拖拽、粘贴、上传按钮、选择文件上传走同一套判断：目标目录已有同名项时只弹一次；“替换”覆盖同名文件（文件夹则合并），“保留两份”以“名称 (1)”上传（远端自动找空闲名字），取消则不上传并在状态栏提示。若确实覆盖了已有文件，完成提示会标注“（已覆盖）”。
+- **Uploading onto an existing remote name now asks first (replace / keep both / cancel) instead of overwriting silently.** Drag-and-drop, paste, the upload button and the file picker all go through the same check: one prompt per batch, "Replace" overwrites the files (folders merge), "Keep both" uploads as "name (1)" (the worker picks the first free remote name), and cancelling stops the upload with a status-line note. When a replacement did happen, the completion message says "(overwritten)".
+
 ## [0.8.2] - 2026-11-08
 
 - **标签页菜单可记录会话日志，查找显示数量并支持跳转（#535）。** SSH、Telnet、串口和本地终端标签页的右键菜单新增“开始记录会话日志...”：选择保存位置（默认为会话日志目录下的 `<名称>_<时间戳>.log`），先写入当前屏幕内容，记录期间该项变为“停止记录会话日志”。查找栏现在同时搜索回滚历史和当前屏幕，显示“当前/总数”（无匹配时显示“无结果”），可用 Enter / Shift+Enter 或上下按钮跳转，两端循环并自动滚动到匹配处，当前匹配项高亮更明显。
