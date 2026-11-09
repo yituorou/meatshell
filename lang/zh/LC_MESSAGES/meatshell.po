@@ -858,3 +858,5 @@ msgstr "开始记录会话日志..."
 
 msgid "Filter names"
 msgstr "筛选名称"
+msgid "Open in file manager"
+msgstr "打开所在文件夹"

@@ -346,6 +346,9 @@ export component TerminalView inherits Rectangle {
     callback sftp-local-toggle-hidden();
     callback sftp-local-sort(string);
     callback sftp-local-set-filter(string);
+    callback sftp-local-remove-recent(string);
+    callback sftp-local-move-bookmark(string, int);
+    callback sftp-local-reveal();
 
     // Per-session now (#v0.5): the AppWindow stores these in each TerminalState
     // and writes back via the set-* callbacks, so each tab/pane keeps its own SFTP
@@ -2481,6 +2484,9 @@ export component TerminalView inherits Rectangle {
             local-toggle-hidden() => { root.sftp-local-toggle-hidden(); }
             local-sort(column) => { root.sftp-local-sort(column); }
             local-set-filter(text) => { root.sftp-local-set-filter(text); }
+            local-remove-recent(path) => { root.sftp-local-remove-recent(path); }
+            local-move-bookmark(path, delta) => { root.sftp-local-move-bookmark(path, delta); }
+            local-reveal() => { root.sftp-local-reveal(); }
             toggle-dual()          => { root.sftp-toggle-dual(); }
             local-navigate(path)   => { root.sftp-local-navigate(path); }
             local-up()             => { root.sftp-local-up(); }

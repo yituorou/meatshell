@@ -469,6 +469,31 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         });
     }
     {
+        // Recent list: remove a single folder, reorder bookmarks, reveal the
+        // folder in the OS file manager.
+        let weak = window.as_weak();
+        window.on_sftp_local_remove_recent(move |_tab: SharedString, path: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            remove_recent(&w, path.as_str());
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_move_bookmark(
+            move |_tab: SharedString, path: SharedString, delta: i32| {
+                let Some(w) = weak.upgrade() else { return };
+                move_bookmark(&w, path.as_str(), delta);
+            },
+        );
+    }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_reveal(move |tab_id: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            reveal_current(&w, tab_id.as_str());
+        });
+    }
+    {
         // Local list options (#532 follow-up): hidden files, sort column, filter.
         let weak = window.as_weak();
         window.on_sftp_local_toggle_hidden(move |tab_id: SharedString| {

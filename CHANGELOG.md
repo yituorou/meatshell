@@ -5,6 +5,8 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **本机“位置”下拉的小改进：最近项可单独移除、收藏可上下排序、可打开所在文件夹。** 最近列表悬停出现 ×，只删这一条（“清除最近访问”仍在）；收藏行悬停出现 ↑ / ↓ 调整顺序（顺序会保存，决定菜单里的先后）；菜单底部新增“打开所在文件夹”，用系统文件管理器打开左侧当前目录。
+- **Local places menu polish: remove one recent entry, reorder bookmarks, open the folder in the file manager.** Recent rows show a × on hover that drops just that entry (the bulk "Clear recent" stays); bookmark rows show ↑ / ↓ to reorder them (the order is saved and drives the menu); a new "Open in file manager" item at the bottom opens the folder the pane is showing.
 - **本机侧列表支持隐藏文件开关、点列头排序和按名称筛选。** 路径栏新增“眼睛”按钮切换隐藏/系统项（Windows 属性、Unix 点文件），默认隐藏，AppData、$RECYCLE.BIN 不再占满列表；名称、大小、修改时间列头可点击，按升序 → 降序 → 默认（文件夹在前、自然名称序）循环，当前排序列高亮并带箭头；面板够宽时路径栏下多一行筛选框，输入即按名称过滤（大小写不敏感），切换目录保留。隐藏开关与排序列随布局保存。
 - **The local list gained a hidden-files toggle, clickable column headers and a name filter.** The path bar has an eye button for hidden/system entries (Windows attributes, dotfiles on Unix), off by default so AppData and $RECYCLE.BIN no longer flood the list. Name/size/modified headers cycle ascending → descending → default (folders first, natural name order), with the active column highlighted and arrowed. Wide panes get a filter row under the path bar: typing filters by name (case-insensitive) and survives navigation. The hidden-files and sort preferences are saved with the layout.
 

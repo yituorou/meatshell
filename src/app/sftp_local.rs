@@ -774,6 +774,29 @@ pub(super) fn clear_recent(window: &AppWindow) {
     write_places(window, &places);
 }
 
+/// Drop one folder from the recent list.
+pub(super) fn remove_recent(window: &AppWindow, path: &str) {
+    let mut places = places_from(window);
+    places.remove_recent(path);
+    write_places(window, &places);
+}
+
+/// Move a bookmark up (-1) or down (+1) in the places menu.
+pub(super) fn move_bookmark(window: &AppWindow, path: &str, delta: i32) {
+    let mut places = places_from(window);
+    if places.move_bookmark(path, delta) {
+        write_places(window, &places);
+    }
+}
+
+/// Show the folder the pane is showing in the OS file manager.
+pub(super) fn reveal_current(window: &AppWindow, tab_id: &str) {
+    let path = current_path(window, tab_id);
+    if !path.is_empty() {
+        crate::sftp::open_with_os(&path);
+    }
+}
+
 /// Record a folder at the top of the recent list (called when a listing lands).
 fn record_recent(window: &AppWindow, path: &str) {
     let mut places = places_from(window);
