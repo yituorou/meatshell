@@ -73,6 +73,7 @@ pub struct WindowState {
     /// sampler). Dropping the state on close drops these, which stops them —
     /// otherwise they keep firing for the whole process lifetime.
     pub timers: Rc<RefCell<Vec<slint::Timer>>>,
+    pub(super) transfer_speeds: Rc<super::transfer_speeds::TransferSpeeds>,
     pub content_size: Rc<Cell<(f32, f32)>>,
     /// Strong handles: both windows start hidden, and the Slint backend only
     /// keeps a component alive while its window is visible — without these

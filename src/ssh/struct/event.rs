@@ -115,6 +115,8 @@ pub enum SessionEvent {
         is_upload: bool,
         transferred: u64,
         total: u64,
+        /// Source time for cumulative SFTP bytes; None for ZMODEM file offsets.
+        sampled_at: Option<std::time::Instant>,
         state: u8, // 0 = active, 1 = done, 2 = error
         msg: String,
     },

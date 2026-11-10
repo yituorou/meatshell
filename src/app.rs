@@ -50,6 +50,8 @@ mod tab_session_log;
 mod tab_transfer;
 mod term_output;
 mod terminal_ui;
+mod transfer_rate;
+mod transfer_speeds;
 mod tray;
 mod update;
 mod tunnel_callbacks;

@@ -34,7 +34,7 @@ use crate::ssh::{format_mtime, format_size, RemoteEntry, RemoteTreeNode, Session
 
 use super::elevation::Elevation;
 use super::transfer::{
-    numbered_name, DownloadConflict, SftpCommand, SftpHandle, UploadConflict,
+    numbered_name, DownloadConflict, DragReport, SftpCommand, SftpHandle, UploadConflict,
 };
 
 impl SftpHandle {
@@ -1709,8 +1709,13 @@ const TRANSFER_CANCELLED: u8 = 4;
 impl super::transfer::DragTransfer {
     /// Bytes to show as an in-progress row, or `None` when nothing should be
     /// emitted (finished already, or throttled to one update per 150 ms).
+    #[cfg(test)]
     pub(crate) fn progress_update(&self, force: bool) -> Option<u64> {
         let mut report = self.report.lock().unwrap();
+        self.progress_update_locked(&mut report, force)
+    }
+
+    fn progress_update_locked(&self, report: &mut DragReport, force: bool) -> Option<u64> {
         if report.finished {
             return None;
         }
@@ -1729,8 +1734,13 @@ impl super::transfer::DragTransfer {
 
     /// The row's final `(state, bytes, message)`, once. `None` if the drag
     /// never transferred anything (no row was created) or already finished.
+    #[cfg(test)]
     pub(crate) fn final_update(&self) -> Option<(u8, u64, String)> {
         let mut report = self.report.lock().unwrap();
+        self.final_update_locked(&mut report)
+    }
+
+    fn final_update_locked(&self, report: &mut DragReport) -> Option<(u8, u64, String)> {
         if report.finished {
             return None;
         }
@@ -1757,13 +1767,16 @@ impl super::transfer::DragTransfer {
     }
 
     fn emit_progress(&self, events: &UnboundedSender<SessionEvent>, force: bool) {
-        if let Some(done) = self.progress_update(force) {
+        // Keep snapshots and synchronous sends ordered across concurrent files.
+        let mut report = self.report.lock().unwrap();
+        if let Some(done) = self.progress_update_locked(&mut report, force) {
             emit_transfer(events, &self.id, &self.name, false, done, self.total, TRANSFER_ACTIVE, "");
         }
     }
 
     fn emit_final(&self, events: &UnboundedSender<SessionEvent>) {
-        if let Some((state, done, message)) = self.final_update() {
+        let mut report = self.report.lock().unwrap();
+        if let Some((state, done, message)) = self.final_update_locked(&mut report) {
             emit_transfer(events, &self.id, &self.name, false, done, self.total, state, &message);
         }
     }
@@ -2686,6 +2699,7 @@ fn emit_transfer(
         is_upload,
         transferred,
         total,
+        sampled_at: Some(Instant::now()),
         state,
         msg: msg.to_string(),
     });
@@ -3260,6 +3274,49 @@ const _: fn() = || {
     let _ = format_mtime(0);
     let _: RemoteTreeNode;
 };
+
+#[cfg(test)]
+mod transfer_event_tests {
+    use super::*;
+    use crate::sftp::DragTransfer;
+
+    #[test]
+    fn concurrent_drag_events_stay_ordered_through_completion() {
+        let progress = DragTransfer::new("drag".into(), "files".into(), 66);
+        let (events, mut received) = mpsc::unbounded_channel();
+        let ready = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                let (progress, events, ready) = (&progress, &events, &ready);
+                scope.spawn(move || {
+                    progress.done.fetch_add(1, Ordering::Relaxed);
+                    progress.emit_progress(events, true);
+                    ready.wait();
+                    for _ in 0..32 {
+                        progress.done.fetch_add(1, Ordering::Relaxed);
+                        progress.emit_progress(events, true);
+                    }
+                });
+            }
+            ready.wait();
+            progress.emit_final(&events);
+        });
+        progress.emit_final(&events);
+        progress.emit_progress(&events, true);
+
+        let samples: Vec<_> = std::iter::from_fn(|| received.try_recv().ok())
+            .map(|event| match event {
+                SessionEvent::SftpTransfer { state, transferred, sampled_at, .. } =>
+                    (state, transferred, sampled_at.expect("SFTP source time")),
+                _ => panic!("unexpected event"),
+            })
+            .collect();
+        assert!(samples.len() >= 3);
+        assert_eq!(samples.last().unwrap().0, TRANSFER_DONE);
+        assert!(samples[..samples.len() - 1].iter().all(|s| s.0 == TRANSFER_ACTIVE));
+        assert!(samples.windows(2).all(|s| s[0].1 <= s[1].1 && s[0].2 <= s[1].2));
+    }
+}
 
 #[cfg(test)]
 mod sanitize_tests {

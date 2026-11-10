@@ -479,6 +479,7 @@ fn emit(
         is_upload,
         transferred,
         total,
+        sampled_at: None,
         state,
         msg: msg.to_string(),
     });
