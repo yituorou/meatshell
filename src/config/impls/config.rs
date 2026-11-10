@@ -883,6 +883,14 @@ impl ConfigStore {
         !self.cache.paste_confirm_disabled
     }
 
+    pub fn right_click_copy(&self) -> bool {
+        self.cache.right_click_copy
+    }
+
+    pub fn set_right_click_copy(&mut self, enabled: bool) {
+        self.cache.right_click_copy = enabled;
+    }
+
     pub fn set_paste_confirm_enabled(&mut self, enabled: bool) {
         self.cache.paste_confirm_disabled = !enabled;
     }
@@ -2160,6 +2168,24 @@ mod tests {
             key: [7u8; 32],
         }
     }
+
+    #[test]
+    fn right_click_copy_is_opt_in_and_persists_without_disabling_paste_confirmation() {
+        let mut store = temp_store();
+        store.cache = serde_json::from_str("{}").unwrap();
+        assert!(!store.right_click_copy());
+        store.set_right_click_copy(true);
+        store.save().unwrap();
+        let disk: ConfigFile = serde_json::from_str(&std::fs::read_to_string(&store.path).unwrap()).unwrap();
+        assert!(disk.right_click_copy);
+        assert!(!disk.paste_confirm_disabled);
+        store.set_right_click_copy(false);
+        store.save().unwrap();
+        let disk: ConfigFile = serde_json::from_str(&std::fs::read_to_string(&store.path).unwrap()).unwrap();
+        assert!(!disk.right_click_copy);
+        let _ = std::fs::remove_file(&store.path);
+    }
+
 
     #[test]
     fn terminal_cursor_style_defaults_and_validates() {

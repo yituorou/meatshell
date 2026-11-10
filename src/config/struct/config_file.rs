@@ -184,6 +184,9 @@ pub struct ConfigFile {
     /// existing configurations unless the user explicitly disables it (#300).
     #[serde(default)]
     pub paste_confirm_disabled: bool,
+    /// Right-click copies a selection or pastes when no selection exists.
+    #[serde(default)]
+    pub right_click_copy: bool,
     /// Stored inverted so Ctrl+Alt+V, Shift+Insert, and middle-click paste stay
     /// enabled for existing users (#300).
     #[serde(default)]
