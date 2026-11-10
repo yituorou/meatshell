@@ -30,12 +30,12 @@ import { ProcWindow, ProcRow } from "proc_window.slint";
 import { SystemInfoWindow, SysInfoRow, SysMetricRow, SysNetRow } from "system_info_window.slint";
 import { EditorWindow } from "editor_window.slint";
 import { EditorPane, EditorFindResult, EditorDoc } from "editor_pane.slint";
-import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, UpdateMirrorRow, ColorThemeItem } from "interface_panel.slint";
+import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ColorThemeItem } from "interface_panel.slint";
 // Re-export so `slint::include_modules!` generates the detached Rust window types.
 export { ProcWindow, SystemInfoWindow, EditorWindow }
 import { ComboBox, SpinBox, LineEdit, Button, ScrollView, CheckBox, Palette } from "std-widgets.slint";
 
-export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem }
+export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem }
 
 // --- TerminalState ---------------------------------------------------------
 // Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
@@ -1076,6 +1076,17 @@ export component AppWindow inherits Window {
     callback add-custom-agent(string, string, string);
     callback remove-custom-agent(string);
     callback pick-agent-directory();
+    // Settings → Local shells (#533, #538): detected + user-defined shells.
+    in property <[CustomShellInfo]> custom-shells;
+    in property <string> detected-shells;
+    in-out property <string> shell-new-name;
+    in-out property <string> shell-new-program;
+    in-out property <string> shell-new-args;
+    in-out property <string> shell-new-directory;
+    callback add-custom-shell(string, string, string, string);
+    callback remove-custom-shell(string);
+    callback pick-shell-program();
+    callback pick-shell-directory();
     // Rebuild the launch menu, the "agents" group and the settings list.
     callback refresh-agent-launchers();
     // Settings page to show when the panel opens (see InterfacePanel).
@@ -5414,6 +5425,12 @@ export component AppWindow inherits Window {
                     agent-new-name <=> root.agent-new-name;
                     agent-new-command <=> root.agent-new-command;
                     agent-new-directory <=> root.agent-new-directory;
+                    custom-shells: root.custom-shells;
+                    detected-shells: root.detected-shells;
+                    shell-new-name <=> root.shell-new-name;
+                    shell-new-program <=> root.shell-new-program;
+                    shell-new-args <=> root.shell-new-args;
+                    shell-new-directory <=> root.shell-new-directory;
                     set-wallpaper(v) => { root.set-wallpaper(v); }
                     pick-wallpaper-file() => { root.pick-wallpaper-file(); }
                     color-themes: root.color-themes;
@@ -5485,6 +5502,10 @@ export component AppWindow inherits Window {
                     add-custom-agent(name, command, directory) => { root.add-custom-agent(name, command, directory); }
                     remove-custom-agent(id) => { root.remove-custom-agent(id); }
                     pick-agent-directory => { root.pick-agent-directory(); }
+                    add-custom-shell(name, program, args, directory) => { root.add-custom-shell(name, program, args, directory); }
+                    remove-custom-shell(id) => { root.remove-custom-shell(id); }
+                    pick-shell-program => { root.pick-shell-program(); }
+                    pick-shell-directory => { root.pick-shell-directory(); }
                     persist-wallpaper-overlay(v) => { root.persist-wallpaper-overlay(v); }
                 }
             }

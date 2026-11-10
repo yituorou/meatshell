@@ -1682,7 +1682,7 @@ pub(super) fn wire_session_callbacks(
                 let saved = store.borrow().get(&session_id).map(|s| s.name.clone());
                 saved
                     .or_else(|| {
-                        session_models::builtin_local_sessions(store.borrow().wsl_profiles())
+                        session_models::system_shell_sessions(&store.borrow())
                             .into_iter()
                             .find(|s| s.id == session_id)
                             .map(|s| s.name)

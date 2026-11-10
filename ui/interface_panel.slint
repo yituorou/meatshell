@@ -57,6 +57,15 @@ export struct CustomAgentInfo {
     directory: string,
 }
 
+// A user-defined local shell in Settings › Local shells (#538).
+export struct CustomShellInfo {
+    id: string,
+    name: string,
+    program: string,
+    args: string,
+    directory: string,
+}
+
 // One left-nav row (icon + label).
 component NavItem inherits Rectangle {
     in property <string> icon;
@@ -607,6 +616,13 @@ export component InterfacePanel inherits Rectangle {
     in-out property <string> agent-new-name;
     in-out property <string> agent-new-command;
     in-out property <string> agent-new-directory;
+    // Settings › Local shells (#533, #538).
+    in property <[CustomShellInfo]> custom-shells;
+    in property <string> detected-shells;
+    in-out property <string> shell-new-name;
+    in-out property <string> shell-new-program;
+    in-out property <string> shell-new-args;
+    in-out property <string> shell-new-directory;
     property <string> new-rule-pattern;
     property <bool> new-rule-regex;
     property <bool> new-rule-case-sensitive;
@@ -663,6 +679,10 @@ export component InterfacePanel inherits Rectangle {
     callback add-custom-agent(string /* name */, string /* command */, string /* directory */);
     callback remove-custom-agent(string /* id */);
     callback pick-agent-directory();
+    callback add-custom-shell(string /* name */, string /* program */, string /* args */, string /* directory */);
+    callback remove-custom-shell(string /* id */);
+    callback pick-shell-program();
+    callback pick-shell-directory();
 
     HorizontalLayout {
         // --- Left nav ------------------------------------------------------
@@ -719,6 +739,11 @@ export component InterfacePanel inherits Rectangle {
                     icon: "\u{E2C7}"; label: "SFTP";
                     active: root.ifd-page == "sftp";
                     clicked => { root.ifd-page = "sftp"; }
+                }
+                NavItem {
+                    icon: "\u{EB8E}"; label: root.lang-en ? "Local shells" : "本地终端";
+                    active: root.ifd-page == "shells";
+                    clicked => { root.ifd-page = "shells"; }
                 }
                 if root.is-windows : NavItem {
                     icon: "\u{E30A}"; label: "WSL";
@@ -1640,6 +1665,113 @@ export component InterfacePanel inherits Rectangle {
                     Switch {
                         on: root.editor-embedded;
                         toggled(v) => { root.editor-embedded = v; root.set-editor-embedded(v); }
+                    }
+                }
+            }
+
+            // --- Local shells page (#533, #538) ------------------------
+            if root.ifd-page == "shells" : VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 14px;
+                spacing: 8px;
+                alignment: start;
+                SectionHeader { text: root.lang-en ? "LOCAL SHELLS" : "本地终端"; height: 24px; }
+                Text {
+                    text: root.is-windows
+                        ? (root.lang-en
+                            ? "PowerShell 7, Git Bash and Nushell are listed automatically when installed. Add any other shell here: the program starts directly as the tab's shell, e.g. C:\\msys64\\usr\\bin\\zsh.exe with arguments -l -i."
+                            : "已安装的 PowerShell 7、Git Bash 和 Nushell 会被自动列出。其他终端可在此添加：程序会直接作为标签页的 shell 启动，例如 C:\\msys64\\usr\\bin\\zsh.exe，参数 -l -i。")
+                        : (root.lang-en
+                            ? "PowerShell 7 and Nushell are listed automatically when installed. Add any other shell here: the program starts directly as the tab's shell, e.g. /usr/bin/fish with arguments -l."
+                            : "已安装的 PowerShell 7 和 Nushell 会被自动列出。其他终端可在此添加：程序会直接作为标签页的 shell 启动，例如 /usr/bin/fish，参数 -l。");
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.panel-font;
+                    wrap: word-wrap;
+                }
+                if root.detected-shells != "" : Text {
+                    text: (root.lang-en ? "Detected: " : "已检测到：") + root.detected-shells;
+                    color: Theme.text-secondary;
+                    font-size: 11px * Theme.panel-font;
+                    wrap: word-wrap;
+                }
+                LabeledInput {
+                    label: root.lang-en ? "Display name" : "显示名称";
+                    placeholder: "zsh";
+                    value <=> root.shell-new-name;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LabeledInput {
+                        horizontal-stretch: 1;
+                        label: root.lang-en ? "Program" : "程序";
+                        placeholder: root.is-windows ? "C:\\msys64\\usr\\bin\\zsh.exe" : "/usr/bin/fish";
+                        value <=> root.shell-new-program;
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        GhostButton {
+                            text: root.lang-en ? "Browse…" : "选择程序…";
+                            clicked => { root.pick-shell-program(); }
+                        }
+                    }
+                }
+                LabeledInput {
+                    label: root.lang-en ? "Arguments (optional)" : "启动参数（可选）";
+                    placeholder: "-l -i";
+                    value <=> root.shell-new-args;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LabeledInput {
+                        horizontal-stretch: 1;
+                        label: root.lang-en ? "Start folder (optional)" : "启动目录（可选）";
+                        placeholder: root.is-windows ? "D:\\Projects" : "~/projects";
+                        value <=> root.shell-new-directory;
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        GhostButton {
+                            text: root.lang-en ? "Browse…" : "选择目录…";
+                            clicked => { root.pick-shell-directory(); }
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    PrimaryButton {
+                        text: root.lang-en ? "Add shell" : "添加终端";
+                        clicked => {
+                            root.add-custom-shell(root.shell-new-name, root.shell-new-program,
+                                root.shell-new-args, root.shell-new-directory);
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                if root.custom-shells.length == 0 : Text {
+                    text: root.lang-en ? "No custom shells yet." : "暂无自定义终端。";
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.panel-font;
+                }
+                for shell in root.custom-shells : Rectangle {
+                    height: 54px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg-elevated;
+                    HorizontalLayout {
+                        padding-left: 10px; padding-right: 8px; spacing: 8px;
+                        VerticalLayout {
+                            horizontal-stretch: 1; alignment: center;
+                            Text { text: shell.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; }
+                            Text {
+                                text: shell.program + (shell.args == "" ? "" : " " + shell.args)
+                                    + (shell.directory == "" ? "" : "  ·  " + shell.directory);
+                                color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
+                            }
+                        }
+                        GhostButton {
+                            text: root.lang-en ? "Remove" : "删除";
+                            clicked => { root.remove-custom-shell(shell.id); }
+                        }
                     }
                 }
             }

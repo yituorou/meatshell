@@ -31,7 +31,7 @@ pub(super) fn wsl_profile_model(store: &ConfigStore) -> ModelRc<WslProfileInfo> 
 
 /// Local shells for the tab bar's launch menu (#427), in Quick connect order.
 pub(super) fn launch_shell_model(store: &ConfigStore) -> ModelRc<LaunchItem> {
-    let rows = builtin_local_sessions(store.wsl_profiles())
+    let rows = system_shell_sessions(store)
         .into_iter()
         .map(|session| LaunchItem {
             id: session.id.into(),
@@ -382,8 +382,16 @@ pub(super) fn sync_sessions_to_model(store: &ConfigStore, model: &VecModel<Sessi
 /// Generated rows at the top of Quick connect: the "system" shells, then the
 /// "agents" group of detected and custom agent CLIs (#427).
 fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {
-    let mut sessions = builtin_local_sessions(store.wsl_profiles());
+    let mut sessions = system_shell_sessions(store);
     sessions.extend(super::agents::agent_sessions(store));
+    sessions
+}
+
+/// Every entry of the "system" group: the built-in shells, then the detected
+/// (PowerShell 7, Git Bash, Nushell) and user-defined ones (#533, #538).
+pub(super) fn system_shell_sessions(store: &ConfigStore) -> Vec<Session> {
+    let mut sessions = builtin_local_sessions(store.wsl_profiles());
+    sessions.extend(super::local_shells::shell_sessions(store));
     sessions
 }
 
@@ -445,7 +453,7 @@ pub(super) fn resolve_builtin_session(store: &ConfigStore, id: &str) -> Option<S
         session.local_command = crate::update::linux::aur_update_command();
         return Some(session);
     }
-    builtin_local_sessions(store.wsl_profiles())
+    system_shell_sessions(store)
         .into_iter()
         .find(|s| s.id == id)
 }
@@ -623,6 +631,8 @@ pub(super) fn session_from_draft(
         local_distribution: String::new(),
         local_working_dir: String::new(),
         local_command: String::new(),
+        local_program: String::new(),
+        local_args: Vec::new(),
         serial_port: draft.serial_port.to_string(),
         baud_rate: if draft.baud_rate <= 0 {
             115_200

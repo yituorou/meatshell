@@ -28,6 +28,21 @@ pub struct CustomAgent {
     pub directory: String,
 }
 
+/// A user-defined local shell (#538), e.g. nushell, MSYS2 zsh or fish. Unlike
+/// a custom agent, `program` is started directly as the tab's shell (no
+/// PowerShell around it), with `args` (one line, split like a command line)
+/// and an optional start `directory`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomShell {
+    pub id: String,
+    pub name: String,
+    pub program: String,
+    #[serde(default)]
+    pub args: String,
+    #[serde(default)]
+    pub directory: String,
+}
+
 // Testing-stage MCP defaults. Switch these serde defaults to false before the
 // feature is promoted from preview to a stable release.
 fn default_mcp_preview_enabled() -> bool {
@@ -98,6 +113,9 @@ pub struct ConfigFile {
     /// User-defined agent launchers shown next to the detected ones (#427).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_agents: Vec<CustomAgent>,
+    /// User-defined local shells listed with the built-in ones (#538).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_shells: Vec<CustomShell>,
     /// Preset SFTP download directory. Empty = ask each time.
     #[serde(default)]
     pub download_dir: String,

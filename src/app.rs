@@ -24,6 +24,7 @@ mod editor_syntax;
 mod jump_list;
 mod key_input;
 pub mod launch;
+mod local_shells;
 mod misc_callbacks;
 mod open_window;
 mod panes;

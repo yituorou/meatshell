@@ -1167,6 +1167,31 @@ impl ConfigStore {
         self.cache.custom_agents.retain(|agent| agent.id != id);
     }
 
+    pub fn custom_shells(&self) -> &[CustomShell] {
+        &self.cache.custom_shells
+    }
+
+    /// Add a user-defined local shell (#538). Returns false (and adds nothing)
+    /// when the name or program is blank.
+    pub fn add_custom_shell(&mut self, name: &str, program: &str, args: &str, directory: &str) -> bool {
+        let (name, program) = (name.trim(), program.trim().trim_matches('"'));
+        if name.is_empty() || program.is_empty() {
+            return false;
+        }
+        self.cache.custom_shells.push(CustomShell {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            program: program.to_string(),
+            args: args.trim().to_string(),
+            directory: directory.trim().to_string(),
+        });
+        true
+    }
+
+    pub fn remove_custom_shell(&mut self, id: &str) {
+        self.cache.custom_shells.retain(|shell| shell.id != id);
+    }
+
     pub fn quick_panel_open(&self) -> bool {
         self.cache.quick_panel_open
     }

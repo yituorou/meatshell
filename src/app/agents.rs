@@ -250,7 +250,7 @@ pub(super) fn agent_sessions(store: &ConfigStore) -> Vec<Session> {
 /// agent installed after meatshell started (Windows processes keep the PATH
 /// they were launched with) and macOS apps opened from Finder, which get a
 /// minimal PATH.
-fn search_dirs() -> Vec<PathBuf> {
+pub(super) fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect())
         .unwrap_or_default();
@@ -391,6 +391,12 @@ pub(super) fn wire_agent_launchers(
     let spawned = std::thread::Builder::new()
         .name("agent-detect".into())
         .spawn(move || {
+            // Extra local shells (#533, #538) share this off-thread pass.
+            let shells = super::local_shells::detect_once();
+            tracing::info!(
+                "local shells detected: {}",
+                shells.iter().map(|s| s.name).collect::<Vec<_>>().join(", ")
+            );
             let agents = DETECTED.get_or_init(detect_agents);
             tracing::info!(
                 "agent launchers detected: {}",
@@ -429,6 +435,10 @@ fn refresh(
         })
         .collect();
     w.set_custom_agents(slint::ModelRc::new(slint::VecModel::from(custom)));
+    // Detected and user-defined local shells (#533, #538) live in the same
+    // launch menu / Quick connect lists, so refresh them on the same signal.
+    w.set_launch_shells(super::launch_shell_model(&store));
+    super::local_shells::refresh_settings(w, &store);
     super::sync_sessions_for_window(weak, &store, sessions_model);
 }
 

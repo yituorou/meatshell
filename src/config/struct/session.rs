@@ -234,6 +234,14 @@ pub struct Session {
     /// sessions, so it is left out of the config file when empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub local_command: String,
+    /// Executable a generated local session starts directly as its shell,
+    /// with `local_args` — detected shells like PowerShell 7 / nushell / Git
+    /// Bash and user-defined ones (#533, #538). Empty = pick the program from
+    /// `host` (PowerShell, CMD, WSL, $SHELL). Never set on saved sessions.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_program: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub local_args: Vec<String>,
 
     // --- Serial-only fields (ignored unless kind == Serial) -----------------
     /// Serial device path, e.g. "COM3" (Windows) or "/dev/ttyUSB0" (Linux).
@@ -499,6 +507,8 @@ impl Session {
             local_distribution: String::new(),
             local_working_dir: String::new(),
             local_command: String::new(),
+            local_program: String::new(),
+            local_args: Vec::new(),
             serial_port: String::new(),
             baud_rate: default_baud(),
             data_bits: default_data_bits(),
