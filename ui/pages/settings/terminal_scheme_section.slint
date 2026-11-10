@@ -1,0 +1,731 @@
+// Terminal Color Scheme Manager section (iTerm2-Color-Schemes) on Settings › Terminal.
+
+import { Theme } from "../../theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { SectionHeader } from "../../components/common/settings_controls.slint";
+import { TerminalSchemeItem } from "../../components/business/appearance_pickers.slint";
+
+export component TerminalSchemeSection inherits VerticalLayout {
+    in property <bool> lang-en;
+    in property <[TerminalSchemeItem]> terminal-schemes;
+    in property <TerminalSchemeItem> active-terminal-scheme;
+    in-out property <string> terminal-scheme-id: "default";
+    in-out property <string> terminal-scheme-search: "";
+    in-out property <string> terminal-scheme-category: "all";
+    in property <int> terminal-schemes-total: 0;
+    in property <bool> terminal-schemes-has-more: false;
+    in-out property <string> terminal-scheme-status: "";
+    in property <string> term-cursor-style: "block";
+
+    callback select-terminal-scheme(string);
+    callback toggle-favorite-terminal-scheme(string);
+    callback filter-terminal-schemes(string /* query */, string /* category */);
+    callback load-more-terminal-schemes();
+    callback reset-terminal-scheme();
+    callback import-terminal-scheme();
+    callback export-terminal-scheme();
+    callback delete-custom-terminal-scheme(string);
+
+    spacing: 0;
+    alignment: start;
+
+    init => {
+        if (root.terminal-schemes.length == 0) {
+            root.filter-terminal-schemes(root.terminal-scheme-search, root.terminal-scheme-category);
+        }
+    }
+
+    // ── Terminal Color Scheme Manager (iTerm2-Color-Schemes) ──────
+    HorizontalLayout {
+        height: 28px;
+        spacing: 8px;
+        SectionHeader {
+            text: root.lang-en
+                ? "TERMINAL COLOR SCHEME (iTerm2-Color-Schemes)"
+                : "终端配色主题 (iTerm2-Color-Schemes)";
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 20px;
+                width: scheme-count-txt.preferred-width + 12px;
+                border-radius: 10px;
+                background: Theme.accent.with-alpha(0.14);
+                scheme-count-txt := Text {
+                    text: root.terminal-schemes-total + (root.lang-en ? " schemes" : " 款主题");
+                    color: Theme.accent;
+                    font-size: 11px * Theme.panel-font;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        // Action buttons: Restore Default | Import | Export
+        if root.terminal-scheme-id != "default" : Rectangle {
+            height: 28px;
+            width: def-btn-lbl.preferred-width + 20px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: def-btn-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+            background: def-btn-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+            def-btn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.reset-terminal-scheme(); }
+            }
+            def-btn-lbl := Text {
+                text: root.lang-en ? "Default" : "恢复默认";
+                color: Theme.text-secondary;
+                font-size: 11.5px * Theme.panel-font;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 28px;
+            width: imp-btn-lbl.preferred-width + 20px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: imp-btn-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+            background: imp-btn-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+            imp-btn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.import-terminal-scheme(); }
+            }
+            imp-btn-lbl := Text {
+                text: root.lang-en ? "Import..." : "导入主题...";
+                color: Theme.text-secondary;
+                font-size: 11.5px * Theme.panel-font;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 28px;
+            width: exp-btn-lbl.preferred-width + 20px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: exp-btn-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+            background: exp-btn-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+            exp-btn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.export-terminal-scheme(); }
+            }
+            exp-btn-lbl := Text {
+                text: root.lang-en ? "Export..." : "导出当前...";
+                color: Theme.text-secondary;
+                font-size: 11.5px * Theme.panel-font;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    if root.terminal-scheme-status != "" : Text {
+        text: root.terminal-scheme-status;
+        color: Theme.accent;
+        font-size: 11.5px * Theme.panel-font;
+        height: 20px;
+        vertical-alignment: center;
+    }
+
+    Rectangle { height: 8px; }
+
+    // 1. Live Terminal Color Preview Card (shows active scheme bg/fg/cursor/selection + ANSI 16 swatches)
+    Rectangle {
+        height: 150px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        background: root.active-terminal-scheme.bg;
+        clip: true;
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            // Top title strip inside terminal preview
+            HorizontalLayout {
+                height: 20px;
+                spacing: 6px;
+                VerticalLayout {
+                    alignment: center;
+                    HorizontalLayout {
+                        spacing: 5px;
+                        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: #FF5F56; }
+                        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: #FFBD2E; }
+                        Rectangle { width: 10px; height: 10px; border-radius: 5px; background: #27C93F; }
+                    }
+                }
+                Rectangle { width: 6px; }
+                Text {
+                    text: root.active-terminal-scheme.name;
+                    color: root.active-terminal-scheme.fg;
+                    font-size: 12.5px * Theme.panel-font;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "by " + root.active-terminal-scheme.author;
+                    color: root.active-terminal-scheme.fg.with-alpha(0.65);
+                    font-size: 11px * Theme.panel-font;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 18px;
+                        width: mode-badge-txt.preferred-width + 12px;
+                        border-radius: 9px;
+                        background: root.active-terminal-scheme.fg.with-alpha(0.15);
+                        mode-badge-txt := Text {
+                            text: root.active-terminal-scheme.is-dark
+                                ? (root.lang-en ? "Dark" : "深色")
+                                : (root.lang-en ? "Light" : "浅色");
+                            color: root.active-terminal-scheme.fg;
+                            font-size: 10.5px * Theme.panel-font;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Sample shell prompt & ANSI output preview
+            VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    spacing: 0px;
+                    alignment: start;
+                    Text {
+                        text: "root@meatshell";
+                        font-family: Theme.term-font-family;
+                        font-size: Theme.term-font-size;
+                        font-weight: 700;
+                        color: root.active-terminal-scheme.c2;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: ":";
+                        font-family: Theme.term-font-family;
+                        font-size: Theme.term-font-size;
+                        color: root.active-terminal-scheme.fg;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "~/workspace";
+                        font-family: Theme.term-font-family;
+                        font-size: Theme.term-font-size;
+                        font-weight: 700;
+                        color: root.active-terminal-scheme.c4;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "$ git status && ";
+                        font-family: Theme.term-font-family;
+                        font-size: Theme.term-font-size;
+                        font-weight: Theme.term-font-bold ? 700 : 400;
+                        color: root.active-terminal-scheme.fg;
+                        vertical-alignment: center;
+                    }
+                    // Selection highlight sample
+                    Rectangle {
+                        height: 18px;
+                        width: sel-sample-txt.preferred-width + 6px;
+                        border-radius: 3px;
+                        background: root.active-terminal-scheme.selection;
+                        sel-sample-txt := Text {
+                            text: "cargo test";
+                            font-family: Theme.term-font-family;
+                            font-size: Theme.term-font-size;
+                            color: root.active-terminal-scheme.selection-text;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle { width: 4px; }
+                    // Cursor sample
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: root.term-cursor-style == "bar" ? 2px : 8px;
+                            height: root.term-cursor-style == "underline" ? 2px : 15px;
+                            background: root.active-terminal-scheme.cursor;
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text {
+                        text: "[INFO] SSH-2.0";
+                        font-family: Theme.term-font-family;
+                        font-size: 12px * Theme.panel-font;
+                        color: root.active-terminal-scheme.c6;
+                    }
+                    Text {
+                        text: "✔ 915 themes ready";
+                        font-family: Theme.term-font-family;
+                        font-size: 12px * Theme.panel-font;
+                        font-weight: 700;
+                        color: root.active-terminal-scheme.c10;
+                    }
+                    Text {
+                        text: "⚠ latency 12ms";
+                        font-family: Theme.term-font-family;
+                        font-size: 12px * Theme.panel-font;
+                        color: root.active-terminal-scheme.c3;
+                    }
+                    Text {
+                        text: "✖ 0 errors";
+                        font-family: Theme.term-font-family;
+                        font-size: 12px * Theme.panel-font;
+                        color: root.active-terminal-scheme.c9;
+                    }
+                    Text {
+                        text: "#TrueColor";
+                        font-family: Theme.term-font-family;
+                        font-size: 12px * Theme.panel-font;
+                        color: root.active-terminal-scheme.c13;
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // 16-Color ANSI Swatch Strip (Normal 0..7 + Bright 8..15)
+            VerticalLayout {
+                spacing: 3px;
+                HorizontalLayout {
+                    height: 12px;
+                    spacing: 3px;
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c0; border-width: 1px; border-color: root.active-terminal-scheme.fg.with-alpha(0.18); }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c1; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c2; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c3; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c4; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c5; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c6; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c7; border-width: 1px; border-color: root.active-terminal-scheme.fg.with-alpha(0.18); }
+                }
+                HorizontalLayout {
+                    height: 12px;
+                    spacing: 3px;
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c8; border-width: 1px; border-color: root.active-terminal-scheme.fg.with-alpha(0.18); }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c9; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c10; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c11; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c12; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c13; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c14; }
+                    Rectangle { horizontal-stretch: 1; border-radius: 2px; background: root.active-terminal-scheme.c15; border-width: 1px; border-color: root.active-terminal-scheme.fg.with-alpha(0.18); }
+                }
+            }
+        }
+    }
+
+    Rectangle { height: 10px; }
+
+    // 2. Search Input & Category Filter Tabs (All / Dark / Light / Favorites / Custom)
+    HorizontalLayout {
+        height: 32px;
+        spacing: 8px;
+
+        // Search box
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 32px;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: scheme-search-input.has-focus ? Theme.accent : Theme.border-subtle;
+            background: Theme.bg-elevated;
+
+            HorizontalLayout {
+                padding-left: 9px;
+                padding-right: 8px;
+                spacing: 6px;
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "search";
+                        icon-size: 14px * Theme.panel-font;
+                        color: Theme.text-muted;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: parent.height;
+                    scheme-search-input := TextInput {
+                        width: 100%;
+                        height: 100%;
+                        text <=> root.terminal-scheme-search;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: 12.5px * Theme.panel-font;
+                        vertical-alignment: center;
+                        single-line: true;
+                        changed text => {
+                            root.filter-terminal-schemes(self.text, root.terminal-scheme-category);
+                        }
+                    }
+                    if root.terminal-scheme-search == "" : Text {
+                        x: 0;
+                        width: 100%;
+                        height: 100%;
+                        text: root.lang-en
+                            ? "Search 915+ themes (Dracula, Catppuccin, Solarized, TokyoNight...)"
+                            : "搜索 915+ 款主题 (如 Dracula, Catppuccin, Solarized, TokyoNight...)";
+                        color: Theme.text-muted;
+                        font-size: 12px * Theme.panel-font;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                if root.terminal-scheme-search != "" : VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 9px;
+                        background: clear-search-ta.has-hover ? Theme.bg-hover : transparent;
+                        clear-search-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.terminal-scheme-search = "";
+                                root.filter-terminal-schemes("", root.terminal-scheme-category);
+                            }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "close";
+                            icon-size: 11px * Theme.panel-font;
+                            color: Theme.text-muted;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Category filter segmented control
+        Rectangle {
+            height: 32px;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            background: Theme.bg-elevated;
+            HorizontalLayout {
+                padding: 2px;
+                spacing: 2px;
+                for cat in [
+                    { id: "all", label: root.lang-en ? "All" : "全部" },
+                    { id: "dark", label: root.lang-en ? "Dark" : "深色" },
+                    { id: "light", label: root.lang-en ? "Light" : "浅色" },
+                    { id: "favorites", label: root.lang-en ? "★ Starred" : "★ 收藏" },
+                    { id: "custom", label: root.lang-en ? "Custom" : "自定义" },
+                ] : Rectangle {
+                    width: cat-lbl.preferred-width + 14px;
+                    height: 26px;
+                    border-radius: 5px;
+                    background: root.terminal-scheme-category == cat.id
+                        ? Theme.accent
+                        : (cat-ta.has-hover ? Theme.bg-hover : transparent);
+                    cat-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.terminal-scheme-category = cat.id;
+                            root.filter-terminal-schemes(root.terminal-scheme-search, cat.id);
+                        }
+                    }
+                    cat-lbl := Text {
+                        text: cat.label;
+                        color: root.terminal-scheme-category == cat.id ? white : Theme.text-secondary;
+                        font-size: 11.5px * Theme.panel-font;
+                        font-weight: root.terminal-scheme-category == cat.id ? 600 : 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle { height: 8px; }
+
+    // 3. Scrollable Theme Gallery List
+    Rectangle {
+        height: 264px;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        background: Theme.bg-panel;
+        clip: true;
+
+        if root.terminal-schemes.length == 0 : VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            Text {
+                text: root.lang-en ? "No matching terminal color schemes" : "未找到匹配的终端配色方案";
+                color: Theme.text-muted;
+                font-size: 13px * Theme.panel-font;
+                horizontal-alignment: center;
+            }
+        }
+
+        if root.terminal-schemes.length > 0 : scheme-scroll := ScrollView {
+            width: 100%;
+            height: 100%;
+            content-width: self.visible-width;
+            content-height: scheme-list-box.preferred-height;
+
+            scheme-list-box := VerticalLayout {
+                width: scheme-scroll.visible-width;
+                padding: 6px;
+                spacing: 4px;
+
+                for item in root.terminal-schemes : scheme-row := Rectangle {
+                    property <bool> is-selected: item.id == root.terminal-scheme-id;
+                    height: 48px;
+                    border-radius: 7px;
+                    border-width: self.is-selected ? 1.5px : 1px;
+                    border-color: self.is-selected ? Theme.accent : (row-select-ta.has-hover ? Theme.border-strong : transparent);
+                    background: self.is-selected
+                        ? Theme.accent.with-alpha(Theme.dark ? 0.16 : 0.10)
+                        : (row-select-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated.with-alpha(0.55));
+
+                    row-select-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.select-terminal-scheme(item.id); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 10px;
+                        spacing: 10px;
+
+                        // Mini terminal color swatch card
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 68px;
+                                height: 34px;
+                                border-radius: 5px;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+                                background: item.bg;
+                                clip: true;
+
+                                // Sample prompt glyph + cursor
+                                HorizontalLayout {
+                                    x: 5px;
+                                    y: 3px;
+                                    height: 16px;
+                                    spacing: 2px;
+                                    Text {
+                                        text: ">_";
+                                        font-family: Theme.term-font-family;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        color: item.c2;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: "sh";
+                                        font-family: Theme.term-font-family;
+                                        font-size: 10px;
+                                        color: item.fg;
+                                        vertical-alignment: center;
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Rectangle {
+                                            width: 4px;
+                                            height: 9px;
+                                            background: item.cursor;
+                                        }
+                                    }
+                                }
+
+                                // 8 ANSI color bar at bottom of mini swatch
+                                HorizontalLayout {
+                                    x: 4px;
+                                    y: 23px;
+                                    width: 60px;
+                                    height: 6px;
+                                    spacing: 1.5px;
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c1; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c2; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c3; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c4; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c5; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c6; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c9; }
+                                    Rectangle { horizontal-stretch: 1; border-radius: 1px; background: item.c12; }
+                                }
+                            }
+                        }
+
+                        // Theme title, author, and Dark/Light/Custom badges
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Text {
+                                    text: item.name;
+                                    color: Theme.text-primary;
+                                    font-size: 13px * Theme.panel-font;
+                                    font-weight: scheme-row.is-selected ? 700 : 600;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        height: 16px;
+                                        width: item-mode-lbl.preferred-width + 10px;
+                                        border-radius: 4px;
+                                        background: item.is-dark
+                                            ? (Theme.dark ? #2d333b : #e2e8f0)
+                                            : (Theme.dark ? #3e3829 : #fef3c7);
+                                        item-mode-lbl := Text {
+                                            text: item.is-dark
+                                                ? (root.lang-en ? "Dark" : "深色")
+                                                : (root.lang-en ? "Light" : "浅色");
+                                            color: Theme.text-secondary;
+                                            font-size: 10px * Theme.panel-font;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                                if item.is-custom : VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        height: 16px;
+                                        width: custom-lbl.preferred-width + 10px;
+                                        border-radius: 4px;
+                                        background: Theme.accent.with-alpha(0.15);
+                                        custom-lbl := Text {
+                                            text: root.lang-en ? "Custom" : "自定义";
+                                            color: Theme.accent;
+                                            font-size: 10px * Theme.panel-font;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: item.author + "  ·  BG " + (item.is-dark ? "Dark" : "Light");
+                                color: Theme.text-muted;
+                                font-size: 11px * Theme.panel-font;
+                                overflow: elide;
+                            }
+                        }
+
+                        // Active badge
+                        if scheme-row.is-selected : VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 22px;
+                                width: active-lbl.preferred-width + 14px;
+                                border-radius: 11px;
+                                background: Theme.accent;
+                                active-lbl := Text {
+                                    text: root.lang-en ? "✓ Active" : "✓ 当前使用";
+                                    color: white;
+                                    font-size: 11px * Theme.panel-font;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Delete custom scheme button
+                        if item.is-custom : VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 26px;
+                                height: 26px;
+                                border-radius: 6px;
+                                background: del-scheme-ta.has-hover ? Theme.danger.with-alpha(0.15) : transparent;
+                                del-scheme-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.delete-custom-terminal-scheme(item.id); }
+                                }
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: "trash";
+                                    icon-size: 13px * Theme.panel-font;
+                                    color: del-scheme-ta.has-hover ? Theme.danger : Theme.text-muted;
+                                }
+                            }
+                        }
+
+                        // Favorite star button
+                        if item.id != "default" : VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px;
+                                height: 28px;
+                                border-radius: 6px;
+                                background: fav-ta.has-hover ? Theme.bg-hover : transparent;
+                                fav-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.toggle-favorite-terminal-scheme(item.id); }
+                                }
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: item.is-favorite ? "star-filled" : "star";
+                                    icon-size: 14px * Theme.panel-font;
+                                    color: item.is-favorite ? #F59E0B : Theme.text-muted;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.terminal-schemes-has-more : Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: more-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    more-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.load-more-terminal-schemes(); }
+                    }
+                    Text {
+                        text: root.lang-en
+                            ? "Load more themes... (" + root.terminal-schemes.length + " / " + root.terminal-schemes-total + ")"
+                            : "加载更多主题... (已显示 " + root.terminal-schemes.length + " / 共 " + root.terminal-schemes-total + " 款)";
+                        color: Theme.accent;
+                        font-size: 12px * Theme.panel-font;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

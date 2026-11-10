@@ -1,0 +1,884 @@
+// LocalPane — this machine's folders, the left half of the split SFTP view.
+
+import { Theme, TooltipState } from "../../theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { SftpEntry, SftpLocalPlace, SftpIconBtn, SftpPillBtn, SftpMenuItem, SftpStarButton } from "sftp_types_and_buttons.slint";
+import { LocalPlacesButton } from "sftp_places_popup.slint";
+
+export component LocalPane inherits Rectangle {
+    in property <[SftpEntry]> entries;
+    in property <string> path: "";
+    in property <bool> loading: false;
+    in property <string> status: "";
+    in property <int> selected-count: 0;
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
+    in property <[string]> bookmarks;
+    in property <[string]> recent;
+    in property <bool> bookmarked: false;
+    in-out property <bool> show-hidden: false;
+    in-out property <bool> sub-open: false;
+
+    callback navigate(string);      // "..", "~" or a typed path
+    callback up();
+    callback home();
+    callback refresh();
+    callback places-refresh();      // re-read drives / user folders
+    callback toggle-bookmark();
+    callback remove-bookmark(string);
+    callback clear-recent();
+    callback open(string);          // double-click on a file
+    callback toggle-select(int);
+    callback select-range(int, int);
+    callback copy-path(string);
+    callback upload(string);        // upload this entry (file or whole folder)
+    callback upload-selected();
+    callback sort-request(string, int);
+    pure callback entry-matches(string, string, string) -> bool;
+    callback drag-begin(int /*row*/, int /*item count*/, string /*label*/, length /*abs x*/, length /*abs y*/);
+    callback drag-move(length /*abs x*/, length /*abs y*/);
+    callback drag-end(length /*abs x*/, length /*abs y*/);
+    callback drag-cancel();
+
+    property <int> selected-row: -1;
+    property <int> select-anchor: -1;
+    property <bool> shift-click-pending: false;
+    property <bool> drag-started: false;
+    property <length> menu-x;
+    property <length> menu-y;
+    property <string> menu-target;
+    property <bool> menu-target-is-dir;
+    property <string> filter-text: "";
+    property <string> sort-key: "name";
+    property <int> sort-dir: 1;
+    // Responsive columns for LocalPane: Name, Size, Type, Modified
+    property <bool> show-size: root.width > 240px;
+    property <bool> show-type: root.width > 340px;
+    property <bool> show-modified: root.width > 450px;
+
+    // Exclusive single-column sorting: strictly toggles between ascending (1) and descending (-1).
+    function trigger-sort(key: string) {
+        if (root.sort-key == key) {
+            root.sort-dir = root.sort-dir > 0 ? -1 : 1;
+        } else {
+            root.sort-key = key;
+            root.sort-dir = 1;
+        }
+        root.sort-request(root.sort-key, root.sort-dir);
+    }
+
+    background: Theme.bg-root;
+    clip: true;
+
+    changed path => {
+        path-input.text = root.path;
+        root.selected-row = -1;
+        root.select-anchor = -1;
+    }
+
+    VerticalLayout {
+        spacing: 0;
+
+        // --- Row 1: Dedicated Full-Width Local Path & Navigation Bar --------
+        Rectangle {
+            height: 32px;
+            background: Theme.bg-panel;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 4px;
+
+                // Clean "本机" (Local) badge
+                Rectangle {
+                    width: local-badge-txt.preferred-width + 12px;
+                    height: 22px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 5px;
+                    background: Theme.bg-elevated;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    local-badge-txt := Text {
+                        text: @tr("Local");
+                        color: Theme.text-secondary;
+                        font-size: 11px * Theme.ui-scale;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                }
+
+                SftpIconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "up";
+                    tooltip: @tr("Parent directory (..)");
+                    clicked => { root.up(); }
+                }
+
+                SftpIconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "refresh";
+                    tooltip: @tr("Refresh local folder");
+                    clicked => { root.refresh(); }
+                }
+
+                // Full-width editable local path input with subfolder autocomplete & bookmark star
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 80px;
+                    height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: Theme.bg-root;
+                    border-width: 1px;
+                    border-color: path-input.has-focus || root.sub-open ? Theme.accent : Theme.border-subtle;
+                    path-input := TextInput {
+                        x: 8px;
+                        width: max(20px, parent.width - 54px);
+                        height: parent.height;
+                        text: root.path;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                        single-line: true;
+                        accepted => {
+                            root.sub-open = false;
+                            root.navigate(self.text);
+                        }
+                        edited => {
+                            root.sub-open = true;
+                        }
+                        changed has-focus => {
+                            if (self.has-focus) {
+                                root.sub-open = true;
+                            }
+                        }
+                    }
+                    // Quick subfolder autocomplete dropdown trigger button
+                    Rectangle {
+                        x: parent.width - 48px;
+                        y: (parent.height - self.height) / 2;
+                        width: 22px;
+                        height: 20px;
+                        border-radius: 4px;
+                        background: root.sub-open ? Theme.bg-active : (lsub-btn-ta.has-hover ? Theme.bg-hover : transparent);
+                        lsub-btn-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                TooltipState.hide(@tr("Quick subfolder autocomplete"));
+                                root.sub-open = !root.sub-open;
+                                if (!root.sub-open) {
+                                    path-input.clear-focus();
+                                }
+                            }
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    TooltipState.show(@tr("Quick subfolder autocomplete"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                } else {
+                                    TooltipState.hide(@tr("Quick subfolder autocomplete"));
+                                }
+                            }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: root.sub-open ? "chevron-up" : "chevron-down";
+                            icon-size: 13px * Theme.ui-scale;
+                            color: root.sub-open || lsub-btn-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+                        }
+                    }
+                    SftpStarButton {
+                        x: parent.width - 25px;
+                        y: (parent.height - self.height) / 2;
+                        bookmarked: root.bookmarked;
+                        toggled => { root.toggle-bookmark(); }
+                    }
+                }
+
+                LocalPlacesButton {
+                    y: (parent.height - self.height) / 2;
+                    quick-places: root.quick-places;
+                    drive-places: root.drive-places;
+                    bookmarks: root.bookmarks;
+                    recent: root.recent;
+                    current-path: root.path;
+                    bookmarked: root.bookmarked;
+                    pane-height: root.height;
+                    opened => { root.places-refresh(); }
+                    toggle-bookmark => { root.toggle-bookmark(); }
+                    navigate(path) => { root.navigate(path); }
+                    remove-bookmark(path) => { root.remove-bookmark(path); }
+                    clear-recent() => { root.clear-recent(); }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle.with-alpha(0.6); }
+
+        // --- Row 2: Filter, Show/Hide Hidden Files & Local Actions Bar ------
+        Rectangle {
+            height: 32px;
+            background: Theme.bg-panel;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 4px;
+
+                // Full-width real-time filter for local files
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 72px;
+                    height: 24px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 6px;
+                    background: Theme.bg-root;
+                    border-width: 1px;
+                    border-color: local-filter-input.has-focus || root.filter-text != "" ? Theme.accent : Theme.border-subtle;
+                    OutlineIcon {
+                        x: 6px;
+                        y: (parent.height - self.height) / 2;
+                        name: "search";
+                        icon-size: 13px * Theme.ui-scale;
+                        color: root.filter-text != "" ? Theme.accent : Theme.text-muted;
+                    }
+                    local-filter-input := TextInput {
+                        x: 22px;
+                        width: max(20px, parent.width - (root.filter-text != "" ? 42px : 26px));
+                        height: parent.height;
+                        text <=> root.filter-text;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                        single-line: true;
+                    }
+                    if root.filter-text == "" && !local-filter-input.has-focus : Text {
+                        x: 22px;
+                        width: max(0px, parent.width - 26px);
+                        height: parent.height;
+                        text: @tr("Filter files...");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.filter-text != "" : Rectangle {
+                        x: parent.width - 20px;
+                        y: (parent.height - self.height) / 2;
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 4px;
+                        background: lclr-ta.has-hover ? Theme.bg-hover : transparent;
+                        lclr-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.filter-text = ""; }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "close";
+                            icon-size: 11px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                }
+
+                // Show / Hide Hidden Files (dotfiles starting with .)
+                SftpIconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: root.show-hidden ? "eye" : "eye-off";
+                    active: root.show-hidden;
+                    tooltip: root.show-hidden ? @tr("Hide hidden files (.*)") : @tr("Show hidden files (.*)");
+                    clicked => { root.show-hidden = !root.show-hidden; }
+                }
+
+                SftpIconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "copy";
+                    tooltip: @tr("Copy path");
+                    clicked => { root.copy-path(root.path); }
+                }
+
+                SftpIconBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "paste";
+                    tooltip: @tr("Paste path and go");
+                    clicked => {
+                        path-input.select-all();
+                        path-input.paste();
+                        root.navigate(path-input.text);
+                    }
+                }
+
+                // Upload checked or highlighted local entry to remote
+                SftpPillBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "upload";
+                    label: root.width > 260px
+                        ? (root.selected-count > 0 ? (@tr("Upload") + " (" + root.selected-count + ")") : @tr("Upload"))
+                        : "";
+                    primary: true;
+                    tooltip-left: true;
+                    tooltip: @tr("Upload selected local files to remote directory");
+                    clicked => {
+                        if (root.selected-count > 0) {
+                            root.upload-selected();
+                        } else if (root.selected-row >= 0 && root.selected-row < root.entries.length) {
+                            root.upload(root.entries[root.selected-row].full-path);
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+        // --- Interactive Sortable Column Headers (Single Exclusive Sort) ----
+        Rectangle {
+            height: 26px;
+            background: Theme.bg-root;
+            HorizontalLayout {
+                padding-left: 8px; padding-right: 8px; spacing: 8px;
+                Rectangle { width: 16px; }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 90px;
+                    border-radius: 4px;
+                    background: lname-ta.has-hover ? Theme.bg-hover : transparent;
+                    lname-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            TooltipState.hide(@tr("Sort by name (asc/desc)"));
+                            root.trigger-sort("name");
+                        }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                TooltipState.show(@tr("Sort by name (asc/desc)"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                            } else {
+                                TooltipState.hide(@tr("Sort by name (asc/desc)"));
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Name") + (root.sort-key == "name" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.sort-key == "name" ? Theme.accent : (lname-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        font-size: Theme.fs-xs;
+                        font-weight: root.sort-key == "name" ? 600 : 500;
+                        width: parent.width;
+                        horizontal-alignment: left;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.show-size : Rectangle {
+                    width: 68px;
+                    border-radius: 4px;
+                    background: lsize-ta.has-hover ? Theme.bg-hover : transparent;
+                    lsize-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            TooltipState.hide(@tr("Sort by size (asc/desc)"));
+                            root.trigger-sort("size");
+                        }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                TooltipState.show(@tr("Sort by size (asc/desc)"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                            } else {
+                                TooltipState.hide(@tr("Sort by size (asc/desc)"));
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Size") + (root.sort-key == "size" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.sort-key == "size" ? Theme.accent : (lsize-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        font-size: Theme.fs-xs;
+                        font-weight: root.sort-key == "size" ? 600 : 500;
+                        width: parent.width;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.show-type : Rectangle {
+                    width: 82px;
+                    border-radius: 4px;
+                    background: ltype-ta.has-hover ? Theme.bg-hover : transparent;
+                    ltype-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            TooltipState.hide(@tr("Sort by type (asc/desc)"));
+                            root.trigger-sort("type");
+                        }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                TooltipState.show(@tr("Sort by type (asc/desc)"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                            } else {
+                                TooltipState.hide(@tr("Sort by type (asc/desc)"));
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Type") + (root.sort-key == "type" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.sort-key == "type" ? Theme.accent : (ltype-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        font-size: Theme.fs-xs;
+                        font-weight: root.sort-key == "type" ? 600 : 500;
+                        width: parent.width;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.show-modified : Rectangle {
+                    width: 108px;
+                    border-radius: 4px;
+                    background: lmod-ta.has-hover ? Theme.bg-hover : transparent;
+                    lmod-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            TooltipState.hide(@tr("Sort by modified time (asc/desc)"));
+                            root.trigger-sort("modified");
+                        }
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                TooltipState.show(@tr("Sort by modified time (asc/desc)"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                            } else {
+                                TooltipState.hide(@tr("Sort by modified time (asc/desc)"));
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Modified") + (root.sort-key == "modified" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.sort-key == "modified" ? Theme.accent : (lmod-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        font-size: Theme.fs-xs;
+                        font-weight: root.sort-key == "modified" ? 600 : 500;
+                        width: parent.width;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+        // --- Rows -----------------------------------------------------------
+        file-area := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                content-width: self.visible-width;
+                content-height: max(self.visible-height, local-list.preferred-height);
+
+                local-list := VerticalLayout {
+                    spacing: 0;
+
+                    if root.loading : Rectangle {
+                        height: 36px;
+                        Text { text: @tr("Loading..."); color: Theme.text-muted; font-size: Theme.fs-sm;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    if !root.loading && root.entries.length == 0 : Rectangle {
+                        height: 36px;
+                        Text { text: @tr("Empty directory"); color: Theme.text-muted; font-size: Theme.fs-sm;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+
+                    for entry[i] in root.entries : lrow := Rectangle {
+                        property <bool> matched: !root.entry-matches("a", "", "") ? true : root.entry-matches(entry.name, entry.file-type, (root.show-hidden ? "" : "__hide_dot__:") + root.filter-text);
+                        visible: self.matched;
+                        height: self.matched ? 32px : 0px;
+                        background: entry.selected
+                            ? Theme.bg-active
+                            : (i == root.selected-row
+                                ? Theme.bg-active
+                                : (row-ta.has-hover ? Theme.bg-hover : transparent));
+                        if self.matched : Rectangle {
+                            y: parent.height - 1px;
+                            width: 100%;
+                            height: 1px;
+                            background: Theme.border-subtle.with-alpha(0.45);
+                        }
+
+                        row-ta := TouchArea {
+                            enabled: parent.matched;
+                            mouse-cursor: pointer;
+                            moved => {
+                                if (self.pressed && !root.drag-started
+                                        && (abs(self.mouse-x - self.pressed-x) > 6px
+                                            || abs(self.mouse-y - self.pressed-y) > 6px)) {
+                                    root.drag-started = true;
+                                    root.drag-begin(
+                                        i,
+                                        entry.selected && root.selected-count > 1 ? root.selected-count : 1,
+                                        entry.selected && root.selected-count > 1 ? @tr("Selected items") : entry.name,
+                                        self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                                } else if (root.drag-started) {
+                                    root.drag-move(self.absolute-position.x + self.mouse-x,
+                                                   self.absolute-position.y + self.mouse-y);
+                                }
+                            }
+                            clicked => {
+                                root.selected-row = i;
+                                if (root.shift-click-pending) {
+                                    root.shift-click-pending = false;
+                                } else {
+                                    root.select-anchor = i;
+                                }
+                            }
+                            double-clicked => {
+                                if (entry.is-dir) {
+                                    root.navigate(entry.full-path);
+                                } else {
+                                    root.open(entry.full-path);
+                                }
+                            }
+                            pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.up) {
+                                    if (root.drag-started) {
+                                        root.drag-end(self.absolute-position.x + self.mouse-x,
+                                                      self.absolute-position.y + self.mouse-y);
+                                    }
+                                    root.drag-started = false;
+                                } else if (ev.kind == PointerEventKind.cancel) {
+                                    if (root.drag-started) {
+                                        root.drag-cancel();
+                                    }
+                                    root.drag-started = false;
+                                } else if (ev.kind == PointerEventKind.down) {
+                                    root.drag-started = false;
+                                }
+                                if (ev.kind == PointerEventKind.down
+                                        && ev.button == PointerEventButton.left
+                                        && ev.modifiers.shift) {
+                                    root.shift-click-pending = true;
+                                    root.select-range(root.select-anchor < 0 ? i : root.select-anchor, i);
+                                    if (root.select-anchor < 0) { root.select-anchor = i; }
+                                }
+                                if (ev.kind == PointerEventKind.down
+                                        && ev.button == PointerEventButton.right) {
+                                    root.selected-row = i;
+                                    root.menu-target = entry.full-path;
+                                    root.menu-target-is-dir = entry.is-dir;
+                                    root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
+                                    root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
+                                    local-menu.show();
+                                }
+                            }
+                        }
+
+                        if self.matched : HorizontalLayout {
+                            padding-left: 8px; padding-right: 8px; spacing: 8px;
+                            Rectangle {
+                                width: 16px;
+                                y: (parent.height - self.height) / 2;
+                                height: 16px;
+                                opacity: entry.selected || root.selected-count > 0 || row-ta.has-hover || cb-ta.has-hover ? 1.0 : 0.0;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: entry.selected ? Theme.accent : Theme.border-strong;
+                                background: entry.selected ? Theme.accent : transparent;
+                                cb-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if (root.shift-click-pending) {
+                                            root.shift-click-pending = false;
+                                        } else {
+                                            root.toggle-select(i);
+                                            root.select-anchor = i;
+                                        }
+                                    }
+                                    pointer-event(ev) => {
+                                        if (ev.kind == PointerEventKind.down
+                                                && ev.button == PointerEventButton.left
+                                                && ev.modifiers.shift) {
+                                            root.shift-click-pending = true;
+                                            root.select-range(root.select-anchor < 0 ? i : root.select-anchor, i);
+                                            if (root.select-anchor < 0) { root.select-anchor = i; }
+                                        }
+                                    }
+                                }
+                                if entry.selected : Text {
+                                    text: "\u{E5CA}"; // check
+                                    font-family: "Material Icons";
+                                    color: #ffffff;
+                                    font-size: 13px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width; height: parent.height;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                horizontal-stretch: 1;
+                                min-width: 90px;
+                                spacing: 6px;
+                                Text {
+                                    text: entry.is-dir ? "\u{E2C7}" : "\u{E24D}";
+                                    font-family: "Material Icons";
+                                    color: entry.is-dir ? Theme.accent : Theme.text-muted;
+                                    font-size: 17px * Theme.ui-scale;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: entry.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.fs-sm;
+                                    font-weight: entry.is-dir ? 500 : 400;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.show-size : Text {
+                                text: entry.is-dir ? "" : entry.size;
+                                color: Theme.text-secondary; font-size: Theme.fs-xs;
+                                width: 68px; horizontal-alignment: right; vertical-alignment: center;
+                            }
+                            if root.show-type : Text {
+                                text: entry.file-type;
+                                color: Theme.text-secondary; font-size: Theme.fs-xs;
+                                width: 82px; horizontal-alignment: right; vertical-alignment: center; overflow: elide;
+                            }
+                            if root.show-modified : Text {
+                                text: entry.modified;
+                                color: Theme.text-muted; font-size: Theme.fs-xs;
+                                width: 108px; horizontal-alignment: right; vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Whitespace below the rows: right-click clears the target.
+                    Rectangle {
+                        vertical-stretch: 1;
+                        min-height: 24px;
+                        ws-ta := TouchArea {
+                            pointer-event(ev) => {
+                                if (ev.kind == PointerEventKind.down
+                                        && ev.button == PointerEventButton.right) {
+                                    root.selected-row = -1;
+                                    root.menu-target = "";
+                                    root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
+                                    root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
+                                    local-menu.show();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            local-menu := PopupWindow {
+                x: root.menu-x;
+                y: root.menu-y;
+                width: 176px;
+                height: 5 * 29px + 12px;
+                Rectangle {
+                    background: Theme.popup-bg;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    drop-shadow-blur: 14px;
+                    drop-shadow-color: #00000060;
+                    VerticalLayout {
+                        padding: 5px;
+                        spacing: 1px;
+                        SftpMenuItem {
+                            label: @tr("Upload to server");
+                            icon: "upload";
+                            enabled: root.menu-target != "";
+                            clicked => { root.upload(root.menu-target); }
+                        }
+                        SftpMenuItem {
+                            label: @tr("Upload checked items");
+                            icon: "upload";
+                            enabled: root.selected-count > 0;
+                            clicked => { root.upload-selected(); }
+                        }
+                        SftpMenuItem {
+                            label: @tr("Open");
+                            icon: "folder";
+                            enabled: root.menu-target != "" && !root.menu-target-is-dir;
+                            clicked => { root.open(root.menu-target); }
+                        }
+                        SftpMenuItem {
+                            label: @tr("Copy path");
+                            icon: "copy";
+                            enabled: root.menu-target != "";
+                            clicked => { root.copy-path(root.menu-target); }
+                        }
+                        Rectangle { height: 1px; background: Theme.border-subtle; }
+                        SftpMenuItem {
+                            label: @tr("Refresh");
+                            icon: "refresh";
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Status line: only for errors / truncation notices --------------
+        if root.status != "" : Rectangle {
+            height: 18px;
+            background: Theme.bg-panel-alt;
+            Text {
+                x: 6px;
+                width: parent.width - 12px;
+                height: parent.height;
+                text: root.status;
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    // --- Floating Subfolder Quick Autocomplete Dropdown (LocalPane) ---------
+    if root.sub-open && root.entries.length > 0 : TouchArea {
+        z: 499;
+        x: 0px;
+        y: 32px;
+        width: root.width;
+        height: max(0px, root.height - 32px);
+        clicked => {
+            root.sub-open = false;
+            path-input.clear-focus();
+        }
+    }
+    if root.sub-open && root.entries.length > 0 : Rectangle {
+        z: 500;
+        x: 8px;
+        y: 32px;
+        width: max(180px, root.width - 16px);
+        height: min(168px, max(28px, lsub-col.preferred-height)) + 36px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 14px;
+        drop-shadow-color: #00000055;
+        TouchArea {}
+        VerticalLayout {
+            padding: 6px;
+            spacing: 2px;
+            alignment: start;
+            HorizontalLayout {
+                height: 22px;
+                padding-left: 6px;
+                padding-right: 4px;
+                spacing: 6px;
+                OutlineIcon {
+                    y: (parent.height - self.height) / 2;
+                    name: "folder";
+                    icon-size: 13px;
+                    color: Theme.accent;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: @tr("Current directory subfolders (click to complete)");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4px;
+                    background: lsub-cls-ta.has-hover ? Theme.bg-hover : transparent;
+                    lsub-cls-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.sub-open = false;
+                            path-input.clear-focus();
+                        }
+                    }
+                    OutlineIcon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        name: "close";
+                        icon-size: 11px;
+                        color: Theme.text-muted;
+                    }
+                }
+            }
+            if lsub-col.preferred-height == 0px : Rectangle {
+                height: 28px;
+                Text {
+                    x: 8px;
+                    width: parent.width - 16px;
+                    height: parent.height;
+                    text: @tr("Empty directory");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                }
+            }
+            ScrollView {
+                visible: lsub-col.preferred-height > 0px;
+                height: lsub-col.preferred-height > 0px ? min(168px, lsub-col.preferred-height) : 0px;
+                content-width: self.visible-width;
+                content-height: lsub-col.preferred-height;
+                lsub-col := VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.visible-width;
+                    height: self.preferred-height;
+                    padding: 0px;
+                    spacing: 0px;
+                    alignment: start;
+                    for entry in root.entries : VerticalLayout {
+                        padding: 0px;
+                        spacing: 0px;
+                        if entry.is-dir && root.entry-matches(
+                            entry.name,
+                            entry.file-type,
+                            (root.show-hidden ? "" : "__hide_dot__:") + "__sub__:" + root.path + "\n" + path-input.text) : Rectangle {
+                            height: 28px;
+                            border-radius: 5px;
+                            background: lsub-item-ta.has-hover ? Theme.bg-hover : transparent;
+                            lsub-item-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    path-input.text = entry.full-path;
+                                    root.sub-open = false;
+                                    path-input.clear-focus();
+                                    root.navigate(entry.full-path);
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 6px;
+                                OutlineIcon {
+                                    y: (parent.height - self.height) / 2;
+                                    name: "folder";
+                                    icon-size: 14px;
+                                    color: Theme.accent;
+                                }
+                                Text {
+                                    text: entry.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.fs-xs;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: entry.full-path;
+                                    color: Theme.text-muted;
+                                    font-size: Theme.fs-xs;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

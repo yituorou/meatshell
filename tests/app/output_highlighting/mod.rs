@@ -185,3 +185,33 @@ fn invalid_regex_is_rejected_before_persistence() {
     assert!(validate_output_highlight_rule("([", true, false).is_err());
     assert!(validate_output_highlight_rule("literal", false, false).is_ok());
 }
+
+#[test]
+fn highlights_plain_shell_prompts_with_scheme_ansi_slots() {
+    // Standard Linux/Ubuntu prompt: `root@meatshell:~/workspace$ git status`
+    let runs = highlight_plain_output(
+        vec![plain_run("root@meatshell:~/workspace$ git status", 0)],
+        OutputHighlightPreset::Log,
+        &[],
+    );
+    assert!(runs.iter().any(|r| r.text == "root@meatshell" && matches!(r.fg, vt100::Color::Idx(2)) && r.bold));
+    assert!(runs.iter().any(|r| r.text == "~/workspace" && matches!(r.fg, vt100::Color::Idx(4)) && r.bold));
+
+    // macOS default zsh prompt: `user@MacBook-Pro meatshell % ls`
+    let zsh_runs = highlight_plain_output(
+        vec![plain_run("user@MacBook-Pro meatshell % ls", 0)],
+        OutputHighlightPreset::Log,
+        &[],
+    );
+    assert!(zsh_runs.iter().any(|r| r.text == "user@MacBook-Pro" && matches!(r.fg, vt100::Color::Idx(2)) && r.bold));
+    assert!(zsh_runs.iter().any(|r| r.text == "meatshell" && matches!(r.fg, vt100::Color::Idx(4)) && r.bold));
+
+    // RHEL/CentOS bracketed prompt: `[root@centos7 ~]# `
+    let rhel_runs = highlight_plain_output(
+        vec![plain_run("[root@centos7 ~]# uptime", 0)],
+        OutputHighlightPreset::Log,
+        &[],
+    );
+    assert!(rhel_runs.iter().any(|r| r.text == "root@centos7" && matches!(r.fg, vt100::Color::Idx(2)) && r.bold));
+    assert!(rhel_runs.iter().any(|r| r.text == "~" && matches!(r.fg, vt100::Color::Idx(4)) && r.bold));
+}

@@ -1,0 +1,274 @@
+import { Theme, TooltipState } from "../../theme.slint";
+import { Sparkline, OutlineIcon } from "../../widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// --- NetGraph --------------------------------------------------------------
+// Network throughput block: rate badges + NIC selector + sparkline chart.
+export component NetGraph inherits VerticalLayout {
+    in property <string> up-text;
+    in property <string> down-text;
+    in property <[float]> history;
+    in property <bool> show-selector: false;
+    in property <[string]> ifaces;
+    in property <string> selected;
+    callback iface-selected(string);
+
+    vertical-stretch: 0;
+    spacing: 6px * Theme.ui-scale;
+
+    HorizontalLayout {
+        height: 22px * Theme.ui-scale;
+        spacing: 8px;
+
+        // Upload rate pill
+        HorizontalLayout {
+            spacing: 3px;
+            VerticalLayout {
+                alignment: center;
+                OutlineIcon {
+                    name: "up";
+                    color: Theme.success;
+                    icon-size: 12px * Theme.ui-scale;
+                    stroke-w: 2.2px;
+                }
+            }
+            Text {
+                text: root.up-text;
+                color: Theme.text-primary;
+                font-family: Theme.font-mono;
+                font-size: 11px * Theme.ui-scale;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+
+        // Download rate pill
+        HorizontalLayout {
+            spacing: 3px;
+            VerticalLayout {
+                alignment: center;
+                OutlineIcon {
+                    name: "down";
+                    color: Theme.accent;
+                    icon-size: 12px * Theme.ui-scale;
+                    stroke-w: 2.2px;
+                }
+            }
+            Text {
+                text: root.down-text;
+                color: Theme.text-primary;
+                font-family: Theme.font-mono;
+                font-size: 11px * Theme.ui-scale;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        if root.show-selector : Rectangle {
+            width: 84px;
+            height: 22px;
+            border-radius: 5px;
+            border-width: 1px;
+            border-color: sel-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+            background: sel-ta.has-hover ? Theme.bg-hover : (Theme.dark ? #1f1f1f : #f4f5f7);
+
+            HorizontalLayout {
+                padding-left: 7px; padding-right: 5px; spacing: 3px;
+                Text {
+                    text: root.selected;
+                    color: Theme.text-primary;
+                    font-family: Theme.font-mono;
+                    font-size: 11px * Theme.ui-scale;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "chevron-down";
+                        color: Theme.text-muted;
+                        icon-size: 11px;
+                    }
+                }
+            }
+
+            sel-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("Switch monitored network interface"));
+                    popup.show();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("Switch monitored network interface"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("Switch monitored network interface"));
+                    }
+                }
+            }
+
+            popup := PopupWindow {
+                close-policy: PopupClosePolicy.close-on-click-outside;
+                x: parent.width - 176px;
+                y: parent.height + 4px;
+                width: 176px;
+                height: min(216px, max(36px, root.ifaces.length * 26px + 10px));
+                Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    background: Theme.popup-bg;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    drop-shadow-blur: 14px;
+                    drop-shadow-color: #00000055;
+                    clip: true;
+                    ScrollView {
+                        width: parent.width;
+                        height: parent.height;
+                        content-width: self.visible-width;
+                        content-height: iface-col.preferred-height;
+                        iface-col := VerticalLayout {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.visible-width;
+                            height: self.preferred-height;
+                            padding: 4px;
+                            spacing: 2px;
+                            alignment: start;
+                            for iface in root.ifaces : Rectangle {
+                                height: 24px;
+                                border-radius: 5px;
+                                background: iface == root.selected
+                                    ? Theme.bg-active
+                                    : (row-ta.has-hover ? Theme.bg-hover : transparent);
+                                row-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.iface-selected(iface);
+                                        popup.close();
+                                    }
+                                }
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 6px;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: iface;
+                                        color: iface == root.selected ? Theme.accent : Theme.text-primary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.fs-xs;
+                                        font-weight: iface == root.selected ? 600 : 400;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    if iface == root.selected : OutlineIcon {
+                                        y: (parent.height - self.height) / 2;
+                                        name: "check";
+                                        icon-size: 12px;
+                                        color: Theme.accent;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Sparkline {
+        height: 44px * Theme.ui-scale;
+        values: root.history;
+        line-color: Theme.accent;
+    }
+}
+
+// --- NetBlock --------------------------------------------------------------
+// Elevated card for Server / Local Network throughput.
+export component NetBlock inherits Rectangle {
+    in property <bool> is-local-mode: true;
+    in property <bool> lang-en: false;
+    in property <string> net-top-up;
+    in property <string> net-top-down;
+    in property <[float]> net-top-history;
+    in property <bool> net-show-selector;
+    in property <[string]> net-ifaces;
+    in property <string> net-selected;
+    in property <string> net-bot-up;
+    in property <string> net-bot-down;
+    in property <[float]> net-bot-history;
+    callback select-net-iface(string);
+    property <bool> show-local-net: false;
+
+    vertical-stretch: 0;
+    height: net-vl.preferred-height;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+
+    net-vl := VerticalLayout {
+        padding: 10px * Theme.ui-scale;
+        spacing: 6px * Theme.ui-scale;
+
+        Text {
+            text: root.is-local-mode
+                ? (root.lang-en ? "Local Network" : "本机网络")
+                : (root.lang-en ? "Network Traffic" : "网络实时吞吐");
+            color: Theme.text-secondary;
+            font-size: Theme.fs-xs;
+            font-weight: 600;
+        }
+
+        NetGraph {
+            up-text: root.net-top-up; down-text: root.net-top-down; history: root.net-top-history;
+            show-selector: root.net-show-selector; ifaces: root.net-ifaces; selected: root.net-selected;
+            iface-selected(i) => { root.select-net-iface(i); }
+        }
+
+        if !root.is-local-mode : Rectangle {
+            height: 22px * Theme.ui-scale;
+            border-radius: 5px;
+            background: loc-net-ta.has-hover ? Theme.bg-hover : transparent;
+            loc-net-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.show-local-net = !root.show-local-net; }
+            }
+            HorizontalLayout {
+                padding-left: 4px;
+                padding-right: 4px;
+                spacing: 4px;
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: root.show-local-net ? "chevron-down" : "chevron-right";
+                        color: Theme.text-muted;
+                        icon-size: 12px;
+                    }
+                }
+                Text {
+                    text: root.lang-en ? "Local network" : "本机网络";
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.ui-scale;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if !root.show-local-net : Text {
+                    text: "↑ " + root.net-bot-up + "  ↓ " + root.net-bot-down;
+                    color: Theme.text-muted;
+                    font-family: Theme.font-mono;
+                    font-size: 10.5px * Theme.ui-scale;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        if !root.is-local-mode && root.show-local-net : NetGraph {
+            up-text: root.net-bot-up; down-text: root.net-bot-down; history: root.net-bot-history;
+        }
+    }
+}

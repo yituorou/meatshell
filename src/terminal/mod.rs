@@ -56,7 +56,9 @@ pub(crate) use input::windows_process_ctrl_release;
 #[cfg(any(target_os = "windows", test))]
 pub(crate) use state::CtrlKeySide;
 pub(crate) use output_highlight::compile_output_rules;
-pub(crate) use presentation::{highlight_plain_output, render_term_span};
+pub(crate) use presentation::{
+    highlight_plain_output, render_term_span, render_term_span_with_palette,
+};
 #[cfg(test)]
 pub(crate) use presentation::{log_level_marker, text_cell_width, vt_span_colors};
 pub(crate) use render::{

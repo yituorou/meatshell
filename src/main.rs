@@ -32,6 +32,7 @@ mod terminal;
 #[cfg(feature = "headless")]
 #[path = "terminal/headless.rs"]
 mod terminal;
+mod terminal_theme;
 mod tunnel;
 #[cfg(not(feature = "headless"))]
 mod ui;

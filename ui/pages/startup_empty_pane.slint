@@ -1,0 +1,310 @@
+import { Theme } from "../theme.slint";
+import { OutlineIcon } from "../widgets.slint";
+import { LaunchItem } from "../tabs.slint";
+import { SessionInfo } from "../welcome.slint";
+
+export component StartupEmptyPane inherits Rectangle {
+    in property <bool> hide-panels: false;
+    in-out property <bool> home-monitor-open: false;
+    in property <bool> lang-en: false;
+    in property <[LaunchItem]> launch-shells: [];
+    in property <string> ssh-import-hint: "";
+    in property <[SessionInfo]> recent-sessions: [];
+
+    callback new-session-clicked();
+    callback connect-session(string);
+    callback import-ssh-config();
+
+    // On-demand Local Monitor toggle pill in top-right corner
+    if !root.hide-panels : Rectangle {
+        x: parent.width - self.width - 16px * Theme.ui-scale;
+        y: 12px * Theme.ui-scale;
+        width: home-mon-row.preferred-width + 18px * Theme.ui-scale;
+        height: 30px * Theme.ui-scale;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: root.home-monitor-open
+            ? Theme.border-strong
+            : (home-mon-ta.has-hover ? Theme.border-strong : Theme.border-subtle);
+        background: root.home-monitor-open
+            ? Theme.bg-active
+            : (home-mon-ta.has-hover ? Theme.bg-hover : Theme.bg-panel);
+        home-mon-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.home-monitor-open = !root.home-monitor-open; }
+        }
+        home-mon-row := HorizontalLayout {
+            padding-left: 10px * Theme.ui-scale;
+            padding-right: 10px * Theme.ui-scale;
+            spacing: 6px * Theme.ui-scale;
+            alignment: center;
+            VerticalLayout {
+                alignment: center;
+                OutlineIcon {
+                    name: "monitor";
+                    color: root.home-monitor-open ? Theme.text-primary : Theme.text-secondary;
+                    icon-size: 15px * Theme.ui-scale;
+                }
+            }
+            Text {
+                text: root.lang-en ? "Local overview" : "本机概览";
+                color: root.home-monitor-open ? Theme.text-primary : Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                font-weight: root.home-monitor-open ? 600 : 500;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    // Centered startup card (max-width 580px, slightly above vertical center)
+    startup-card := VerticalLayout {
+        width: min(580px * Theme.ui-scale, parent.width - 48px * Theme.ui-scale);
+        height: self.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: max(48px * Theme.ui-scale, (parent.height - self.height) * 0.42);
+        spacing: 22px * Theme.ui-scale;
+
+        // Hero icon + Title + Subtitle
+        VerticalLayout {
+            spacing: 10px * Theme.ui-scale;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 48px * Theme.ui-scale;
+                    height: 48px * Theme.ui-scale;
+                    border-radius: 12px * Theme.ui-scale;
+                    background: Theme.bg-panel;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    OutlineIcon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        name: "terminal";
+                        color: Theme.text-primary;
+                        icon-size: 22px * Theme.ui-scale;
+                    }
+                }
+            }
+            Text {
+                text: root.lang-en ? "Start a connection" : "开始一个连接";
+                color: Theme.text-primary;
+                font-size: Theme.fs-xl;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.lang-en
+                    ? "Select a session on the left, or create a new connection"
+                    : "从左侧选择会话，或创建新的连接";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-md;
+                horizontal-alignment: center;
+            }
+        }
+
+        // 3 High-frequency actions: New connection | Open local terminal | Import SSH config
+        HorizontalLayout {
+            alignment: center;
+            spacing: 10px * Theme.ui-scale;
+
+            // 1. Primary: New connection
+            Rectangle {
+                width: new-conn-row.preferred-width + 4px * Theme.ui-scale;
+                height: 38px * Theme.ui-scale;
+                border-radius: Theme.radius-md;
+                background: new-conn-ta.pressed
+                    ? Theme.accent-pressed
+                    : (new-conn-ta.has-hover ? Theme.accent-hover : Theme.accent);
+                new-conn-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.new-session-clicked(); }
+                }
+                new-conn-row := HorizontalLayout {
+                    padding-left: 16px * Theme.ui-scale;
+                    padding-right: 16px * Theme.ui-scale;
+                    spacing: 6px * Theme.ui-scale;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "plus";
+                            color: #ffffff;
+                            icon-size: 16px * Theme.ui-scale;
+                        }
+                    }
+                    Text {
+                        text: root.lang-en ? "New connection" : "新建连接";
+                        color: #ffffff;
+                        font-size: Theme.fs-md;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // 2. Secondary: Open local terminal
+            if root.launch-shells.length > 0 : Rectangle {
+                width: open-local-row.preferred-width + 4px * Theme.ui-scale;
+                height: 38px * Theme.ui-scale;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: open-local-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                background: open-local-ta.pressed
+                    ? Theme.bg-active
+                    : (open-local-ta.has-hover ? Theme.bg-hover : Theme.bg-panel);
+                open-local-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.connect-session(root.launch-shells[0].id); }
+                }
+                open-local-row := HorizontalLayout {
+                    padding-left: 16px * Theme.ui-scale;
+                    padding-right: 16px * Theme.ui-scale;
+                    spacing: 6px * Theme.ui-scale;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "terminal";
+                            color: Theme.text-primary;
+                            icon-size: 16px * Theme.ui-scale;
+                        }
+                    }
+                    Text {
+                        text: root.lang-en ? "Open local terminal" : "打开本地终端";
+                        color: Theme.text-primary;
+                        font-size: Theme.fs-md;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // 3. Low-emphasis: Import SSH config
+            Rectangle {
+                width: imp-ssh-row.preferred-width + 4px * Theme.ui-scale;
+                height: 38px * Theme.ui-scale;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: imp-ssh-ta.has-hover ? Theme.border-subtle : transparent;
+                background: imp-ssh-ta.has-hover ? Theme.bg-hover : transparent;
+                imp-ssh-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.import-ssh-config(); }
+                }
+                imp-ssh-row := HorizontalLayout {
+                    padding-left: 14px * Theme.ui-scale;
+                    padding-right: 14px * Theme.ui-scale;
+                    spacing: 6px * Theme.ui-scale;
+                    alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "upload";
+                            color: imp-ssh-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            icon-size: 16px * Theme.ui-scale;
+                        }
+                    }
+                    Text {
+                        text: root.lang-en ? "Import SSH config" : "导入 SSH 配置";
+                        color: imp-ssh-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                        font-size: Theme.fs-md;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // SSH config import feedback hint
+        if root.ssh-import-hint != "" : HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: min(parent.width, imp-hint-txt.preferred-width + 24px * Theme.ui-scale);
+                height: 28px * Theme.ui-scale;
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-elevated;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                imp-hint-txt := Text {
+                    text: root.ssh-import-hint;
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // Up to 4 recent saved sessions (only when real saved sessions exist)
+        if root.recent-sessions.length > 0 : VerticalLayout {
+            spacing: 8px * Theme.ui-scale;
+            padding-top: 4px * Theme.ui-scale;
+            Text {
+                text: root.lang-en ? "Recent sessions" : "最近会话";
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                font-weight: 600;
+            }
+            VerticalLayout {
+                spacing: 6px * Theme.ui-scale;
+                for rs in root.recent-sessions : Rectangle {
+                    height: 44px * Theme.ui-scale;
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: rs-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                    background: rs-ta.has-hover ? Theme.bg-hover : Theme.bg-panel;
+                    rs-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.connect-session(rs.id); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 12px * Theme.ui-scale;
+                        padding-right: 12px * Theme.ui-scale;
+                        spacing: 10px * Theme.ui-scale;
+                        Rectangle {
+                            width: 28px * Theme.ui-scale;
+                            height: 28px * Theme.ui-scale;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: Theme.radius-sm;
+                            background: rs-ta.has-hover
+                                ? Theme.accent.with-alpha(0.14)
+                                : Theme.bg-elevated;
+                            OutlineIcon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                name: rs.serial-detail != "" ? "terminal" : "sessions";
+                                color: rs-ta.has-hover ? Theme.accent : Theme.text-secondary;
+                                icon-size: 14px * Theme.ui-scale;
+                            }
+                        }
+                        Text {
+                            text: rs.name != "" ? rs.name : rs.host;
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-md;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: rs.serial-detail != ""
+                                ? rs.serial-detail
+                                : ((rs.user != "" ? rs.user + "@" : "") + rs.host + ":" + rs.port);
+                            color: Theme.text-secondary;
+                            font-size: Theme.fs-xs;
+                            vertical-alignment: center;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            OutlineIcon {
+                                name: "chevron-right";
+                                color: rs-ta.has-hover ? Theme.accent : Theme.text-muted;
+                                icon-size: 14px * Theme.ui-scale;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

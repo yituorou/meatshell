@@ -17,6 +17,7 @@ pub(crate) fn highlight_plain_output(
     if preset == OutputHighlightPreset::Off {
         return runs;
     }
+    let runs = highlight_shell_prompt(runs);
     let runs = highlight_custom_output(runs, custom_rules);
     const SEARCH_COLS: i32 = 96;
 
@@ -114,6 +115,164 @@ fn custom_rule_eligible(run: &HistSpan) -> bool {
         && !run.bold
         && !run.inverse
         && !run.underline
+}
+
+/// Colour unstyled shell prompt prefixes at column 0 (`user@host:path$ `,
+/// `user@host path % `, `[user@host path]# `) using ANSI slot 2 (green) for
+/// `user@host` and ANSI slot 4 (blue) for `path`, matching the terminal scheme
+/// preview when a shell (such as default macOS zsh or plain SSH bash) emits no
+/// ANSI colours of its own.
+fn highlight_shell_prompt(mut runs: Vec<HistSpan>) -> Vec<HistSpan> {
+    let parts = {
+        let Some(first) = runs.first() else {
+            return runs;
+        };
+        if first.col != 0 || !custom_rule_eligible(first) {
+            return runs;
+        }
+        let Some(segments) = parse_shell_prompt_segments(&first.text) else {
+            return runs;
+        };
+        let mut col = 0i32;
+        let mut parts = Vec::with_capacity(segments.len());
+        for (text, fg, bold) in segments {
+            if text.is_empty() {
+                continue;
+            }
+            let cells = text_cell_width(text);
+            let mut part = first.clone();
+            part.text = text.to_string();
+            part.fg = fg;
+            part.bold = bold;
+            part.col = col;
+            part.cells = cells;
+            parts.push(part);
+            col += cells;
+        }
+        parts
+    };
+    runs.remove(0);
+    let mut out = Vec::with_capacity(parts.len() + runs.len());
+    out.extend(parts);
+    out.extend(runs);
+    out
+}
+
+fn is_ident_seg(s: &str, max_len: usize) -> bool {
+    !s.is_empty()
+        && s.len() <= max_len
+        && s.bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn parse_shell_prompt_segments(text: &str) -> Option<Vec<(&str, vt100::Color, bool)>> {
+    // 1. Bracketed prompt: `[user@host path]# ` or `[user@host path]$ `
+    if let Some(rest) = text.strip_prefix('[') {
+        let close = rest.find(']')?;
+        let inside = &rest[..close];
+        let (user_host, path) = inside.split_once(' ')?;
+        let (user, host) = user_host.split_once('@')?;
+        if is_ident_seg(user, 32)
+            && is_ident_seg(host, 64)
+            && !path.is_empty()
+            && path.len() <= 80
+            && !path.chars().any(char::is_whitespace)
+        {
+            let after_bracket = &rest[close + 1..];
+            let delim_len = if after_bracket.starts_with("$ ")
+                || after_bracket.starts_with("# ")
+                || after_bracket.starts_with("% ")
+            {
+                2
+            } else if matches!(after_bracket, "$" | "#" | "%") {
+                1
+            } else {
+                return None;
+            };
+            let uh_end = 1 + user_host.len();
+            let space_end = uh_end + 1;
+            let path_end = 1 + close;
+            let prompt_end = path_end + 1 + delim_len;
+            return Some(vec![
+                (&text[..1], vt100::Color::Default, false),
+                (&text[1..uh_end], vt100::Color::Idx(2), true),
+                (&text[uh_end..space_end], vt100::Color::Default, false),
+                (&text[space_end..path_end], vt100::Color::Idx(4), true),
+                (&text[path_end..prompt_end], vt100::Color::Default, false),
+                (&text[prompt_end..], vt100::Color::Default, false),
+            ]);
+        }
+    }
+
+    // 2. `user@host:path$ ` / `user@host:path# ` or macOS zsh `user@host path % `
+    let at_pos = text.find('@')?;
+    let user = &text[..at_pos];
+    if !is_ident_seg(user, 32) {
+        return None;
+    }
+    let after_at = &text[at_pos + 1..];
+    let sep_offset = after_at.find([':', ' '])?;
+    let sep = after_at.as_bytes()[sep_offset] as char;
+    let host = &after_at[..sep_offset];
+    if !is_ident_seg(host, 64) {
+        return None;
+    }
+    let uh_end = at_pos + 1 + sep_offset;
+    let after_sep = &text[uh_end + 1..];
+
+    if sep == ':' {
+        // Look for `$` or `#` ending the path
+        let delim_rel = after_sep.find(['$', '#'])?;
+        let path = &after_sep[..delim_rel];
+        if path.is_empty() || path.len() > 80 || path.chars().any(char::is_whitespace) {
+            return None;
+        }
+        let after_delim = &after_sep[delim_rel + 1..];
+        if !after_delim.is_empty() && !after_delim.starts_with(' ') {
+            return None;
+        }
+        let path_start = uh_end + 1;
+        let path_end = path_start + delim_rel;
+        let delim_end = path_end + 1 + usize::from(after_delim.starts_with(' '));
+        return Some(vec![
+            (&text[..uh_end], vt100::Color::Idx(2), true),
+            (&text[uh_end..path_start], vt100::Color::Default, false),
+            (&text[path_start..path_end], vt100::Color::Idx(4), true),
+            (&text[path_end..delim_end], vt100::Color::Default, false),
+            (&text[delim_end..], vt100::Color::Default, false),
+        ]);
+    } else {
+        // Space-separated (`user@host path % ` or `user@host path $ ` or `user@host path # `)
+        let space2_rel = after_sep.find(' ')?;
+        let path = &after_sep[..space2_rel];
+        if path.is_empty() || path.len() > 80 || path.chars().any(char::is_whitespace) {
+            return None;
+        }
+        let after_path = &after_sep[space2_rel + 1..];
+        let delim_len = if after_path.starts_with("% ")
+            || after_path.starts_with("$ ")
+            || after_path.starts_with("# ")
+        {
+            2
+        } else if matches!(after_path, "%" | "$" | "#") {
+            1
+        } else {
+            return None;
+        };
+        let path_start = uh_end + 1;
+        let path_end = path_start + space2_rel;
+        let delim_end = path_end + 1 + delim_len;
+        return Some(vec![
+            (&text[..uh_end], vt100::Color::Idx(2), true),
+            (&text[uh_end..path_start], vt100::Color::Default, false),
+            (&text[path_start..path_end], vt100::Color::Idx(4), true),
+            (&text[path_end..delim_end], vt100::Color::Default, false),
+            (&text[delim_end..], vt100::Color::Default, false),
+        ]);
+    }
 }
 
 fn style_custom_matches(
@@ -399,13 +558,22 @@ fn twemoji_image(grapheme: &str) -> Option<slint::Image> {
 /// become single-grapheme spans drawn with a system fallback font. Columns
 /// still come from terminal cells, not image or glyph pixels.
 pub(crate) fn render_term_span(span: &HistSpan, row: i32, is_dark: bool) -> Vec<TermSpan> {
-    render_term_span_with(span, row, is_dark, active_glyph_fallback().as_deref())
+    let palette = crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(is_dark);
+    render_term_span_with(span, row, &palette, active_glyph_fallback().as_deref())
+}
+
+pub(crate) fn render_term_span_with_palette(
+    span: &HistSpan,
+    row: i32,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> Vec<TermSpan> {
+    render_term_span_with(span, row, palette, active_glyph_fallback().as_deref())
 }
 
 fn render_term_span_with(
     span: &HistSpan,
     row: i32,
-    is_dark: bool,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
     glyph_fallback: Option<&GlyphFallback>,
 ) -> Vec<TermSpan> {
     use unicode_segmentation::UnicodeSegmentation as _;
@@ -415,7 +583,8 @@ fn render_term_span_with(
         return Vec::new();
     }
 
-    let (fg, bg) = vt_span_colors(span.fg, span.bg, span.bold, span.inverse, is_dark);
+    let (fg, bg) =
+        vt_span_colors_with_palette(span.fg, span.bg, span.bold, span.inverse, palette);
     let make = |text: slint::SharedString,
                 col: i32,
                 cells: i32,
@@ -728,6 +897,141 @@ fn vt_default_bg_rgb(is_dark: bool) -> (u8, u8, u8) {
     }
 }
 
+pub(crate) fn vt_span_colors_with_palette(
+    fg: vt100::Color,
+    bg: vt100::Color,
+    bold: bool,
+    inverse: bool,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> (slint::Color, slint::Color) {
+    if !palette.explicit_scheme {
+        return vt_span_colors(fg, bg, bold, inverse, palette.is_dark);
+    }
+
+    if !inverse {
+        let raw_fg = vt_color_to_rgb_explicit(fg, bold, palette);
+        let eff_bg = match bg {
+            vt100::Color::Default => palette.background,
+            vt100::Color::Idx(i) => idx_to_rgb_explicit(i, false, palette),
+            vt100::Color::Rgb(r, g, b) => (r, g, b),
+        };
+        // Guard against themes where an ANSI slot (e.g. ansi[0] black on dark schemes
+        // or ansi[7]/ansi[15] white on light schemes) equals the background color.
+        let fg_rgb = if matches!(bg, vt100::Color::Default) {
+            let fg_lum = crate::terminal_theme::relative_luminance(raw_fg.0, raw_fg.1, raw_fg.2);
+            let bg_lum = crate::terminal_theme::relative_luminance(eff_bg.0, eff_bg.1, eff_bg.2);
+            if (fg_lum - bg_lum).abs() < 0.05 {
+                let target = palette.foreground;
+                (
+                    ((raw_fg.0 as u16 * 2 + target.0 as u16 * 3) / 5) as u8,
+                    ((raw_fg.1 as u16 * 2 + target.1 as u16 * 3) / 5) as u8,
+                    ((raw_fg.2 as u16 * 2 + target.2 as u16 * 3) / 5) as u8,
+                )
+            } else {
+                raw_fg
+            }
+        } else {
+            raw_fg
+        };
+        return (
+            slint::Color::from_rgb_u8(fg_rgb.0, fg_rgb.1, fg_rgb.2),
+            vt_bg_to_slint_Explicit(bg, palette),
+        );
+    }
+
+    let fg_color = match bg {
+        vt100::Color::Default => {
+            let (r, g, b) = palette.background;
+            slint::Color::from_rgb_u8(r, g, b)
+        }
+        _ => vt_color_to_slint_Explicit(bg, false, palette),
+    };
+    let bg_color = match fg {
+        vt100::Color::Default => {
+            let (r, g, b) = if bold {
+                palette.bold
+            } else {
+                palette.foreground
+            };
+            slint::Color::from_rgb_u8(r, g, b)
+        }
+        _ => {
+            let (r, g, b) = vt_color_to_rgb_explicit(fg, bold, palette);
+            slint::Color::from_rgb_u8(r, g, b)
+        }
+    };
+    (fg_color, bg_color)
+}
+
+#[allow(non_snake_case)]
+fn vt_color_to_slint_Explicit(
+    color: vt100::Color,
+    bold: bool,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> slint::Color {
+    let (r, g, b) = vt_color_to_rgb_explicit(color, bold, palette);
+    slint::Color::from_rgb_u8(r, g, b)
+}
+
+fn vt_color_to_rgb_explicit(
+    color: vt100::Color,
+    bold: bool,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> (u8, u8, u8) {
+    match color {
+        vt100::Color::Default => {
+            if bold {
+                palette.bold
+            } else {
+                palette.foreground
+            }
+        }
+        vt100::Color::Idx(i) => idx_to_rgb_explicit(i, bold, palette),
+        vt100::Color::Rgb(r, g, b) => (r, g, b),
+    }
+}
+
+#[allow(non_snake_case)]
+fn vt_bg_to_slint_Explicit(
+    color: vt100::Color,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> slint::Color {
+    match color {
+        vt100::Color::Default => slint::Color::from_argb_u8(0, 0, 0, 0),
+        vt100::Color::Idx(i) => {
+            let (r, g, b) = idx_to_rgb_explicit(i, false, palette);
+            slint::Color::from_rgb_u8(r, g, b)
+        }
+        vt100::Color::Rgb(r, g, b) => slint::Color::from_rgb_u8(r, g, b),
+    }
+}
+
+fn idx_to_rgb_explicit(
+    i: u8,
+    bold: bool,
+    palette: &crate::terminal_theme::ResolvedTerminalPalette,
+) -> (u8, u8, u8) {
+    let i = if bold && i < 8 { i + 8 } else { i };
+    match i {
+        0..=15 => palette.ansi[i as usize],
+        16..=231 => {
+            let n = i - 16;
+            let to = |v: u8| -> u8 {
+                if v == 0 {
+                    0
+                } else {
+                    55 + v * 40
+                }
+            };
+            (to(n / 36), to((n % 36) / 6), to(n % 6))
+        }
+        _ => {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+    }
+}
+
 pub(crate) fn vt_span_colors(
     fg: vt100::Color,
     bg: vt100::Color,
@@ -942,7 +1246,8 @@ mod glyph_fallback_tests {
         // #461: PS1 like `➜ ~/src` — the arrow must use a font that has it,
         // while the rest stays in the terminal font at the same columns.
         let fallback = symbols();
-        let spans = render_term_span_with(&run("➜ ~/src", 0, 7), 1, true, Some(&fallback));
+        let pal = crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(true);
+        let spans = render_term_span_with(&run("➜ ~/src", 0, 7), 1, &pal, Some(&fallback));
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].text.as_str(), "➜");
         assert_eq!(spans[0].font.as_str(), "Segoe UI Symbol");
@@ -957,11 +1262,12 @@ mod glyph_fallback_tests {
     #[test]
     fn covered_text_and_cjk_are_not_split() {
         let fallback = symbols();
-        let spans = render_term_span_with(&run("a→b", 0, 3), 0, true, Some(&fallback));
+        let pal = crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(true);
+        let spans = render_term_span_with(&run("a→b", 0, 3), 0, &pal, Some(&fallback));
         assert_eq!(spans.len(), 1);
         assert!(spans[0].font.is_empty());
 
-        let spans = render_term_span_with(&run("中文", 0, 4), 0, true, Some(&fallback));
+        let spans = render_term_span_with(&run("中文", 0, 4), 0, &pal, Some(&fallback));
         assert_eq!(spans.len(), 1);
         assert!(spans[0].cjk);
         assert!(spans[0].font.is_empty());
@@ -969,7 +1275,8 @@ mod glyph_fallback_tests {
 
     #[test]
     fn without_fallback_table_output_is_unchanged() {
-        let spans = render_term_span_with(&run("➜ ~", 0, 3), 0, true, None);
+        let pal = crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(true);
+        let spans = render_term_span_with(&run("➜ ~", 0, 3), 0, &pal, None);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text.as_str(), "➜ ~");
         assert!(spans[0].font.is_empty());

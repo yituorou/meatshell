@@ -1,0 +1,129 @@
+import { Theme } from "../../theme.slint";
+import { SessionInfo } from "session_row.slint";
+
+// Group header on the first row of each group (#41).
+// Click anywhere on it to collapse / expand the group.
+export component SessionGroupHeader inherits Rectangle {
+    in property <SessionInfo> session;
+    in property <string> search-query;
+    callback toggle-group(string);
+    callback edit-group(string);
+    callback delete-group(string);
+    callback new-group();
+
+    height: 28px * Theme.ui-scale;
+    border-radius: Theme.radius-sm;
+    background: grp-hdr-ta.has-hover ? Theme.bg-hover.with-alpha(0.5) : transparent;
+    // Right-click popup anchor.
+    property <length> gmx;
+    property <length> gmy;
+
+    HorizontalLayout {
+        padding-top: 4px * Theme.ui-scale;
+        padding-bottom: 2px * Theme.ui-scale;
+        padding-left: 6px * Theme.ui-scale;
+        padding-right: 6px * Theme.ui-scale;
+        spacing: 5px * Theme.ui-scale;
+        // Collapse chevron — shown for every group, empty
+        // folders included, so they line up and can be
+        // toggled (an empty group just expands to nothing).
+        Text {
+            text: root.session.collapsed ? "\u{E5CC}" : "\u{E5CF}";
+            font-family: "Material Icons";
+            color: Theme.text-secondary;
+            font-size: 16px * Theme.ui-scale;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.session.group-header == "system" ? "\u{E30A}"
+                : (root.session.group-header == "agents" ? "\u{E86F}" : "\u{E2C7}");
+            font-family: "Material Icons";
+            color: Theme.text-secondary;
+            font-size: 15px * Theme.ui-scale;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.session.group-header == "system" ? @tr("Local terminals")
+                : (root.session.group-header == "agents" ? @tr("AI agents")
+                    : (root.session.group-header == "default" ? @tr("Default group") : root.session.group-header));
+            color: Theme.text-secondary;
+            font-size: Theme.fs-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 1;       // fill → text stays left
+            horizontal-alignment: left;
+        }
+    }
+    grp-hdr-ta := TouchArea {
+        mouse-cursor: pointer;
+        // Left-click toggles collapse (any group, incl.
+        // empty); right-click opens the group menu.
+        clicked => {
+            if root.search-query == "" {
+                root.toggle-group(root.session.group);
+            }
+        }
+        pointer-event(e) => {
+            if (!root.session.builtin && e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                root.gmx = self.mouse-x;
+                root.gmy = self.mouse-y;
+                grp-menu.show();
+            }
+        }
+    }
+    grp-menu := PopupWindow {
+        x: root.gmx;
+        y: root.gmy;
+        width: 140px;
+        // edit + new always; delete only for an empty group.
+        height: (root.session.id == "" ? 3 : 2) * 28px + 9px;
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000050;
+            VerticalLayout {
+                padding: 4px;
+                spacing: 1px;
+                // Edit (rename) group
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: eg-ta.has-hover ? Theme.bg-hover : transparent;
+                    eg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.edit-group(root.session.group); } }
+                    HorizontalLayout {
+                        padding-left: 10px; spacing: 8px;
+                        Text { text: "\u{E3C9}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("Edit group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+                // Delete group — only when it has no sessions (id == "")
+                if root.session.id == "" : Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: dg-ta.has-hover ? #cc333320 : transparent;
+                    dg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.delete-group(root.session.group); } }
+                    HorizontalLayout {
+                        padding-left: 10px; spacing: 8px;
+                        Text { text: "\u{E872}"; font-family: "Material Icons"; color: #cc3333; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("Delete group"); color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+                // New group
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: ng-ta.has-hover ? Theme.bg-hover : transparent;
+                    ng-ta := TouchArea { mouse-cursor: pointer; clicked => { root.new-group(); } }
+                    HorizontalLayout {
+                        padding-left: 10px; spacing: 8px;
+                        Text { text: "\u{E2CC}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("New group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+            }
+        }
+    }
+}

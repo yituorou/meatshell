@@ -1,0 +1,220 @@
+import { Theme } from "../../theme.slint";
+import { ComboBox } from "std-widgets.slint";
+
+// One SSH port-forward row shown in the session dialog (#56). `summary` is a
+// ready-to-display line like "-L 127.0.0.1:8080 → host:80".
+export struct PortFwd {
+    id: string,
+    kind: string,
+    auto-start: bool,
+    name: string,
+    bind-addr: string,
+    bind-port: string,
+    host: string,
+    host-port: string,
+}
+
+export struct TriggerDraft {
+    expect: string,
+    response: string,
+    append-enter: bool,
+    repeat: bool,
+}
+
+export struct JumpHop {
+    id: string,
+    choice: int,
+    // Only a newly added, never-selected row can be omitted on Save/Test.
+    placeholder: bool,
+}
+
+export struct SessionDraft {
+    id: string,
+    name: string,
+    kind: string,      // "ssh" | "serial" | "telnet" | "rdp"
+    host: string,
+    port: int,
+    user: string,
+    auth: string,      // "password" | "key"
+    password: string,
+    private-key-path: string,
+    private-key-inline: string,
+    private-key-inline-mode: bool,
+    proxy: string,     // "" | "socks5://host:port" | "http://host:port"
+    group: string,     // folder/group name ("" = ungrouped)
+    // Serial-only (ignored unless kind == "serial")
+    serial-port: string,
+    baud-rate: int,
+    data-bits: int,
+    stop-bits: int,
+    parity: string,        // "none" | "odd" | "even"
+    flow-control: string,  // "none" | "hardware" | "software"
+    // RDP-only (ignored unless kind == "rdp")
+    rdp-domain: string,      // Windows logon domain ("" = none)
+    rdp-resolution: string,  // "fullscreen" | "custom" | "WxH"
+    rdp-width: int,          // desktop size used by the "custom" choice
+    rdp-height: int,
+    rdp-legacy-tls: bool,
+    rdp-admin: bool,
+    rdp-smart-sizing: bool,
+    rdp-cert-policy: string,
+    rdp-network: string,
+    rdp-sound: bool,
+    rdp-clipboard: bool,
+    rdp-gfx: bool,
+    rdp-extra-args: string,
+    encoding: string,
+    // Honor VT100 line drawing (DEC Special Graphics) even in UTF-8 mode (#376),
+    // like PuTTY's Window → Translation option. On by default.
+    vt100-drawing: bool,
+    // Terminal type announced to the server (#498): SSH pty-req TERM and the
+    // Telnet TERMINAL-TYPE reply. Default "xterm-256color".
+    term-type: string,
+    // Session logging override (#265): "default" | "on" | "off".
+    session-log: string,
+    // Skip shell-integration setup for Windows / pwsh servers or interactive
+    // auto-login scripts where injected commands break the shell.
+    disable-shell-integration: bool,
+    // Who the SFTP panel works as (#438): "" login user | "sudo" root |
+    // "custom" = run `sftp-command` as the SFTP server.
+    sftp-mode: string,
+    sftp-command: string,
+    // Free-form note (B站 suggestion).
+    note: string,
+    // Explicit first-hop-first route, owned by this session (#211).
+    jumps: [JumpHop],
+    allow-secret-reveal: bool,
+    // Expose this session to MCP clients (#432).
+    allow-mcp-access: bool,
+}
+
+// A single segment in a segmented selector (auth toggle, baud presets, …).
+export component SegOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 32px * Theme.ui-scale;
+    horizontal-stretch: 1;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    background: active
+        ? (Theme.dark ? Theme.accent.with-alpha(0.22) : Theme.bg-panel)
+        : (seg-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+    border-color: active ? Theme.accent : Theme.border-subtle;
+    animate background { duration: 100ms; }
+    Text {
+        text: root.label;
+        color: active ? (Theme.dark ? #ffffff : Theme.accent) : Theme.text-secondary;
+        font-size: Theme.fs-sm;
+        font-weight: active ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    seg-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Compact single-line input (no label) used in the port-forward add form (#56).
+export component MiniInput inherits Rectangle {
+    in property <string> placeholder;
+    in-out property <string> value;
+    callback edited(string);
+    height: 30px;
+    horizontal-stretch: 1;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: mi.has-focus ? Theme.accent : Theme.border-subtle;
+    background: Theme.bg-root;
+    // Hide on focus: IME preedit is visible before value is committed.
+    if root.value == "" && !mi.has-focus : Text {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        overflow: elide;
+        text: root.placeholder;
+        color: Theme.text-muted;
+        font-family: Theme.ui-font-family;
+        font-size: Theme.fs-md;
+        vertical-alignment: center;
+    }
+
+    mi := TextInput {
+        x: 8px;
+        width: parent.width - 16px;
+        height: parent.height;
+        color: Theme.text-primary;
+        font-family: Theme.ui-font-family;
+        font-size: Theme.fs-md;
+        vertical-alignment: center;
+        single-line: true;
+        text <=> root.value;
+        edited => { root.edited(root.value); }
+    }
+}
+
+// One choice of the SFTP privileges radio group (#438).
+export component SftpModeOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked;
+    callback clicked();
+    height: 22px;
+    accessible-role: checkbox;
+    accessible-label: root.label;
+    accessible-checked: root.checked;
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            width: 16px; height: 16px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: root.checked ? Theme.accent : Theme.border-strong;
+            Rectangle {
+                width: 8px; height: 8px;
+                border-radius: 4px;
+                background: root.checked ? Theme.accent : transparent;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.text-primary; font-size: Theme.fs-sm;
+            vertical-alignment: center; horizontal-stretch: 1;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Terminal type picker (#498): the TERM sent in the SSH PTY request and the
+// Telnet TERMINAL-TYPE reply. Some targets (e.g. a telnet app reached from the
+// SSH shell) only accept plain "xterm". A value not in the list (hand-edited
+// config) still shows as the current one.
+export component TermTypePicker inherits VerticalLayout {
+    in-out property <string> value: "xterm-256color";
+    spacing: 4px;
+    Text {
+        text: @tr("Terminal type");
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+    ComboBox {
+        model: [
+            "xterm-256color", "xterm", "xterm-color", "xterm-16color",
+            "screen-256color", "tmux-256color", "linux", "vt100", "vt102",
+            "vt220", "ansi", "dumb",
+        ];
+        current-value: root.value;
+        selected(value) => { root.value = value; }
+    }
+    Text {
+        text: @tr("Sent to the server as TERM. Try xterm if a program fails to start or shows garbled output.");
+        color: Theme.text-muted;
+        font-size: Theme.fs-xs;
+        wrap: word-wrap;
+    }
+    Rectangle { height: 6px; }
+}

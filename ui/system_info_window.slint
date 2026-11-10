@@ -1,11 +1,12 @@
 // Detachable system-information window.
-//
-// Opens from the resource summary in the sidebar and shares live resource
-// models with AppWindow, much like ProcWindow shares the process table.
+// Redesigned with a native macOS / ChatGPT-style dashboard layout:
+// Top live gauge cards (CPU / Memory / Swap) + clean left-aligned key-value
+// overview grid + crisp left-aligned hardware, network, and storage tables.
 
 import { Theme, ThemePalette } from "theme.slint";
 import { ModalScope } from "modal.slint";
 import { DiskInfo } from "sidebar.slint";
+import { OutlineIcon } from "widgets.slint";
 
 export struct SysMetricRow {
     label: string,
@@ -30,48 +31,56 @@ export struct SysInfoRow {
 
 component InfoCard inherits Rectangle {
     in property <string> title;
-    border-radius: Theme.radius-md;
+    border-radius: 10px;
     border-width: 1px;
     border-color: Theme.border-subtle;
-    background: Theme.bg-panel.with-alpha(0.88);
+    background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
     clip: true;
 }
 
 component CellText inherits Text {
     in property <bool> muted: false;
-    color: root.muted ? Theme.text-muted : Theme.text-primary;
+    in property <bool> is-header: false;
+    color: root.muted ? Theme.text-secondary : Theme.text-primary;
     font-size: Theme.fs-xs;
-    font-family: Theme.font-mono;
-    // Long values (mount paths, CPU breakdown lines, wide headers) wrap into a
-    // second line instead of being elided; rows grow to fit via preferred-height.
-    wrap: char-wrap;
-    horizontal-alignment: center;
+    font-weight: root.is-header ? 600 : (root.muted ? 500 : 500);
+    font-family: root.is-header || root.muted ? Theme.ui-font-family : Theme.font-mono;
+    wrap: word-wrap;
+    horizontal-alignment: left;
     vertical-alignment: center;
 }
 
 component PairGrid inherits InfoCard {
     in property <[SysInfoRow]> rows;
-    min-height: 188px;
 
     VerticalLayout {
         spacing: 0;
         Rectangle {
-            height: 42px;
-            background: Theme.bg-elevated.with-alpha(0.48);
+            height: 36px * Theme.ui-scale;
+            background: Theme.dark ? #1b1b1b : #f5f6f8;
             Text {
                 text: root.title;
                 color: Theme.text-primary;
                 font-size: Theme.fs-sm;
-                font-weight: 800;
+                font-weight: 600;
                 x: 14px;
                 vertical-alignment: center;
             }
+            Rectangle {
+                y: parent.height - 1px;
+                width: 100%;
+                height: 1px;
+                background: Theme.border-subtle;
+            }
         }
         VerticalLayout {
-            padding: 14px;
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 6px;
+            padding-bottom: 6px;
             spacing: 0;
             if root.rows.length == 0 : Rectangle {
-                height: 34px;
+                height: 36px;
                 Text {
                     text: @tr("No data");
                     color: Theme.text-muted;
@@ -79,19 +88,19 @@ component PairGrid inherits InfoCard {
                     vertical-alignment: center;
                 }
             }
-            for r in root.rows : Rectangle {
-                height: max(34px, c1.preferred-height, c2.preferred-height, c3.preferred-height, c4.preferred-height);
-                Rectangle {
+            for r[ri] in root.rows : Rectangle {
+                height: max(34px * Theme.ui-scale, c1.preferred-height + 10px, c2.preferred-height + 10px, c3.preferred-height + 10px, c4.preferred-height + 10px);
+                if ri < root.rows.length - 1 : Rectangle {
                     x: 0;
                     y: parent.height - 1px;
                     width: parent.width;
                     height: 1px;
-                    background: Theme.border-subtle.with-alpha(0.65);
+                    background: Theme.border-subtle.with-alpha(0.55);
                 }
-                c1 := CellText { text: r.c1; muted: true; x: 14px; width: (parent.width - 28px - 36px) * 0.12; height: parent.height; }
-                c2 := CellText { text: r.c2; x: 14px + (parent.width - 28px - 36px) * 0.12 + 12px; width: (parent.width - 28px - 36px) * 0.38; height: parent.height; }
-                c3 := CellText { text: r.c3; muted: true; x: 14px + (parent.width - 28px - 36px) * 0.50 + 24px; width: (parent.width - 28px - 36px) * 0.12; height: parent.height; }
-                c4 := CellText { text: r.c4; x: 14px + (parent.width - 28px - 36px) * 0.62 + 36px; width: (parent.width - 28px - 36px) * 0.38; height: parent.height; }
+                c1 := CellText { text: r.c1; muted: true; x: 0px; width: (parent.width - 24px) * 0.14; height: parent.height; }
+                c2 := CellText { text: r.c2; x: (parent.width - 24px) * 0.14 + 8px; width: (parent.width - 24px) * 0.36; height: parent.height; }
+                c3 := CellText { text: r.c3; muted: true; x: (parent.width - 24px) * 0.50 + 16px; width: (parent.width - 24px) * 0.14; height: parent.height; }
+                c4 := CellText { text: r.c4; x: (parent.width - 24px) * 0.64 + 24px; width: (parent.width - 24px) * 0.36; height: parent.height; }
             }
         }
     }
@@ -109,30 +118,41 @@ component TableCard inherits InfoCard {
     in property <float> c3w: 0.2;
     in property <float> c4w: 0.2;
     in property <float> c5w: 0.2;
-    min-height: 106px;
 
     VerticalLayout {
         spacing: 0;
         Rectangle {
-            height: 42px;
-            background: Theme.bg-elevated.with-alpha(0.48);
+            height: 36px * Theme.ui-scale;
+            background: Theme.dark ? #1b1b1b : #f5f6f8;
             Text {
                 text: root.title;
                 color: Theme.text-primary;
                 font-size: Theme.fs-sm;
-                font-weight: 800;
+                font-weight: 600;
                 x: 14px;
                 vertical-alignment: center;
             }
+            Rectangle {
+                y: parent.height - 1px;
+                width: 100%;
+                height: 1px;
+                background: Theme.border-subtle;
+            }
         }
         Rectangle {
-            height: max(30px, h1.preferred-height, h2.preferred-height, h3.preferred-height, h4.preferred-height, h5.preferred-height);
-            background: Theme.bg-root.with-alpha(0.28);
-            h1 := CellText { text: root.h1; muted: true; x: 14px; width: (parent.width - 28px - 48px) * root.c1w; height: parent.height; }
-            h2 := CellText { text: root.h2; muted: true; x: 14px + (parent.width - 28px - 48px) * root.c1w + 12px; width: (parent.width - 28px - 48px) * root.c2w; height: parent.height; }
-            h3 := CellText { text: root.h3; muted: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w) + 24px; width: (parent.width - 28px - 48px) * root.c3w; height: parent.height; }
-            h4 := CellText { text: root.h4; muted: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w) + 36px; width: (parent.width - 28px - 48px) * root.c4w; height: parent.height; }
-            h5 := CellText { text: root.h5; muted: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w + root.c4w) + 48px; width: (parent.width - 28px - 48px) * root.c5w; height: parent.height; }
+            height: 30px * Theme.ui-scale;
+            background: Theme.dark ? #171717 : #fafbfc;
+            h1 := CellText { text: root.h1; muted: true; is-header: true; x: 14px; width: (parent.width - 28px - 48px) * root.c1w; height: parent.height; }
+            h2 := CellText { text: root.h2; muted: true; is-header: true; x: 14px + (parent.width - 28px - 48px) * root.c1w + 12px; width: (parent.width - 28px - 48px) * root.c2w; height: parent.height; }
+            h3 := CellText { text: root.h3; muted: true; is-header: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w) + 24px; width: (parent.width - 28px - 48px) * root.c3w; height: parent.height; }
+            h4 := CellText { text: root.h4; muted: true; is-header: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w) + 36px; width: (parent.width - 28px - 48px) * root.c4w; height: parent.height; }
+            if root.c5w > 0.0 : CellText { text: root.h5; muted: true; is-header: true; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w + root.c4w) + 48px; width: (parent.width - 28px - 48px) * root.c5w; height: parent.height; }
+            Rectangle {
+                y: parent.height - 1px;
+                width: 100%;
+                height: 1px;
+                background: Theme.border-subtle;
+            }
         }
         if root.rows.length == 0 : Rectangle {
             height: 36px;
@@ -144,20 +164,20 @@ component TableCard inherits InfoCard {
                 vertical-alignment: center;
             }
         }
-        for r in root.rows : Rectangle {
-            height: max(34px, c1.preferred-height, c2.preferred-height, c3.preferred-height, c4.preferred-height, c5.preferred-height);
+        for r[ri] in root.rows : Rectangle {
+            height: max(34px * Theme.ui-scale, c1.preferred-height + 10px, c2.preferred-height + 10px, c3.preferred-height + 10px, c4.preferred-height + 10px, c5.preferred-height + 10px);
             background: row-ta.has-hover ? Theme.bg-hover : transparent;
-            Rectangle {
+            if ri > 0 : Rectangle {
                 width: parent.width;
                 height: 1px;
-                background: Theme.border-subtle.with-alpha(0.48);
+                background: Theme.border-subtle.with-alpha(0.5);
             }
             row-ta := TouchArea {}
             c1 := CellText { text: r.c1; x: 14px; width: (parent.width - 28px - 48px) * root.c1w; height: parent.height; }
             c2 := CellText { text: r.c2; x: 14px + (parent.width - 28px - 48px) * root.c1w + 12px; width: (parent.width - 28px - 48px) * root.c2w; height: parent.height; }
             c3 := CellText { text: r.c3; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w) + 24px; width: (parent.width - 28px - 48px) * root.c3w; height: parent.height; }
             c4 := CellText { text: r.c4; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w) + 36px; width: (parent.width - 28px - 48px) * root.c4w; height: parent.height; }
-            c5 := CellText { text: r.c5; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w + root.c4w) + 48px; width: (parent.width - 28px - 48px) * root.c5w; height: parent.height; }
+            c5 := CellText { visible: root.c5w > 0.0; text: r.c5; x: 14px + (parent.width - 28px - 48px) * (root.c1w + root.c2w + root.c3w + root.c4w) + 48px; width: (parent.width - 28px - 48px) * root.c5w; height: parent.height; }
         }
     }
 }
@@ -165,12 +185,12 @@ component TableCard inherits InfoCard {
 export component SystemInfoWindow inherits Window {
     title: "meatshell - " + @tr("System information");
     icon: @image-url("../assets/icon.png");
-    // Follows the main window's pin so it is not hidden behind it (#450).
     in property <bool> pinned: false;
     always-on-top: root.pinned;
     in-out property <bool> dark-mode <=> Theme.dark;
     in-out property <float> ui-scale <=> Theme.ui-scale;
     in-out property <string> ui-font-family <=> Theme.ui-font-family;
+    in-out property <bool> lang-en: false;
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
@@ -198,15 +218,14 @@ export component SystemInfoWindow inherits Window {
     in property <[SysInfoRow]> network-rows;
     in property <[SysInfoRow]> filesystem-rows;
 
-    // Not `close`: Slint 1.18 windows have a builtin close() this would shadow.
     callback close-window();
     callback win-drag();
     callback win-resize-se();
 
     min-width: 760px;
     min-height: 520px;
-    preferred-width: 1160px;
-    preferred-height: 760px;
+    preferred-width: 1040px;
+    preferred-height: 740px;
     background: Theme.window-base;
 
     if Theme.wallpaper-active : Image {
@@ -215,156 +234,315 @@ export component SystemInfoWindow inherits Window {
         source: Theme.wallpaper;
         image-fit: cover;
     }
-    Rectangle { width: parent.width; height: parent.height; background: Theme.bg-root.with-alpha(0.92); }
+    Rectangle { width: parent.width; height: parent.height; background: Theme.bg-panel; }
 
     ModalScope {
         active: true;
         is-mac: root.is-mac;
         cancel-requested => { root.close-window(); }
-    VerticalLayout {
-        spacing: 0;
 
-        // macOS title strip: room for the traffic lights over the transparent
-        // native title bar, plus the hidden native title (#360). No TouchArea:
-        // macOS keeps handling the drag.
-        if root.is-mac && !root.custom-titlebar : Rectangle {
-            height: 28px;
-            background: Theme.bg-elevated;
-            Text {
-                x: 76px;
-                width: parent.width - 152px;
-                height: parent.height;
-                text: @tr("System information") + (root.host != "" ? "  -  " + root.host : "");
-                color: Theme.text-secondary;
-                font-size: Theme.fs-sm;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
+        VerticalLayout {
+            spacing: 0;
+
+            if root.is-mac && !root.custom-titlebar : Rectangle {
+                height: 32px;
+                background: Theme.bg-panel;
+                Text {
+                    x: 80px;
+                    width: parent.width - 160px;
+                    height: parent.height;
+                    text: @tr("System information") + (root.host != "" ? "  ·  " + root.host : "");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-xs;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            if root.custom-titlebar : Rectangle {
+                height: 38px;
+                background: Theme.bg-panel;
+                tb-drag := TouchArea {
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                            root.win-drag();
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "info";
+                            color: Theme.text-primary;
+                            icon-size: 16px;
+                        }
+                    }
+                    Text {
+                        text: @tr("System information") + (root.host != "" ? "  ·  " + root.host : "");
+                        color: Theme.text-primary;
+                        font-size: Theme.fs-sm;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        width: 46px;
+                        background: close-ta.has-hover ? #e81123 : transparent;
+                        close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.close-window(); } }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "close";
+                            color: close-ta.has-hover ? white : Theme.text-secondary;
+                            icon-size: 15px;
+                        }
+                    }
+                }
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                content-width: self.width;
+                content-height: max(self.height, content.preferred-height);
+
+                content := VerticalLayout {
+                    padding-left: 18px * Theme.ui-scale;
+                    padding-right: 18px * Theme.ui-scale;
+                    padding-top: 8px * Theme.ui-scale;
+                    padding-bottom: 18px * Theme.ui-scale;
+                    spacing: 12px * Theme.ui-scale;
+
+                    // Top Banner: Title + Host Chip
+                    HorizontalLayout {
+                        height: 32px * Theme.ui-scale;
+                        spacing: 10px * Theme.ui-scale;
+                        alignment: start;
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 28px * Theme.ui-scale;
+                                height: 28px * Theme.ui-scale;
+                                border-radius: 7px;
+                                background: Theme.accent.with-alpha(0.12);
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: "info";
+                                    color: Theme.accent;
+                                    icon-size: 15px * Theme.ui-scale;
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: @tr("System information");
+                                color: Theme.text-primary;
+                                font-size: Theme.fs-lg;
+                                font-weight: 700;
+                            }
+                        }
+
+                        if root.host != "" : VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                height: 22px * Theme.ui-scale;
+                                width: host-badge.preferred-width + 16px;
+                                border-radius: 6px;
+                                background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                host-badge := Text {
+                                    text: root.host;
+                                    color: Theme.text-secondary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.fs-xs;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                            }
+                        }
+                    }
+
+                    // Live Metric Summary Cards (CPU / Memory / Swap)
+                    if root.metrics.length > 0 : HorizontalLayout {
+                        spacing: 12px * Theme.ui-scale;
+                        for m in root.metrics : Rectangle {
+                            horizontal-stretch: 1;
+                            height: 76px * Theme.ui-scale;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
+                            background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+
+                            VerticalLayout {
+                                padding: 12px * Theme.ui-scale;
+                                spacing: 8px * Theme.ui-scale;
+                                alignment: center;
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: m.label;
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.fs-xs;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if m.detail != "" : Text {
+                                        text: m.detail;
+                                        color: Theme.text-muted;
+                                        font-family: Theme.font-mono;
+                                        font-size: 11px * Theme.ui-scale;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: Math.round(m.percent * 100) + "%";
+                                        color: m.percent > 0.90 ? Theme.danger
+                                             : m.percent > 0.80 ? Theme.warning
+                                             : Theme.text-primary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.fs-md;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                Rectangle {
+                                    height: 6px * Theme.ui-scale;
+                                    border-radius: 3px;
+                                    background: Theme.dark ? #262626 : #ebedf0;
+                                    clip: true;
+                                    Rectangle {
+                                        x: 0; y: 0;
+                                        height: parent.height;
+                                        width: max(m.percent > 0.005 ? 4px : 0px, parent.width * clamp(m.percent, 0.0, 1.0));
+                                        border-radius: 3px;
+                                        background: m.percent > 0.90 ? Theme.danger
+                                                  : m.percent > 0.80 ? Theme.warning
+                                                  : m.kind == 1 ? Theme.success
+                                                  : m.kind == 2 ? Theme.warning
+                                                  : Theme.accent;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    PairGrid {
+                        title: root.lang-en ? "Host Overview" : "主机概览";
+                        rows: root.overview-rows;
+                    }
+
+                    TableCard {
+                        title: root.lang-en ? "CPU Specification" : "处理器 (CPU)";
+                        rows: root.cpu-info-rows;
+                        h1: root.lang-en ? "Model" : "型号名称";
+                        h2: root.lang-en ? "Cores" : "核心数";
+                        h3: root.lang-en ? "Frequency" : "主频";
+                        h4: root.lang-en ? "Cache" : "缓存";
+                        h5: root.lang-en ? "Arch / BogoMips" : "架构 / BogoMips";
+                        c1w: 0.44; c2w: 0.14; c3w: 0.14; c4w: 0.14; c5w: 0.14;
+                    }
+
+                    if root.gpu-info-rows.length > 0 : TableCard {
+                        title: "GPU";
+                        rows: root.gpu-info-rows;
+                        h1: root.lang-en ? "Model" : "型号";
+                        h2: root.lang-en ? "Vendor" : "厂商";
+                        h3: root.lang-en ? "Driver" : "驱动";
+                        h4: root.lang-en ? "Memory" : "显存";
+                        h5: "";
+                        c1w: 0.34; c2w: 0.28; c3w: 0.20; c4w: 0.18; c5w: 0.0;
+                    }
+
+                    TableCard {
+                        title: root.lang-en ? "CPU Breakdown" : "CPU 占用详情";
+                        rows: root.cpu-usage-rows;
+                        h1: root.lang-en ? "User" : "用户态";
+                        h2: root.lang-en ? "System" : "内核态";
+                        h3: "Nice";
+                        h4: root.lang-en ? "Idle" : "空闲";
+                        h5: "IOWait / IRQ / SoftIRQ";
+                        c1w: 0.16; c2w: 0.16; c3w: 0.14; c4w: 0.16; c5w: 0.38;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 12px * Theme.ui-scale;
+                        TableCard {
+                            horizontal-stretch: 1;
+                            title: root.lang-en ? "Memory Breakdown" : "内存详情";
+                            rows: root.memory-rows;
+                            h1: root.lang-en ? "Total" : "总计";
+                            h2: root.lang-en ? "Used" : "已用";
+                            h3: root.lang-en ? "Free" : "空闲";
+                            h4: root.lang-en ? "Available" : "可用";
+                            h5: root.lang-en ? "Buffers/Cache" : "缓冲/缓存";
+                            c1w: 0.20; c2w: 0.20; c3w: 0.20; c4w: 0.20; c5w: 0.20;
+                        }
+                        TableCard {
+                            horizontal-stretch: 1;
+                            title: root.lang-en ? "Swap Partition" : "交换分区 (Swap)";
+                            rows: root.swap-rows;
+                            h1: root.lang-en ? "Total" : "总计";
+                            h2: root.lang-en ? "Used" : "已用";
+                            h3: root.lang-en ? "Free" : "空闲";
+                            h4: root.lang-en ? "Cached" : "缓存";
+                            h5: "";
+                            c1w: 0.25; c2w: 0.25; c3w: 0.25; c4w: 0.25; c5w: 0.0;
+                        }
+                    }
+
+                    TableCard {
+                        title: root.lang-en ? "Network Interfaces" : "网络接口";
+                        rows: root.network-rows;
+                        h1: root.lang-en ? "Interface" : "网卡名称";
+                        h2: root.lang-en ? "Sent" : "累计发送";
+                        h3: root.lang-en ? "Received" : "累计接收";
+                        h4: root.lang-en ? "Send speed" : "发送速率";
+                        h5: root.lang-en ? "Receive speed" : "接收速率";
+                        c1w: 0.18; c2w: 0.20; c3w: 0.20; c4w: 0.21; c5w: 0.21;
+                    }
+
+                    TableCard {
+                        title: root.lang-en ? "Mounted Filesystems" : "文件系统挂载";
+                        rows: root.filesystem-rows;
+                        h1: root.lang-en ? "Filesystem" : "设备 / 路径";
+                        h2: root.lang-en ? "Size" : "总容量";
+                        h3: root.lang-en ? "Used" : "已用";
+                        h4: root.lang-en ? "Available" : "可用";
+                        h5: root.lang-en ? "Mount point" : "挂载点";
+                        c1w: 0.30; c2w: 0.16; c3w: 0.18; c4w: 0.16; c5w: 0.20;
+                    }
+                }
             }
         }
 
         if root.custom-titlebar : Rectangle {
-            height: 36px;
-            background: Theme.bg-elevated;
-            tb-drag := TouchArea {
+            width: 16px; height: 16px;
+            x: root.width - self.width;
+            y: root.height - self.height;
+            TouchArea {
+                mouse-cursor: nwse-resize;
                 pointer-event(e) => {
                     if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                        root.win-drag();
+                        root.win-resize-se();
                     }
                 }
             }
-            HorizontalLayout {
-                padding-left: 12px;
-                spacing: 8px;
-                Image { source: @image-url("../assets/icon.png"); width: 16px; height: 16px; vertical-alignment: center; }
-                Text {
-                    text: @tr("System information") + (root.host != "" ? "  -  " + root.host : "");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                    vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; }
-                Rectangle {
-                    width: 46px;
-                    background: close-ta.has-hover ? #e81123 : transparent;
-                    close-ta := TouchArea { mouse-cursor: pointer; clicked => { root.close-window(); } }
-                    Text {
-                        text: "\u{E5CD}";
-                        font-family: "Material Icons";
-                        color: close-ta.has-hover ? white : Theme.text-secondary;
-                        font-size: 16px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
+            Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
+            Rectangle { x: parent.width - 9px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
+            Rectangle { x: parent.width - 5px; y: parent.height - 9px; width: 2px; height: 2px; background: Theme.text-muted; }
         }
-
-        Flickable {
-            vertical-stretch: 1;
-            content-width: self.width;
-            content-height: max(self.height, content.preferred-height);
-
-            content := VerticalLayout {
-                padding: 14px;
-                spacing: 14px;
-
-                PairGrid {
-                    title: @tr("Overview");
-                    rows: root.overview-rows;
-                }
-
-                TableCard {
-                    title: "CPU";
-                    rows: root.cpu-info-rows;
-                    h1: @tr("Name"); h2: @tr("Cores"); h3: @tr("Frequency"); h4: @tr("Cache"); h5: @tr("Vendor") + " / BogoMips";
-                    c1w: 0.48; c2w: 0.10; c3w: 0.15; c4w: 0.16; c5w: 0.11;
-                }
-
-                TableCard {
-                    title: "GPU";
-                    rows: root.gpu-info-rows;
-                    h1: @tr("Name"); h2: @tr("Vendor"); h3: @tr("Driver"); h4: @tr("Memory"); h5: "";
-                    c1w: 0.32; c2w: 0.30; c3w: 0.20; c4w: 0.18; c5w: 0.0;
-                }
-
-                TableCard {
-                    title: @tr("CPU usage");
-                    rows: root.cpu-usage-rows;
-                    h1: @tr("User"); h2: @tr("System"); h3: "Nice"; h4: @tr("Idle"); h5: "IO / IRQ / SoftIRQ / Steal";
-                    c1w: 0.14; c2w: 0.14; c3w: 0.14; c4w: 0.14; c5w: 0.44;
-                }
-
-                HorizontalLayout {
-                    spacing: 14px;
-                    TableCard {
-                        horizontal-stretch: 1;
-                        title: @tr("Memory");
-                        rows: root.memory-rows;
-                        h1: @tr("Total"); h2: @tr("Used"); h3: @tr("Free"); h4: @tr("Usage"); h5: @tr("Cache");
-                        c1w: 0.20; c2w: 0.20; c3w: 0.20; c4w: 0.20; c5w: 0.20;
-                    }
-                    TableCard {
-                        horizontal-stretch: 1;
-                        title: @tr("Swap");
-                        rows: root.swap-rows;
-                        h1: @tr("Total"); h2: @tr("Used"); h3: @tr("Free"); h4: @tr("Usage"); h5: "";
-                        c1w: 0.25; c2w: 0.25; c3w: 0.25; c4w: 0.25; c5w: 0.0;
-                    }
-                }
-
-                TableCard {
-                    title: @tr("Network interfaces");
-                    rows: root.network-rows;
-                    h1: @tr("Name"); h2: @tr("Sent"); h3: @tr("Received"); h4: @tr("Send speed"); h5: @tr("Receive speed");
-                    c1w: 0.18; c2w: 0.20; c3w: 0.20; c4w: 0.21; c5w: 0.21;
-                }
-
-                TableCard {
-                    title: @tr("Filesystems");
-                    rows: root.filesystem-rows;
-                    h1: @tr("Name"); h2: @tr("Size"); h3: @tr("Used"); h4: @tr("Available"); h5: @tr("Mount point");
-                    c1w: 0.38; c2w: 0.16; c3w: 0.12; c4w: 0.16; c5w: 0.18;
-                }
-            }
-        }
-    }
-
-    if root.custom-titlebar : Rectangle {
-        width: 16px; height: 16px;
-        x: root.width - self.width;
-        y: root.height - self.height;
-        TouchArea {
-            mouse-cursor: nwse-resize;
-            pointer-event(e) => {
-                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
-                    root.win-resize-se();
-                }
-            }
-        }
-        Rectangle { x: parent.width - 5px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
-        Rectangle { x: parent.width - 9px; y: parent.height - 5px; width: 2px; height: 2px; background: Theme.text-muted; }
-        Rectangle { x: parent.width - 5px; y: parent.height - 9px; width: 2px; height: 2px; background: Theme.text-muted; }
-    }
     }
 }

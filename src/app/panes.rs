@@ -147,9 +147,9 @@ pub(super) fn refresh_panes(
                 h: p.h,
                 active_id: p.active.clone().into(),
                 focused: p.focused,
-                // Room for the seven top-right toolbar icons (30px each, incl. the
-                // pin #450 and Updates).
-                reserve_right: if top_right { 240.0 } else { 0.0 },
+                // Room for the three compact terminal-context icons in the top-right
+                // tab bar (Sync input, Command bar toggle, Pin window).
+                reserve_right: if top_right { 104.0 } else { 0.0 },
                 tabs: ModelRc::from(Rc::new(VecModel::from(tabs))),
             }
         })
@@ -249,10 +249,26 @@ pub(super) fn panel_edge(window: &AppWindow, kind: &str) -> Option<&'static str>
     }
 }
 
+pub(super) fn effective_panel_edge(window: &AppWindow, kind: &str) -> Option<&'static str> {
+    let norm = |edge: &str| -> &'static str {
+        match edge {
+            "right" => "right",
+            "top" => "top",
+            "bottom" => "bottom",
+            _ => "left",
+        }
+    };
+    match kind {
+        "sidebar" => (!window.get_effective_sidebar_collapsed())
+            .then(|| norm(window.get_sidebar_dock().as_str())),
+        _ => panel_edge(window, kind),
+    }
+}
+
 /// A panel's preferred thickness along its edge's normal: width on a
 /// left/right edge, height on a top/bottom one (logical px).
 pub(super) fn panel_extent(window: &AppWindow, kind: &str) -> f32 {
-    let horizontal_edge = matches!(panel_edge(window, kind), Some("left" | "right"));
+    let horizontal_edge = matches!(effective_panel_edge(window, kind), Some("left" | "right"));
     match kind {
         "sidebar" if horizontal_edge => window.get_sidebar_width(),
         "sidebar" => window.get_sidebar_height(),
@@ -268,8 +284,13 @@ pub(super) fn panel_extent(window: &AppWindow, kind: &str) -> f32 {
 /// its strip actually renders). Multiple folded panels on one edge merge
 /// into a single band, hence the boolean.
 pub(super) fn strip_on_edge(window: &AppWindow, edge: &str) -> bool {
+    if edge == "left" {
+        return true;
+    }
     let docks = |s: slint::SharedString| s.as_str() == edge;
-    (window.get_sidebar_collapsed() && docks(window.get_sidebar_dock()))
+    (window.get_has_active_session()
+        && window.get_effective_sidebar_collapsed()
+        && docks(window.get_sidebar_dock()))
         || (window.get_welcome_as_sidebar()
             && window.get_welcome_collapsed()
             && docks(window.get_welcome_sidebar_dock()))
@@ -342,7 +363,9 @@ pub(super) fn refresh_dock_inner(
     let geom = {
         let mut cur = dock_stacks.borrow_mut();
         cur.rebuild_from(&saved, &|k| panel_edge(&w, k));
-        cur.compute_geom(
+        let mut display = cur.clone();
+        display.rebuild_from(&cur, &|k| effective_panel_edge(&w, k));
+        display.compute_geom(
             &|k| panel_extent(&w, k),
             &|edge| strip_on_edge(&w, edge),
             cw,
@@ -494,9 +517,32 @@ pub(super) fn wire_pane_sftp_and_font_zoom(
     // split panes / other tabs each keep their own (resizing/collapsing one no
     // longer bleeds onto the rest) (#v0.5).
     {
+        let weak = window.as_weak();
         let terminals_model = terminals_model.clone();
         window.on_set_pane_sftp_collapsed(move |tab_id: SharedString, v: bool| {
-            update_terminal_row(&terminals_model, &tab_id, |r| r.sftp_collapsed = v);
+            let mut need_local_load: Option<String> = None;
+            update_terminal_row(&terminals_model, &tab_id, |r| {
+                r.sftp_collapsed = v;
+                if !v
+                    && r.sftp_dual
+                    && r.sftp_local_entries.row_count() == 0
+                    && !r.sftp_local_loading
+                {
+                    need_local_load = Some(r.sftp_local_path.to_string());
+                }
+            });
+            if let Some(local_dir) = need_local_load {
+                if let Some(w) = weak.upgrade() {
+                    let home = sftp_local::home_dir();
+                    let start = if local_dir.is_empty() {
+                        home.clone()
+                    } else {
+                        std::path::PathBuf::from(&local_dir)
+                    };
+                    sftp_local::load_dir_or_fallback(&w, tab_id.as_str(), start, home);
+                    sftp_local::refresh_places(&w, tab_id.as_str());
+                }
+            }
         });
     }
     {

@@ -16,10 +16,30 @@ pub(super) fn normalized_model(buf: &[f32]) -> ModelRc<f32> {
     ModelRc::from(Rc::new(VecModel::from(scaled)))
 }
 
-/// Build the filesystem-usage model (path, "avail/total", used fraction).
+fn is_noise_mount(mount: &str) -> bool {
+    let m = mount.trim();
+    m == "/dev"
+        || m.starts_with("/dev/")
+        || m == "/run"
+        || m.starts_with("/run/")
+        || m == "/sys"
+        || m.starts_with("/sys/")
+        || m == "/proc"
+        || m.starts_with("/proc/")
+        || m.starts_with("/snap/")
+        || m.contains("/docker/containers/")
+        || m.contains("/docker/overlay2/")
+        || m.contains("/kubelet/pods/")
+        || m.contains("/containerd/")
+}
+
+/// Build the filesystem-usage model (path, "avail/total", used fraction),
+/// filtering out pseudo/container filesystems (/dev, /run, docker containers).
 pub(super) fn disk_rows(disks: &[(String, u64, u64)]) -> Vec<DiskInfo> {
+    let has_real_mounts = disks.iter().any(|(m, _, _)| !is_noise_mount(m));
     disks
         .iter()
+        .filter(|(m, _, _)| !has_real_mounts || !is_noise_mount(m))
         .map(|(mount, avail, total)| {
             let used = total.saturating_sub(*avail);
             let percent = if *total > 0 {
@@ -230,6 +250,7 @@ pub(super) fn sync_system_info_theme(main: &AppWindow, sys: &SystemInfoWindow) {
     sys.set_dark_mode(main.get_dark_mode());
     sys.set_ui_scale(main.get_ui_scale());
     sys.set_ui_font_family(main.get_ui_font_family());
+    sys.set_lang_en(main.get_lang_en());
     sys.set_wallpaper_img(main.get_wallpaper_img());
     sys.set_wallpaper_active(main.get_wallpaper_active());
     sys.set_wp_accent(main.get_wp_accent());

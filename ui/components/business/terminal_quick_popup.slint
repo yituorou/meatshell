@@ -1,0 +1,596 @@
+import { Theme } from "../../theme.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { QuickCmd } from "quick_dock_panel.slint";
+
+// --- TerminalQuickPopup ----------------------------------------------------
+// Quick-command popup (opens upward from the command bar).
+export component TerminalQuickPopup inherits Rectangle {
+    in property <[QuickCmd]> quick-commands;
+    in property <bool> quick-sidebar-enabled: false;
+    pure callback entry-matches(string, string, string) -> bool;
+    callback toggle-quick-group(string);
+    callback rename-quick-group(string);
+    callback delete-quick-group(string);
+    callback new-quick-group();
+    callback activate-command(string /* command */, bool /* send-enter */);
+    callback edit-quick-command(int);
+    callback duplicate-quick-command(int);
+    callback delete-quick-command(int);
+    callback move-quick-command(int, string);
+    callback manage-quick-commands();
+    callback quick-dock-drag-move(length, length);
+    callback quick-dock-drag-end();
+    callback close-popup();
+
+    property <bool> lang-en: @tr("Quick") == "Quick";
+    property <string> filter-query: "";
+
+    x: 8px;
+    width: 448px;
+    height: min(380px, max(156px, qc-header.height + qc-search-bar.height + qc-col.preferred-height + 24px));
+    y: -self.height - 6px;
+    background: Theme.popup-bg;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    drop-shadow-blur: 20px;
+    drop-shadow-color: #00000075;
+    clip: true;
+
+    TouchArea {}  // swallow clicks
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        // 1. Popup Header Bar: Title + "+ New Group" + "Manage / Add" + Dock Handle
+        qc-header := HorizontalLayout {
+            height: 28px;
+            spacing: 6px;
+
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 6px;
+                    background: Theme.accent.with-alpha(0.14);
+                    OutlineIcon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        name: "bolt";
+                        icon-size: 13px;
+                        color: Theme.accent;
+                    }
+                }
+            }
+
+            Text {
+                text: @tr("Quick commands");
+                color: Theme.text-primary;
+                font-size: Theme.fs-sm;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.lang-en ? "Click to trigger · Hover to Run / Fill" : "点击触发 · 悬浮可选执行或填入";
+                color: Theme.text-muted;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            // New Group button
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 6px;
+                background: hdr-grp-ta.has-hover ? Theme.bg-hover : transparent;
+                hdr-grp-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.new-quick-group(); }
+                }
+                OutlineIcon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    name: "folder-plus";
+                    icon-size: 14px;
+                    color: hdr-grp-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                }
+            }
+
+            // Add / Manage Quick Commands button
+            Rectangle {
+                height: 26px;
+                width: mng-hdr-row.preferred-width + 14px;
+                border-radius: 6px;
+                background: mng-ta.pressed ? Theme.accent.darker(0.15)
+                          : mng-ta.has-hover ? Theme.accent.darker(0.06)
+                          : Theme.accent;
+                mng-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.close-popup(); root.manage-quick-commands(); }
+                }
+                mng-hdr-row := HorizontalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "plus";
+                            icon-size: 12px;
+                            color: white;
+                            stroke-w: 2.0px;
+                        }
+                    }
+                    Text {
+                        text: root.lang-en ? "Add / Manage" : "添加 / 管理";
+                        color: white;
+                        font-size: 11px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Drag to dock sidebar grip
+            if root.quick-sidebar-enabled : Rectangle {
+                width: 26px;
+                height: 26px;
+                border-radius: 6px;
+                background: quick-grip.has-hover ? Theme.bg-hover : transparent;
+                quick-grip := TouchArea {
+                    mouse-cursor: grab;
+                    moved => {
+                        if (self.pressed) {
+                            root.quick-dock-drag-move(
+                                self.absolute-position.x + self.mouse-x,
+                                self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+                            root.close-popup();
+                            root.quick-dock-drag-end();
+                        }
+                    }
+                }
+                OutlineIcon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    name: "dock-right";
+                    icon-size: 14px;
+                    color: quick-grip.has-hover ? Theme.text-primary : Theme.text-secondary;
+                }
+            }
+        }
+
+        // 2. Quick Search / Filter Bar
+        qc-search-bar := Rectangle {
+            height: 28px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: qc-filter-in.has-focus ? Theme.accent : Theme.border-subtle;
+            background: Theme.bg-root;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 6px;
+
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "search";
+                        icon-size: 13px;
+                        color: qc-filter-in.has-focus ? Theme.accent : Theme.text-muted;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    qc-filter-in := TextInput {
+                        width: 100%;
+                        height: 100%;
+                        text <=> root.filter-query;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: Theme.fs-sm;
+                        single-line: true;
+                        vertical-alignment: center;
+                        key-pressed(e) => {
+                            if (e.text == Key.Escape) {
+                                if (root.filter-query != "") {
+                                    root.filter-query = "";
+                                } else {
+                                    root.close-popup();
+                                }
+                                accept
+                            } else {
+                                reject
+                            }
+                        }
+                    }
+                    if !qc-filter-in.has-focus && root.filter-query == "" : Text {
+                        width: 100%;
+                        height: 100%;
+                        text: root.lang-en ? "Filter commands by name or script…" : "搜索快捷命令名称或脚本内容…";
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.filter-query != "" : VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 9px;
+                        background: clr-q-ta.has-hover ? Theme.bg-hover : transparent;
+                        clr-q-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.filter-query = "";
+                                qc-filter-in.focus();
+                            }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "close";
+                            icon-size: 11px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Scrollable Grouped Command Rows
+        Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: max(self.height, qc-col.preferred-height);
+            qc-col := VerticalLayout {
+                padding: 2px;
+                spacing: 3px;
+                alignment: start;
+
+                if root.quick-commands.length == 0 : Rectangle {
+                    height: 84px;
+                    border-radius: 8px;
+                    background: Theme.dark ? #18191d : #f7f8fb;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        Text {
+                            text: @tr("No quick commands yet");
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-sm;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: root.lang-en
+                                ? "Click '+ Add / Manage' above to create reusable shell shortcuts"
+                                : "点击右上角「+ 添加 / 管理」添加常用运维命令或脚本";
+                            color: Theme.text-muted;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                for q in root.quick-commands : VerticalLayout {
+                    spacing: 2px;
+                    property <bool> row-matches: root.filter-query == ""
+                        ? true
+                        : root.entry-matches(q.name, q.command, root.filter-query);
+
+                    // Group header on the first row of each group (#55) —
+                    // click to collapse/expand the whole group.
+                    if q.group-header != "" && root.filter-query == "" : Rectangle {
+                        height: 24px;
+                        border-radius: 5px;
+                        background: grp-ta.has-hover ? Theme.bg-hover : transparent;
+                        property <length> gmx;
+                        property <length> gmy;
+                        grp-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle-quick-group(q.group); }
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                                    gmx = self.mouse-x; gmy = self.mouse-y; qpop-grp-menu.show();
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 5px;
+                            VerticalLayout {
+                                alignment: center;
+                                OutlineIcon {
+                                    name: q.collapsed ? "chevron-right" : "chevron-down";
+                                    icon-size: 11px;
+                                    color: Theme.text-muted;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                OutlineIcon {
+                                    name: "folder";
+                                    icon-size: 13px;
+                                    color: Theme.accent;
+                                }
+                            }
+                            Text {
+                                text: q.group == "default"
+                                    ? (root.lang-en ? "Default Group" : "默认分组")
+                                    : q.group;
+                                color: Theme.text-secondary;
+                                font-size: Theme.fs-xs;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                horizontal-alignment: left;
+                            }
+                        }
+                        qpop-grp-menu := PopupWindow {
+                            x: gmx; y: gmy; width: 150px;
+                            height: (q.orig-index == -1 ? 3 : 2) * 30px + 9px;
+                            Rectangle {
+                                background: Theme.popup-bg; border-radius: Theme.radius-sm;
+                                border-width: 1px; border-color: Theme.border-strong;
+                                drop-shadow-blur: 10px; drop-shadow-color: #00000050;
+                                VerticalLayout {
+                                    padding: 4px; spacing: 1px;
+                                    Rectangle { height: 30px; border-radius: Theme.radius-sm;
+                                        background: pg-ren-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pg-ren-ta := TouchArea { mouse-cursor: pointer; clicked => { root.rename-quick-group(q.group); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E3C9}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("Rename group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    if q.orig-index == -1 : Rectangle { height: 30px; border-radius: Theme.radius-sm;
+                                        background: pg-del-ta.has-hover ? #cc333320 : transparent;
+                                        pg-del-ta := TouchArea { mouse-cursor: pointer; clicked => { root.delete-quick-group(q.group); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E872}"; font-family: "Material Icons"; color: #cc3333; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("Delete group"); color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    Rectangle { height: 30px; border-radius: Theme.radius-sm;
+                                        background: pg-new-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pg-new-ta := TouchArea { mouse-cursor: pointer; clicked => { root.new-quick-group(); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E2CC}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("New group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!q.collapsed || root.filter-query != "") && q.orig-index >= 0 && row-matches : q-row := Rectangle {
+                        property <bool> row-hovered:
+                            q-item-ta.has-hover || q-run-ta.has-hover || q-fill-ta.has-hover || q-edit-ta.has-hover;
+                        height: 34px;
+                        border-radius: 6px;
+                        border-width: 1px;
+                        border-color: self.row-hovered ? Theme.accent.with-alpha(0.45) : transparent;
+                        background: self.row-hovered ? Theme.bg-hover : (Theme.dark ? #1b1c2080 : #f6f7fa80);
+                        property <length> ctx-x;
+                        property <length> ctx-y;
+
+                        q-item-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.activate-command(q.command, q.send-enter);
+                            }
+                            pointer-event(e) => {
+                                if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                                    ctx-x = self.mouse-x; ctx-y = self.mouse-y; qpop-ctx-menu.show();
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 6px;
+
+                            // Trigger mode badge icon
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 18px;
+                                    height: 18px;
+                                    border-radius: 4px;
+                                    background: (q.send-enter ? Theme.accent : Theme.success).with-alpha(0.14);
+                                    OutlineIcon {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        name: q.send-enter ? "bolt" : "keyboard";
+                                        icon-size: 11px;
+                                        color: q.send-enter ? Theme.accent : Theme.success;
+                                    }
+                                }
+                            }
+
+                            // Command Name
+                            Text {
+                                text: q.name;
+                                color: Theme.text-primary;
+                                font-size: Theme.fs-sm;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                width: min(self.preferred-width, 130px);
+                            }
+
+                            // Monospace command preview pill
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 22px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 4px;
+                                background: Theme.dark ? #131417 : #eef0f5;
+                                HorizontalLayout {
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "$";
+                                        color: Theme.accent;
+                                        font-family: Theme.font-mono;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: q.command-preview;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+
+                            // Hover Quick Action Pills: "Run ↵" | "Fill" | "Edit"
+                            HorizontalLayout {
+                                visible: q-row.row-hovered;
+                                width: self.visible ? self.preferred-width : 0px;
+                                spacing: 4px;
+                                alignment: center;
+
+                                // 1. Run Immediately
+                                Rectangle {
+                                    height: 22px;
+                                    width: q-run-lbl.preferred-width + 10px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    background: q-run-ta.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
+                                    q-run-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.activate-command(q.command, true); }
+                                    }
+                                    q-run-lbl := Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: root.lang-en ? "Run ↵" : "执行 ↵";
+                                        color: q-run-ta.has-hover ? white : Theme.accent;
+                                        font-size: 10.5px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // 2. Fill Input Box without running
+                                Rectangle {
+                                    height: 22px;
+                                    width: q-fill-lbl.preferred-width + 10px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    border-width: 1px;
+                                    border-color: q-fill-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                                    background: q-fill-ta.has-hover ? Theme.bg-active : Theme.bg-root;
+                                    q-fill-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.activate-command(q.command, false); }
+                                    }
+                                    q-fill-lbl := Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: root.lang-en ? "Fill" : "填入";
+                                        color: Theme.text-secondary;
+                                        font-size: 10.5px;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // 3. Edit button
+                                Rectangle {
+                                    width: 22px;
+                                    height: 22px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    background: q-edit-ta.has-hover ? Theme.bg-active : transparent;
+                                    q-edit-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.close-popup();
+                                            root.edit-quick-command(q.orig-index);
+                                        }
+                                    }
+                                    OutlineIcon {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        name: "edit";
+                                        icon-size: 12px;
+                                        color: q-edit-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                                    }
+                                }
+                            }
+                        }
+
+                        qpop-ctx-menu := PopupWindow {
+                            x: ctx-x; y: ctx-y; width: 160px;
+                            height: qpop-ctx-vl.preferred-height;
+                            Rectangle {
+                                background: Theme.popup-bg; border-radius: Theme.radius-sm;
+                                border-width: 1px; border-color: Theme.border-strong;
+                                drop-shadow-blur: 10px; drop-shadow-color: #00000050;
+                                qpop-ctx-vl := VerticalLayout {
+                                    padding: 4px; spacing: 1px;
+                                    Rectangle { height: 28px; border-radius: Theme.radius-sm;
+                                        background: pi-edit-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pi-edit-ta := TouchArea { mouse-cursor: pointer; clicked => { root.close-popup(); root.edit-quick-command(q.orig-index); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E3C9}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("Edit"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    Rectangle { height: 28px; border-radius: Theme.radius-sm;
+                                        background: pi-dup-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pi-dup-ta := TouchArea { mouse-cursor: pointer; clicked => { root.duplicate-quick-command(q.orig-index); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E14D}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("Duplicate"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    Rectangle { height: 28px; border-radius: Theme.radius-sm;
+                                        background: pi-del-ta.has-hover ? #cc333320 : transparent;
+                                        pi-del-ta := TouchArea { mouse-cursor: pointer; clicked => { root.delete-quick-command(q.orig-index); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E872}"; font-family: "Material Icons"; color: #cc3333; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: @tr("Delete"); color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    Rectangle { height: 1px; background: Theme.border-subtle; }
+                                    HorizontalLayout { padding-left: 10px; padding-top: 2px; spacing: 6px;
+                                        Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-muted; font-size: Theme.fs-xs; vertical-alignment: center; }
+                                        Text { text: @tr("Move to"); color: Theme.text-muted; font-size: Theme.fs-xs; vertical-alignment: center; horizontal-stretch: 1; } }
+                                    if q.group != "default" : Rectangle { height: 28px; border-radius: Theme.radius-sm;
+                                        background: pi-md-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pi-md-ta := TouchArea { mouse-cursor: pointer; clicked => { root.move-quick-command(q.orig-index, "default"); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: root.lang-en ? "Default Group" : "默认分组"; color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; } } }
+                                    for s in root.quick-commands : Rectangle {
+                                        visible: s.group-header != "" && s.group != "default" && s.group != q.group;
+                                        height: self.visible ? 28px : 0px;
+                                        border-radius: Theme.radius-sm;
+                                        background: pi-mv-ta.has-hover ? Theme.bg-hover : transparent;
+                                        pi-mv-ta := TouchArea { mouse-cursor: pointer; clicked => { root.move-quick-command(q.orig-index, s.group); } }
+                                        HorizontalLayout { padding-left: 10px; spacing: 8px;
+                                            Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                            Text { text: s.group; color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

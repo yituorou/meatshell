@@ -1,0 +1,290 @@
+// SFTP data types and reusable button/menu/place-row components.
+
+import { Theme, TooltipState } from "../../theme.slint";
+import { OutlineIcon } from "../../widgets.slint";
+
+// ---------------------------------------------------------------------------
+// Data types
+// ---------------------------------------------------------------------------
+
+export struct SftpEntry {
+    name: string,
+    full-path: string,
+    is-dir: bool,
+    size: string,
+    size-bytes: float,
+    modified: string,
+    modified-ts: float,
+    mode: int,        // POSIX permission bits, for the chmod dialog (#84)
+    file-type: string,
+    permissions: string,
+    permissions-mode: int,
+    owner: string,
+    group: string,
+    selected: bool,   // multi-select checkbox state (#100)
+}
+
+export struct SftpTreeNode {
+    path: string,
+    name: string,
+    depth: int,
+    expanded: bool,
+    has-children: bool,
+}
+
+// One row of the local pane's places dropdown (#532): a quick location such as
+// the desktop or a drive, resolved by Rust (drive labels come from the OS).
+export struct SftpLocalPlace {
+    label: string,
+    path: string,
+    icon: string,
+    current: bool,
+}
+
+export struct TunnelInfo {
+    id: string,
+    name: string,
+    kind: string,
+    bind: string,
+    target: string,
+    status: string,
+    active: bool,
+}
+
+export struct TransferInfo {
+    id: string,
+    name: string,
+    detail: string,   // "2.3 MB/5.0 MB" | "已完成" | "失败"
+    percent: float,   // 0.0..1.0
+    state: int,       // 0 active / 1 done / 2 error / 3 preparing / 4 cancelled
+    is-upload: bool,
+}
+
+// ---------------------------------------------------------------------------
+// SftpIconBtn — 28×26px OutlineIcon button with ChatGPT-style floating tooltip
+// ---------------------------------------------------------------------------
+export component SftpIconBtn inherits Rectangle {
+    in property <string> icon;
+    in property <string> tooltip;
+    in property <bool> active: false;
+    in property <bool> danger: false;
+    in property <bool> tooltip-left: false;
+    in property <brush> icon-color: root.danger ? Theme.danger : (root.active ? Theme.text-primary : Theme.text-secondary);
+    callback clicked();
+
+    width: 28px;
+    height: 26px;
+    border-radius: 6px;
+    background: root.active
+        ? Theme.bg-active
+        : (ta.has-hover
+            ? (root.danger ? Theme.danger.with-alpha(0.16) : Theme.bg-hover)
+            : transparent);
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tooltip);
+            root.clicked();
+        }
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                TooltipState.show(root.tooltip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tooltip);
+            }
+        }
+    }
+
+    OutlineIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: root.icon;
+        icon-size: 15px * Theme.ui-scale;
+        color: ta.has-hover
+            ? (root.danger ? Theme.danger : Theme.text-primary)
+            : root.icon-color;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SftpPillBtn — Compact pill button with OutlineIcon + text + floating tooltip
+// ---------------------------------------------------------------------------
+export component SftpPillBtn inherits Rectangle {
+    in property <string> icon: "";
+    in property <string> label;
+    in property <string> tooltip;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> tooltip-left: false;
+    callback clicked();
+
+    height: 26px;
+    width: content.preferred-width + 16px;
+    border-radius: 6px;
+    background: root.primary
+        ? (ta.has-hover ? Theme.bg-active : Theme.bg-elevated)
+        : (root.active ? Theme.bg-active : (ta.has-hover ? Theme.bg-hover : transparent));
+    border-width: root.primary ? 1px : 0px;
+    border-color: Theme.border-subtle;
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tooltip);
+            root.clicked();
+        }
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                TooltipState.show(root.tooltip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tooltip);
+            }
+        }
+    }
+
+    content := HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 5px;
+        alignment: center;
+        if root.icon != "" : OutlineIcon {
+            y: (parent.height - self.height) / 2;
+            name: root.icon;
+            icon-size: 14px * Theme.ui-scale;
+            color: root.primary || root.active || ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        Text {
+            text: root.label;
+            color: root.primary || root.active || ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.fs-xs;
+            font-weight: root.primary || root.active ? 600 : 500;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// One row of the file-list right-click context menu.
+export component SftpMenuItem inherits Rectangle {
+    in property <string> label;
+    in property <string> icon;
+    in property <brush> tint: Theme.text-primary;
+    in property <bool> enabled: true;   // disabled items grey out + ignore clicks
+    callback clicked();
+    height: 28px;
+    border-radius: 6px;
+    background: (root.enabled && ta.has-hover) ? Theme.bg-hover : transparent;
+    ta := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+    if root.icon != "" : OutlineIcon {
+        x: 8px;
+        y: (parent.height - self.height) / 2;
+        name: root.icon;
+        icon-size: 14px * Theme.ui-scale;
+        color: root.enabled ? root.tint : Theme.text-muted;
+    }
+    Text {
+        x: root.icon != "" ? 28px : 10px;
+        width: parent.width - (root.icon != "" ? 34px : 16px);
+        text: root.label;
+        color: root.enabled ? root.tint : Theme.text-muted;
+        font-size: Theme.fs-sm;
+        vertical-alignment: center;
+        overflow: elide;
+        height: parent.height;
+    }
+}
+
+// One folder in the places menu: click jumps there; bookmarks also get a
+// remove button (#500).
+export component SftpPlaceRow inherits Rectangle {
+    in property <string> path;
+    in property <string> icon;
+    in property <bool> current;      // the folder the panel is showing
+    in property <bool> removable;
+    // Optional friendly name; falls back to the path when empty (remote rows).
+    in property <string> label: "";
+    callback go();
+    callback remove();
+    height: 28px;
+    border-radius: 6px;
+    background: root.current
+        ? Theme.bg-active.with-alpha(0.65)
+        : (row-ta.has-hover ? Theme.bg-hover : transparent);
+    row-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.go(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 6px;
+        spacing: 8px;
+        OutlineIcon {
+            y: (parent.height - self.height) / 2;
+            name: root.icon;
+            icon-size: 14px * Theme.ui-scale;
+            color: root.current ? Theme.text-primary : Theme.text-secondary;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label == "" ? root.path : (root.label + "  " + root.path);
+            color: root.current ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.fs-xs;
+            font-weight: root.current ? 600 : 400;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if root.removable && row-ta.has-hover : Rectangle {
+            width: 20px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: rm-ta.has-hover ? Theme.danger.with-alpha(0.16) : transparent;
+            rm-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.remove(); }
+            }
+            OutlineIcon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                name: "close";
+                icon-size: 12px;
+                color: rm-ta.has-hover ? Theme.danger : Theme.text-muted;
+            }
+        }
+    }
+}
+
+// Star toggle embedded inside the right edge of the path input (#500).
+export component SftpStarButton inherits Rectangle {
+    in property <bool> bookmarked;
+    callback toggled();
+    property <string> tip: root.bookmarked ? @tr("Remove bookmark") : @tr("Bookmark current folder");
+    width: 24px;
+    height: 22px;
+    border-radius: 5px;
+    background: star-ta.has-hover ? Theme.bg-hover : transparent;
+    star-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tip);
+            root.toggled();
+        }
+        changed has-hover => {
+            if (self.has-hover) {
+                TooltipState.show(root.tip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tip);
+            }
+        }
+    }
+    OutlineIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: "star";
+        icon-size: 14px * Theme.ui-scale;
+        color: root.bookmarked ? #f59e0b : (star-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+    }
+}

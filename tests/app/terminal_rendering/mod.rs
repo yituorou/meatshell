@@ -22,6 +22,7 @@ fn make_buf(
         find_query: String::new(),
         find_cursor: None,
         is_dark: false,
+        term_palette: crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(false),
         output_highlight: OutputHighlightPreset::Log,
         custom_highlight_rules: Vec::new(),
         json_format_output: false,
@@ -371,4 +372,84 @@ fn tab_menu_session_log_starts_and_stops_independently_of_the_setting() {
     assert!(text.contains("show version"));
     assert!(text.contains("session log closed"));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn iterm2_theme_palette_switches_live_on_term_buffer_for_ansi16_and_truecolor() {
+    let mgr = crate::terminal_theme::ThemeManager::new("default".into(), Vec::new(), Vec::new(), true);
+    let mut buf = make_buf(4, 60, &[], &[], 0);
+    // Feed ANSI normal red (31), bright green (92), and 24-bit TrueColor (#123456 fg on #abcdef bg)
+    let _ = buf.ingest(
+        b"\x1b[31mERR\x1b[0m \x1b[92mOK\x1b[0m \x1b[38;2;18;52;86;48;2;171;205;239mRGB\x1b[0m",
+    );
+
+    // 1. Switch to Dracula at runtime without recreating the TermBuffer or PTY
+    let dracula = mgr.get_theme("dracula").expect("dracula theme exists");
+    let dracula_pal = dracula.to_resolved_palette();
+    buf.term_palette = dracula_pal;
+    let rendered_dracula = buf.render();
+
+    let err_span = rendered_dracula
+        .spans
+        .iter()
+        .find(|s| s.text.as_str() == "ERR")
+        .expect("ERR span");
+    let (dr_r, dr_g, dr_b) = dracula_pal.ansi[1];
+    assert_eq!(
+        (err_span.fg.red(), err_span.fg.green(), err_span.fg.blue()),
+        (dr_r, dr_g, dr_b)
+    );
+
+    let ok_span = rendered_dracula
+        .spans
+        .iter()
+        .find(|s| s.text.as_str() == "OK")
+        .expect("OK span");
+    let (dg_r, dg_g, dg_b) = dracula_pal.ansi[10];
+    assert_eq!(
+        (ok_span.fg.red(), ok_span.fg.green(), ok_span.fg.blue()),
+        (dg_r, dg_g, dg_b)
+    );
+
+    let rgb_span = rendered_dracula
+        .spans
+        .iter()
+        .find(|s| s.text.as_str() == "RGB")
+        .expect("RGB span");
+    assert_eq!(
+        (rgb_span.fg.red(), rgb_span.fg.green(), rgb_span.fg.blue()),
+        (18, 52, 86)
+    );
+    assert_eq!(
+        (rgb_span.bg.red(), rgb_span.bg.green(), rgb_span.bg.blue()),
+        (171, 205, 239)
+    );
+
+    // 2. Switch to Solarized Light on the same buffer and verify ANSI colors update immediately
+    let sol_light = mgr
+        .get_theme("iterm2-solarized-light")
+        .expect("solarized light exists");
+    let sol_pal = sol_light.to_resolved_palette();
+    buf.term_palette = sol_pal;
+    let rendered_sol = buf.render();
+
+    let err_span_sol = rendered_sol
+        .spans
+        .iter()
+        .find(|s| s.text.as_str() == "ERR")
+        .expect("ERR span after switch");
+    let (sr_r, sr_g, sr_b) = sol_pal.ansi[1];
+    assert_eq!(
+        (
+            err_span_sol.fg.red(),
+            err_span_sol.fg.green(),
+            err_span_sol.fg.blue()
+        ),
+        (sr_r, sr_g, sr_b)
+    );
+    assert_ne!(
+        (dr_r, dr_g, dr_b),
+        (sr_r, sr_g, sr_b),
+        "Dracula and Solarized Light red ANSI slots must differ"
+    );
 }

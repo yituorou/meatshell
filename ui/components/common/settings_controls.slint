@@ -1,0 +1,154 @@
+// Common reusable settings controls (NavItem, SectionHeader, SettingRow, Switch, Stepper, ThemeDot).
+
+import { Theme } from "../../theme.slint";
+import { OutlineIcon } from "outline_icon.slint";
+
+// One left-nav row (icon + label) — ChatGPT Desktop Settings style.
+export component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 36px;
+    border-radius: 8px;
+    background: root.active ? Theme.bg-active : (ta.has-hover ? Theme.bg-hover : transparent);
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            OutlineIcon {
+                name: root.icon;
+                icon-size: 17px * Theme.panel-font;
+                color: root.active ? Theme.text-primary : Theme.text-secondary;
+            }
+        }
+        Text { text: root.label;
+               color: root.active ? Theme.text-primary : Theme.text-secondary;
+               font-size: 14px * Theme.panel-font;
+               font-weight: root.active ? 600 : 400;
+               vertical-alignment: center; horizontal-stretch: 1; }
+    }
+}
+
+// Small muted group heading (字体 / 预览 / SFTP …).
+export component SectionHeader inherits Text {
+    font-size: 12px * Theme.panel-font;
+    font-weight: 600;
+    color: Theme.text-secondary;
+    vertical-alignment: center;
+}
+
+// A settings row: label (+ optional description) on the left, a control slot on
+// the right via @children. Right-aligned and vertically centered.
+export component SettingRow inherits Rectangle {
+    in property <string> label;
+    in property <string> desc;
+    in property <bool> show-divider: true;
+    VerticalLayout {
+        HorizontalLayout {
+            spacing: 16px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 4px;
+                Text { text: root.label; font-size: 14px * Theme.panel-font; font-weight: 500; color: Theme.text-primary; }
+                if root.desc != "" : Text { text: root.desc; font-size: 12px * Theme.panel-font;
+                       color: Theme.text-muted; wrap: word-wrap; }
+            }
+            VerticalLayout {
+                alignment: center;
+                @children
+            }
+        }
+        if root.show-divider : Rectangle { height: 1px; background: Theme.border-subtle; }
+    }
+}
+
+// iOS-style toggle switch. Display-only `on` (driven by the parent); a tap emits
+// the intended new value so the parent owns the state (avoids Slint's
+// binding-break-on-self-assign gotcha).
+export component Switch inherits Rectangle {
+    in property <bool> on;
+    callback toggled(bool);
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: root.on ? Theme.accent : Theme.bg-active;
+    animate background { duration: 120ms; }
+    Rectangle {
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        y: 3px;
+        x: root.on ? parent.width - self.width - 3px : 3px;
+        background: white;
+        animate x { duration: 120ms; easing: ease-out; }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(!root.on); }
+    }
+}
+
+// [- value +] stepper. Display-only `value`; emits the clamped new value.
+export component Stepper inherits Rectangle {
+    in property <int> value;
+    in property <int> minimum: 0;
+    in property <int> maximum: 100;
+    in property <int> step: 1;
+    in property <string> unit;
+    callback changed(int);
+    width: 112px;
+    height: 26px;
+    border-radius: 6px;
+    background: Theme.bg-elevated;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+    HorizontalLayout {
+        Rectangle {
+            width: 30px;
+            background: minus-ta.has-hover ? Theme.bg-hover : transparent;
+            minus-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.changed(max(root.minimum, root.value - root.step)); }
+            }
+            Text { text: "\u{E15B}"; font-family: "Material Icons"; font-size: 14px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Rectangle { width: 1px; background: Theme.border-subtle; }
+        Text { text: root.value + root.unit; horizontal-stretch: 1;
+               font-size: 12px * Theme.panel-font; color: Theme.text-primary;
+               horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { width: 1px; background: Theme.border-subtle; }
+        Rectangle {
+            width: 30px;
+            background: plus-ta.has-hover ? Theme.bg-hover : transparent;
+            plus-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.changed(min(root.maximum, root.value + root.step)); }
+            }
+            Text { text: "\u{E145}"; font-family: "Material Icons"; font-size: 14px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; }
+        }
+    }
+}
+
+// Colour dot used by the colour theme picker.
+export component ThemeDot inherits Rectangle {
+    in property <color> swatch;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background: root.swatch;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+}

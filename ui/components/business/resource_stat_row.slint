@@ -1,0 +1,149 @@
+import { Theme } from "../../theme.slint";
+
+// One filesystem row for the disk-usage panel.
+export struct DiskInfo {
+    path: string,
+    detail: string,   // "available/total"
+    percent: float,   // used fraction 0.0..1.0
+}
+
+// --- StatRow ---------------------------------------------------------------
+// Modern metric row with label, capacity detail, percentage badge, and 6px rounded bar.
+export component StatRow inherits Rectangle {
+    in property <string> label;
+    in property <float> percent; // 0.0 .. 1.0
+    in property <string> detail;
+    in property <bool> available: true;
+    in property <brush> bar-color: Theme.accent;
+
+    height: 36px * Theme.ui-scale;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        spacing: 6px * Theme.ui-scale;
+        alignment: center;
+
+        HorizontalLayout {
+            height: 16px * Theme.ui-scale;
+            spacing: 6px;
+            Text {
+                text: root.label;
+                color: Theme.text-primary;
+                font-size: Theme.fs-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.available && root.detail != "" : Text {
+                text: root.detail;
+                color: Theme.text-muted;
+                font-family: Theme.font-mono;
+                font-size: 11px * Theme.ui-scale;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.available ? Math.round(root.percent * 100) + "%" : "—";
+                color: !root.available ? Theme.text-muted
+                     : root.percent > 0.90 ? Theme.danger
+                     : root.percent > 0.80 ? Theme.warning
+                     : Theme.text-primary;
+                font-family: Theme.font-mono;
+                font-size: Theme.fs-xs;
+                font-weight: 700;
+                min-width: 34px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+
+        // Smooth 6px rounded progress bar
+        Rectangle {
+            height: 6px * Theme.ui-scale;
+            background: Theme.dark ? #262626 : #ebedf0;
+            border-radius: 3px;
+            clip: true;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                height: parent.height;
+                width: root.available ? max(root.percent > 0.005 ? 4px : 0px, parent.width * clamp(root.percent, 0.0, 1.0)) : 0px;
+                background: root.percent > 0.90 ? Theme.danger
+                          : root.percent > 0.80 ? Theme.warning
+                          : root.bar-color;
+                border-radius: 3px;
+                animate width { duration: 240ms; easing: ease-out; }
+            }
+        }
+    }
+}
+
+// --- StatsBlock ------------------------------------------------------------
+// Elevated card for CPU / Memory / Swap health gauges.
+export component StatsBlock inherits Rectangle {
+    in property <string> resource-title;
+    in property <bool> system-info-available;
+    in property <bool> proc-available;
+    in property <bool> metrics-available: true;
+    in property <bool> lang-en: false;
+    in property <float> cpu-percent;
+    in property <float> mem-percent;
+    in property <float> swap-percent;
+    in property <string> mem-detail;
+    in property <string> swap-detail;
+    callback show-system-info();
+    callback show-processes();
+
+    property <float> peak-load: max(root.cpu-percent, root.mem-percent);
+
+    vertical-stretch: 0;
+    height: stats-vl.preferred-height;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+
+    stats-vl := VerticalLayout {
+        padding: 10px * Theme.ui-scale;
+        spacing: 8px * Theme.ui-scale;
+
+        HorizontalLayout {
+            height: 18px * Theme.ui-scale;
+            spacing: 6px;
+            Text {
+                text: root.lang-en ? "Core Load" : "核心负载";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.metrics-available : Rectangle {
+                height: 18px * Theme.ui-scale;
+                width: health-lbl.preferred-width + 12px;
+                border-radius: 9px;
+                background: (root.peak-load > 0.90 ? Theme.danger
+                           : root.peak-load > 0.78 ? Theme.warning
+                           : Theme.success).with-alpha(0.14);
+                health-lbl := Text {
+                    text: root.peak-load > 0.90 ? (root.lang-en ? "Critical" : "高负载")
+                        : root.peak-load > 0.78 ? (root.lang-en ? "Busy" : "较繁忙")
+                        : (root.lang-en ? "Healthy" : "健康");
+                    color: root.peak-load > 0.90 ? Theme.danger
+                         : root.peak-load > 0.78 ? Theme.warning
+                         : Theme.success;
+                    font-size: 10.5px * Theme.ui-scale;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                }
+            }
+        }
+
+        StatRow { label: "CPU"; percent: root.cpu-percent; detail: ""; available: root.metrics-available; bar-color: Theme.accent; }
+        StatRow { label: @tr("Memory"); percent: root.mem-percent; detail: root.mem-detail; available: root.metrics-available; bar-color: Theme.success; }
+        StatRow { label: @tr("Swap"); percent: root.swap-percent; detail: root.swap-detail; available: root.metrics-available; bar-color: Theme.warning; }
+    }
+}

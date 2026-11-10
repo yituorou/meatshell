@@ -858,3 +858,177 @@ msgstr "Stop session log"
 
 msgid "Start session log..."
 msgstr "Start session log..."
+
+msgid "Files"
+msgstr "Files"
+
+msgid "Tunnels"
+msgstr "Tunnels"
+
+msgid "Local overview"
+msgstr "Local overview"
+
+msgid "Connection closed"
+msgstr "Connection closed"
+
+msgid "Local terminals"
+msgstr "Local terminals"
+
+msgid "Default group"
+msgstr "Default group"
+
+msgid "Start"
+msgstr "Start"
+
+msgid "Stop"
+msgstr "Stop"
+
+msgid "No tunnels"
+msgstr "No tunnels"
+
+msgid "Save to this SSH session"
+msgstr "Save to this SSH session"
+
+msgid "Start automatically when connecting"
+msgstr "Start automatically when connecting"
+
+msgid "Local listen address"
+msgstr "Local listen address"
+
+msgid "Server listen address"
+msgstr "Server listen address"
+
+msgid "Local target host"
+msgstr "Local target host"
+
+msgid "Server target host"
+msgstr "Server target host"
+
+msgid "Merge panes"
+msgstr "Merge panes"
+
+msgid "No match"
+msgstr "No match"
+
+msgid "Paste and go"
+msgstr "Paste and go"
+
+msgid "Replace"
+msgstr "Replace"
+
+msgid "Replace all"
+msgstr "Replace all"
+
+msgid "SFTP not available"
+msgstr "SFTP not available"
+
+msgid "System info"
+msgstr "System info"
+
+msgid "Listening Ports"
+msgstr "Listening Ports"
+
+msgid "No listening ports reported"
+msgstr "No listening ports reported"
+
+msgid "Proto"
+msgstr "Proto"
+
+msgid "Local Address"
+msgstr "Local Address"
+
+msgid "Port"
+msgstr "Port"
+
+msgid "Process"
+msgstr "Process"
+
+msgid "Top CPU Processes"
+msgstr "Top CPU Processes"
+
+msgid "Top Memory Processes"
+msgstr "Top Memory Processes"
+
+msgid "Disk Usage"
+msgstr "Disk Usage"
+
+msgid "No disk data"
+msgstr "No disk data"
+
+msgid "Network Interfaces"
+msgstr "Network Interfaces"
+
+msgid "Interface"
+msgstr "Interface"
+
+msgid "Total ↓"
+msgstr "Total ↓"
+
+msgid "Total ↑"
+msgstr "Total ↑"
+
+msgid "↓ Rate"
+msgstr "↓ Rate"
+
+msgid "↑ Rate"
+msgstr "↑ Rate"
+
+msgid "No process data"
+msgstr "No process data"
+
+msgid "Refresh"
+msgstr "Refresh"
+
+msgid "Paused"
+msgstr "Paused"
+
+msgid "1s"
+msgstr "1s"
+
+msgid "2s"
+msgstr "2s"
+
+msgid "5s"
+msgstr "5s"
+
+msgid "General & Appearance"
+msgstr "General & Appearance"
+
+msgid "Files & SFTP"
+msgstr "Files & SFTP"
+
+msgid "Connection & Data"
+msgstr "Connection & Data"
+
+msgid "AI & Agents"
+msgstr "AI & Agents"
+
+msgid "Software Update"
+msgstr "Software Update"
+
+msgid "Theme Mode"
+msgstr "Theme Mode"
+
+msgid "Light"
+msgstr "Light"
+
+msgid "Dark"
+msgstr "Dark"
+
+msgid "Language"
+msgstr "Language"
+
+msgid "Download Directory"
+msgstr "Download Directory"
+
+msgid "Data Import & Export"
+msgstr "Data Import & Export"
+
+msgid "Enter folder name..."
+msgstr "Enter folder name..."
+
+msgid "Enter file name..."
+msgstr "Enter file name..."
+
+msgid "Enter group name..."
+msgstr "Enter group name..."

@@ -1,0 +1,435 @@
+import { Theme } from "../../theme.slint";
+import { LabeledInput, PrimaryButton, GhostButton } from "../../widgets.slint";
+import { ModalLayer, ModalKind } from "../../modal.slint";
+import { LineEdit, Button, CheckBox } from "std-widgets.slint";
+
+export component GroupEditModal inherits ModalLayer {
+    in-out property <bool> group-dialog-open: false;
+    in property <ModalKind> active-modal: ModalKind.group;
+    in property <bool> lang-en: false;
+    in property <string> group-dialog-orig: "";
+    in-out property <string> group-dialog-name: "";
+    in-out property <string> group-dialog-error: "";
+
+    callback submit-group(string, string) -> string;
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.group;
+    cancel-requested => { root.group-dialog-open = false; }
+    background: #00000080;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 340px;
+        height: 208px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}   // swallow inside clicks
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: root.group-dialog-orig == ""
+                    ? (root.lang-en ? "New group" : "新建分组")
+                    : (root.lang-en ? "Edit group" : "编辑分组");
+                color: Theme.text-primary;
+                font-size: Theme.fs-lg;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("Group name");
+                color: Theme.text-secondary;
+                font-size: Theme.fs-sm;
+            }
+            ge-input := LineEdit {
+                text <=> root.group-dialog-name;
+                font-family: Theme.ui-font-family; // CJK-capable (#54)
+                placeholder-text: @tr("Group name");
+                edited => { root.group-dialog-error = ""; }
+                // Enter confirms when non-empty.
+                accepted => {
+                    if (root.group-dialog-name != "") {
+                        root.group-dialog-error = root.submit-group(
+                            root.group-dialog-orig,
+                            root.group-dialog-name,
+                        );
+                        if (root.group-dialog-error == "") {
+                            root.group-dialog-open = false;
+                        }
+                    }
+                }
+            }
+            Text {
+                text: root.group-dialog-error;
+                color: Theme.danger;
+                font-size: Theme.fs-xs;
+                height: 18px;
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Button {
+                    text: root.lang-en ? "Cancel" : "取消";
+                    clicked => { root.group-dialog-open = false; }
+                }
+                Button {
+                    text: root.lang-en ? "OK" : "确定";
+                    primary: true;
+                    enabled: root.group-dialog-name != "";
+                    clicked => {
+                        root.group-dialog-error = root.submit-group(
+                            root.group-dialog-orig,
+                            root.group-dialog-name,
+                        );
+                        if (root.group-dialog-error == "") {
+                            root.group-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component TabRenameModal inherits ModalLayer {
+    in-out property <bool> tab-rename-open: false;
+    in property <ModalKind> active-modal: ModalKind.tab-rename;
+    in property <bool> lang-en: false;
+    in property <string> tab-rename-id: "";
+    in-out property <string> tab-rename-value: "";
+
+    callback rename-tab(string, string);
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.tab-rename;
+    cancel-requested => { root.tab-rename-open = false; }
+    background: #00000080;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 340px;
+        height: 196px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}   // swallow inside clicks
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: root.lang-en ? "Rename session" : "重命名会话";
+                color: Theme.text-primary;
+                font-size: Theme.fs-lg;
+                font-weight: 700;
+            }
+            Text {
+                text: @tr("Session name");
+                color: Theme.text-secondary;
+                font-size: Theme.fs-sm;
+            }
+            tr-input := LineEdit {
+                text <=> root.tab-rename-value;
+                font-family: Theme.ui-font-family; // CJK-capable (#54)
+                placeholder-text: @tr("Session name");
+                accepted => {
+                    root.rename-tab(root.tab-rename-id, root.tab-rename-value);
+                }
+            }
+            Text {
+                text: @tr("Leave empty to restore the default name");
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Button {
+                    text: root.lang-en ? "Cancel" : "取消";
+                    clicked => { root.tab-rename-open = false; }
+                }
+                Button {
+                    text: root.lang-en ? "OK" : "确定";
+                    primary: true;
+                    clicked => {
+                        root.rename-tab(root.tab-rename-id, root.tab-rename-value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component BatchImportModal inherits ModalLayer {
+    in-out property <bool> batch-import-open: false;
+    in property <bool> lang-en: false;
+    in-out property <string> batch-import-text: "";
+
+    callback batch-import-confirm(string);
+
+    is-open: true;
+    cancel-requested => { root.batch-import-open = false; }
+    background: #000000aa;
+    dismiss-on-backdrop: true;   // backdrop closes
+
+    Rectangle {
+        width: 540px;
+        height: 440px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000080;
+        TouchArea {}   // swallow clicks inside the card
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            Text {
+                text: root.lang-en ? "Batch import connections" : "批量导入连接";
+                color: Theme.text-primary;
+                font-size: Theme.fs-xl;
+                font-weight: 600;
+            }
+            Text {
+                text: root.lang-en
+                    ? "One per line:  host|port|user|password|name   (port/user/password/name optional)"
+                    : "每行一个:  host|port|user|password|name   (端口/用户/密码/名称可省略)";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            // Paste area — themed multiline input.
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: bi-input.has-focus ? Theme.accent : Theme.border-subtle;
+                background: Theme.bg-root;
+                clip: true;
+                Flickable {
+                    content-height: max(self.height, bi-input.preferred-height + 16px);
+                    bi-input := TextInput {
+                        x: 10px;
+                        y: 8px;
+                        width: parent.width - 20px;
+                        text <=> root.batch-import-text;
+                        color: Theme.text-primary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.fs-md;
+                        single-line: false;
+                        wrap: no-wrap;
+                    }
+                }
+                if root.batch-import-text == "" : Text {
+                    x: 10px;
+                    y: 8px;
+                    text: "192.168.1.108|22|root|pass@123|服务器1";
+                    color: Theme.text-muted;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.fs-md;
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                GhostButton {
+                    text: @tr("Cancel");
+                    clicked => { root.batch-import-open = false; }
+                }
+                PrimaryButton {
+                    text: root.lang-en ? "Import" : "导入";
+                    clicked => {
+                        root.batch-import-confirm(root.batch-import-text);
+                        root.batch-import-open = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component CredentialPromptModal inherits ModalLayer {
+    in property <string> cred-host: "";
+    in property <bool> cred-need-user: false;
+    in property <bool> cred-need-password: false;
+    in-out property <string> cred-user: "";
+    in-out property <string> cred-password: "";
+    in-out property <bool> cred-remember: false;
+    in property <bool> dialog-open: false;
+    in property <bool> dialog-editing: false;
+    in property <bool> cred-prompt-is-test: false;
+
+    callback cred-accept();
+    callback cred-reject();
+    callback submit-current-session();
+
+    is-open: true;
+    cancel-requested => { root.cred-reject(); }
+    background: #000000aa;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        width: 360px;
+        height: cred-card.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000080;
+        TouchArea {}   // swallow clicks inside the card
+        cred-card := VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text {
+                text: @tr("Login");
+                color: Theme.text-primary;
+                font-size: Theme.fs-xl;
+                font-weight: 600;
+            }
+            Text {
+                text: root.cred-host;
+                color: Theme.text-secondary;
+                font-family: Theme.font-mono;
+                font-size: Theme.fs-sm;
+            }
+            if root.cred-need-user : LabeledInput {
+                label: @tr("Username");
+                placeholder: "root";
+                value <=> root.cred-user;
+                accepted => { root.cred-accept(); }
+                canceled => { root.cred-reject(); }   // Esc cancels (#140-3)
+            }
+            if root.cred-need-password : LabeledInput {
+                label: @tr("Password");
+                placeholder: "••••••••";
+                password: true;
+                value <=> root.cred-password;
+                accepted => { root.cred-accept(); }
+                canceled => { root.cred-reject(); }   // Esc cancels (#140-3)
+            }
+            CheckBox {
+                text: @tr("Remember for this session");
+                checked <=> root.cred-remember;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if root.dialog-open && root.cred-prompt-is-test : GhostButton {
+                    text: root.dialog-editing ? @tr("Save session") : @tr("Create session");
+                    clicked => { root.submit-current-session(); }
+                }
+                GhostButton {
+                    text: @tr("Cancel");
+                    clicked => { root.cred-reject(); }
+                }
+                PrimaryButton {
+                    text: @tr("Connect");
+                    clicked => { root.cred-accept(); }
+                }
+            }
+        }
+    }
+}
+
+export component MfaPromptModal inherits ModalLayer {
+    in property <bool> lang-en: false;
+    in property <string> mfa-host: "";
+    in property <string> mfa-prompt: "";
+    in property <bool> mfa-echo: false;
+    in-out property <string> mfa-answer: "";
+    in property <bool> dialog-open: false;
+    in property <bool> dialog-editing: false;
+    in property <bool> mfa-prompt-is-test: false;
+
+    callback mfa-submit();
+    callback mfa-cancel();
+    callback submit-current-session();
+
+    is-open: true;
+    cancel-requested => { root.mfa-cancel(); }
+    background: #000000aa;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        width: 360px;
+        height: mfa-card.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000080;
+        TouchArea {}   // swallow clicks inside the card
+        mfa-card := VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+            Text {
+                text: root.lang-en ? "Two-factor verification" : "双重验证 (MFA)";
+                color: Theme.text-primary;
+                font-size: Theme.fs-xl;
+                font-weight: 600;
+            }
+            Text {
+                text: root.mfa-host;
+                color: Theme.text-secondary;
+                font-family: Theme.font-mono;
+                font-size: Theme.fs-sm;
+            }
+            Text {
+                text: root.mfa-prompt != "" ? root.mfa-prompt
+                    : (root.lang-en ? "Enter your verification code" : "请输入验证码");
+                color: Theme.text-secondary;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+            }
+            code-input := LabeledInput {
+                label: root.lang-en ? "Code" : "验证码";
+                placeholder: "123456";
+                password: !root.mfa-echo;
+                value <=> root.mfa-answer;
+                auto-focus: true;
+                accepted => { root.mfa-submit(); }   // Enter submits
+                canceled => { root.mfa-cancel(); }   // Esc cancels (#140-3)
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                if root.dialog-open && root.mfa-prompt-is-test : GhostButton {
+                    text: root.dialog-editing ? @tr("Save session") : @tr("Create session");
+                    clicked => { root.submit-current-session(); }
+                }
+                GhostButton {
+                    text: @tr("Cancel");
+                    clicked => { root.mfa-cancel(); }
+                }
+                PrimaryButton {
+                    text: root.lang-en ? "Verify" : "验证";
+                    clicked => { root.mfa-submit(); }
+                }
+            }
+        }
+    }
+}

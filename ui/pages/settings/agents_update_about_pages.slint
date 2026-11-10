@@ -1,0 +1,644 @@
+// AI & Agents page, Updates page, and About page in Settings.
+
+import { Theme } from "../../theme.slint";
+import { LabeledInput, PrimaryButton, GhostButton } from "../../widgets.slint";
+import { SectionHeader, SettingRow, Switch } from "../../components/common/settings_controls.slint";
+import { CustomAgentInfo, WslProfileInfo, UpdateMirrorRow } from "../../components/business/appearance_pickers.slint";
+
+export component AgentsSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in property <bool> is-windows;
+    in property <[CustomAgentInfo]> custom-agents;
+    in-out property <string> agent-new-name;
+    in-out property <string> agent-new-command;
+    in-out property <string> agent-new-directory;
+    in-out property <bool> mcp-enabled: true;
+    in-out property <bool> mcp-use-saved-credentials: true;
+    in-out property <bool> mcp-allow-commands: true;
+    in-out property <bool> mcp-allow-file-transfers: true;
+    in property <string> mcp-config-json;
+    in-out property <bool> mcp-json-copied: false;
+    in property <[WslProfileInfo]> wsl-profiles;
+    in-out property <string> wsl-new-name: "WSL";
+    in-out property <string> wsl-new-distribution;
+    in-out property <string> wsl-new-directory: "~";
+
+    callback pick-agent-directory();
+    callback add-custom-agent(string, string, string);
+    callback remove-custom-agent(string);
+    callback set-mcp-permissions(bool, bool, bool, bool);
+    callback copy-text(string);
+    callback pick-wsl-directory();
+    callback add-wsl-profile(string, string, string);
+    callback remove-wsl-profile(string);
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 20px;
+    padding-bottom: 28px;
+    spacing: 8px;
+    alignment: start;
+
+    SectionHeader { text: root.lang-en ? "AI AGENTS" : "AI 智能体"; height: 26px; }
+    Text {
+        text: root.is-windows
+            ? (root.lang-en
+                ? "Installed agents such as Claude Code, Codex and Gemini CLI are found automatically. Add any other agent here: the command runs in PowerShell."
+                : "Claude Code、Codex、Gemini CLI 等已安装的智能体会被自动识别。其他智能体可在此添加：命令在 PowerShell 中运行。")
+            : (root.lang-en
+                ? "Installed agents such as Claude Code, Codex and Gemini CLI are found automatically. Add any other agent here: the command runs in your login shell."
+                : "Claude Code、Codex、Gemini CLI 等已安装的智能体会被自动识别。其他智能体可在此添加：命令在登录 shell 中运行。");
+        color: Theme.text-muted;
+        font-size: 12px * Theme.panel-font;
+        wrap: word-wrap;
+    }
+    LabeledInput {
+        label: root.lang-en ? "Display name" : "显示名称";
+        placeholder: "Kiro";
+        value <=> root.agent-new-name;
+    }
+    LabeledInput {
+        label: root.lang-en ? "Command" : "启动命令";
+        placeholder: "kiro-cli chat";
+        value <=> root.agent-new-command;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        LabeledInput {
+            horizontal-stretch: 1;
+            label: root.lang-en ? "Start folder (optional)" : "启动目录（可选）";
+            placeholder: root.is-windows ? "D:\\Projects\\app" : "~/projects/app";
+            value <=> root.agent-new-directory;
+        }
+        VerticalLayout {
+            alignment: end;
+            GhostButton {
+                text: root.lang-en ? "Browse…" : "选择目录…";
+                clicked => { root.pick-agent-directory(); }
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: end;
+        PrimaryButton {
+            text: root.lang-en ? "Add agent" : "添加智能体";
+            clicked => {
+                root.add-custom-agent(root.agent-new-name, root.agent-new-command,
+                    root.agent-new-directory);
+            }
+        }
+    }
+    if root.custom-agents.length > 0 : Rectangle { height: 1px; background: Theme.border-subtle; }
+    for agent in root.custom-agents : Rectangle {
+        height: 54px;
+        border-radius: Theme.radius-sm;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        HorizontalLayout {
+            padding-left: 12px; padding-right: 10px; spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1; alignment: center;
+                Text { text: agent.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; font-weight: 500; }
+                Text {
+                    text: agent.command + (agent.directory == "" ? "" : "  ·  " + agent.directory);
+                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
+                }
+            }
+            GhostButton {
+                text: root.lang-en ? "Remove" : "删除";
+                clicked => { root.remove-custom-agent(agent.id); }
+            }
+        }
+    }
+
+    Rectangle { height: 20px; }
+    SectionHeader { text: "MODEL CONTEXT PROTOCOL (MCP)"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Enable MCP server" : "启用 MCP 服务";
+        desc: root.lang-en
+            ? "Allows local MCP clients to start meatshell mcp serve over stdio."
+            : "允许本机 MCP 客户端通过 meatshell mcp serve 启动 stdio 服务。";
+        Switch {
+            on: root.mcp-enabled;
+            toggled(v) => {
+                root.mcp-enabled = v;
+                root.set-mcp-permissions(v, root.mcp-use-saved-credentials, root.mcp-allow-commands, root.mcp-allow-file-transfers);
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Use saved credentials" : "使用已保存凭据";
+        desc: root.lang-en
+            ? "MCP may authenticate with saved passwords and private keys, but can never read them."
+            : "MCP 可以使用已保存的密码和私钥完成认证，但永远不能读取其内容。";
+        Switch {
+            on: root.mcp-use-saved-credentials;
+            toggled(v) => {
+                root.mcp-use-saved-credentials = v;
+                root.set-mcp-permissions(root.mcp-enabled, v, root.mcp-allow-commands, root.mcp-allow-file-transfers);
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Allow arbitrary SSH commands" : "允许任意 SSH 命令";
+        desc: root.lang-en
+            ? "Permits run_command on saved SSH sessions."
+            : "允许对已保存的 SSH 会话调用 run_command。";
+        Switch {
+            on: root.mcp-allow-commands;
+            toggled(v) => {
+                root.mcp-allow-commands = v;
+                root.set-mcp-permissions(root.mcp-enabled, root.mcp-use-saved-credentials, v, root.mcp-allow-file-transfers);
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Allow file transfers" : "允许文件传输";
+        desc: root.lang-en
+            ? "Permits MCP uploads from local paths and downloads to local directories."
+            : "允许 MCP 从本地路径上传文件，以及将远程文件下载到本地目录。";
+        show-divider: false;
+        Switch {
+            on: root.mcp-allow-file-transfers;
+            toggled(v) => {
+                root.mcp-allow-file-transfers = v;
+                root.set-mcp-permissions(root.mcp-enabled, root.mcp-use-saved-credentials, root.mcp-allow-commands, v);
+            }
+        }
+    }
+    Rectangle { height: 8px; }
+    SectionHeader { text: root.lang-en ? "MCP CLIENT CONFIGURATION" : "MCP 客户端配置片段"; height: 22px; }
+    Rectangle {
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        background: Theme.bg-panel;
+        height: mcp-json-text.preferred-height + 24px;
+        mcp-json-text := Text {
+            x: 12px;
+            y: 12px;
+            width: parent.width - 12px - 44px;
+            text: root.mcp-config-json;
+            color: Theme.text-primary;
+            font-family: Theme.term-font-family;
+            font-size: 12px * Theme.panel-font;
+            wrap: char-wrap;
+        }
+        copy-btn := Rectangle {
+            x: parent.width - self.width - 6px;
+            y: 6px;
+            width: 30px;
+            height: 26px;
+            border-radius: 6px;
+            background: copy-ta.has-hover ? Theme.bg-hover : transparent;
+            Text {
+                text: root.mcp-json-copied ? "\u{E5CA}" : "\u{E14D}";
+                font-family: "Material Icons";
+                font-size: 16px * Theme.panel-font;
+                color: root.mcp-json-copied ? Theme.success : Theme.text-secondary;
+                width: 100%;
+                height: 100%;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            copy-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.copy-text(root.mcp-config-json);
+                    root.mcp-json-copied = true;
+                }
+            }
+        }
+        Timer {
+            interval: 1500ms;
+            running: root.mcp-json-copied;
+            triggered => { root.mcp-json-copied = false; }
+        }
+    }
+
+    if root.is-windows : VerticalLayout {
+        spacing: 8px;
+        Rectangle { height: 20px; }
+        SectionHeader { text: "WSL"; height: 26px; }
+        LabeledInput {
+            label: root.lang-en ? "Display name" : "显示名称";
+            placeholder: "Ubuntu";
+            value <=> root.wsl-new-name;
+        }
+        LabeledInput {
+            label: root.lang-en ? "Distribution (optional)" : "发行版（可选）";
+            placeholder: "Ubuntu-24.04";
+            value <=> root.wsl-new-distribution;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            LabeledInput {
+                horizontal-stretch: 1;
+                label: root.lang-en ? "Startup directory" : "启动目录";
+                placeholder: "~ or /home/user/project";
+                value <=> root.wsl-new-directory;
+            }
+            VerticalLayout {
+                alignment: end;
+                GhostButton {
+                    text: root.lang-en ? "Browse…" : "选择目录…";
+                    clicked => { root.pick-wsl-directory(); }
+                }
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            PrimaryButton {
+                text: root.lang-en ? "Add WSL" : "添加 WSL";
+                clicked => {
+                    root.add-wsl-profile(root.wsl-new-name, root.wsl-new-distribution, root.wsl-new-directory);
+                    root.wsl-new-name = "WSL";
+                    root.wsl-new-distribution = "";
+                    root.wsl-new-directory = "~";
+                }
+            }
+        }
+        for profile in root.wsl-profiles : Rectangle {
+            height: 54px;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg-panel;
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 8px; spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1; alignment: center;
+                    Text { text: profile.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; }
+                    Text {
+                        text: (profile.distribution == "" ? (root.lang-en ? "Default distribution" : "默认发行版") : profile.distribution)
+                            + "  ·  " + profile.directory;
+                        color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
+                    }
+                }
+                GhostButton {
+                    text: root.lang-en ? "Remove" : "删除";
+                    clicked => { root.remove-wsl-profile(profile.id); }
+                }
+            }
+        }
+    }
+}
+
+export component UpdatesSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in-out property <bool> update-check-enabled;
+    in property <string> update-version;
+    in property <bool> update-busy;
+    in property <bool> update-error;
+    in property <bool> update-install-supported;
+    in property <bool> update-via-terminal;
+    in property <string> update-status;
+    in property <string> update-action-label;
+    in property <[UpdateMirrorRow]> update-mirrors;
+    in property <bool> update-mirrors-testing;
+    in property <bool> update-china-tz;
+    in property <string> update-mirror-error;
+    in property <bool> update-mirror-auto: true;
+    in-out property <string> new-mirror;
+
+    callback set-update-check-enabled(bool);
+    callback check-for-updates();
+    callback update-action();
+    callback open-update-url();
+    callback test-update-mirrors();
+    callback set-update-mirror-auto(bool);
+    callback select-update-mirror(string);
+    callback remove-update-mirror(string);
+    callback add-update-mirror(string);
+    callback reset-update-mirrors();
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 20px;
+    padding-bottom: 28px;
+    spacing: 0;
+    alignment: start;
+
+    SectionHeader { text: root.lang-en ? "UPDATES" : "软件更新"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Check for new versions on startup" : "启动时自动检查新版本";
+        desc: root.lang-en
+            ? "Check automatically on startup. You can also check manually below."
+            : "启动时自动查询新版本，也可随时在下方手动检查。";
+        show-divider: false;
+        Switch {
+            on: root.update-check-enabled;
+            toggled(v) => { root.update-check-enabled = v; root.set-update-check-enabled(v); }
+        }
+    }
+    Rectangle { height: 16px; }
+    if root.update-version != "" : Text {
+        text: (root.lang-en ? "Available version: " : "可用版本：") + root.update-version;
+        color: Theme.text-primary;
+        font-size: Theme.fs-md;
+    }
+    Text {
+        text: root.update-status;
+        color: root.update-error ? #e57373 : Theme.text-muted;
+        font-size: Theme.fs-sm;
+        wrap: word-wrap;
+    }
+    Rectangle { height: 12px; }
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        PrimaryButton {
+            text: root.lang-en ? "Check for updates" : "检查更新";
+            disabled: root.update-busy;
+            clicked => { root.check-for-updates(); }
+        }
+        if root.update-version != "" && root.update-install-supported : PrimaryButton {
+            text: root.update-action-label;
+            disabled: root.update-busy;
+            clicked => { root.update-action(); }
+        }
+        GhostButton {
+            text: root.lang-en ? "Release page" : "前往发布页面";
+            clicked => { root.open-update-url(); }
+        }
+    }
+    Rectangle { height: 12px; }
+    Text {
+        text: root.update-via-terminal
+            ? (root.lang-en
+                ? "Updates are built from the AUR: MeatShell opens a terminal tab running paru, yay or makepkg. When it finishes, restart MeatShell."
+                : "更新从 AUR 构建：MeatShell 会打开终端标签页运行 paru、yay 或 makepkg，完成后重启 MeatShell 即可。")
+            : root.update-install-supported
+            ? (root.lang-en
+                ? "Downloads are verified before installation. Installing closes all windows and connections, then reopens MeatShell."
+                : "安装前会校验下载文件。安装时关闭所有窗口和连接，完成后重新打开 MeatShell，并清理临时安装包。")
+            : (root.lang-en
+                ? "This installation can't be updated from inside MeatShell; use the release page or your package manager."
+                : "此安装方式不支持在软件内更新，请通过发布页面或系统包管理器更新。");
+        color: Theme.text-muted;
+        font-size: Theme.fs-sm;
+        wrap: word-wrap;
+    }
+
+    if !root.lang-en : VerticalLayout {
+        spacing: 6px;
+        init => { root.test-update-mirrors(); }
+        Rectangle { height: 18px; }
+        HorizontalLayout {
+            SectionHeader { text: "下载镜像"; height: 24px; horizontal-stretch: 1; }
+            GhostButton {
+                text: root.update-mirrors-testing ? "测速中…" : "重新测速";
+                clicked => { if (!root.update-mirrors-testing) { root.test-update-mirrors(); } }
+            }
+        }
+        Text {
+            text: root.update-china-tz
+                ? "一键更新优先使用选中的下载源，失败时依次换用其他源。所有下载均按 GitHub 发布的 SHA-256 校验。"
+                : "当前系统时区不在中国大陆，镜像不会启用，更新将直接从 GitHub 下载。";
+            color: Theme.text-muted;
+            font-size: Theme.fs-sm;
+            wrap: word-wrap;
+        }
+        SettingRow {
+            label: "自动选择最快的下载源";
+            desc: root.update-mirror-auto
+                ? "每次更新前重新测速并使用最快的源。点击下方任一行可改为固定使用该源。"
+                : "已固定使用选中的源，失败时再依次换用其他源。打开此开关恢复自动选择。";
+            show-divider: false;
+            Switch {
+                on: root.update-mirror-auto;
+                toggled(v) => { root.set-update-mirror-auto(v); }
+            }
+        }
+        for mirror in root.update-mirrors : Rectangle {
+            height: 32px;
+            border-radius: Theme.radius-sm;
+            background: mirror-row-ta.has-hover && !mirror.selected
+                ? Theme.bg-hover : Theme.bg-panel;
+            border-width: mirror.selected ? 1px : 0px;
+            border-color: Theme.accent;
+            mirror-row-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.select-update-mirror(mirror.key); }
+            }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 4px; spacing: 8px;
+                Rectangle {
+                    width: 14px; height: 14px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 7px;
+                    border-width: 1.5px;
+                    border-color: mirror.selected ? Theme.accent : Theme.text-muted;
+                    Rectangle {
+                        width: 6px; height: 6px;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                        visible: mirror.selected;
+                    }
+                }
+                Text {
+                    text: mirror.removable ? mirror.url : mirror.url + "（官方源）";
+                    color: mirror.removable ? Theme.text-primary : Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                if mirror.fastest : Text {
+                    text: "最快";
+                    color: #4caf50;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                }
+                Text {
+                    min-width: 64px;
+                    text: mirror.ping;
+                    color: mirror.level == 1 ? #4caf50
+                         : mirror.level == 2 ? #e0a040
+                         : mirror.level >= 3 ? #e57373
+                         : Theme.text-muted;
+                    font-size: Theme.fs-sm;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                if !mirror.removable : Rectangle { width: 22px; }
+                if mirror.removable : Rectangle {
+                    width: 22px; height: 22px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: Theme.radius-sm;
+                    background: mirror-del-ta.has-hover ? Theme.bg-root : transparent;
+                    mirror-del-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.remove-update-mirror(mirror.url); }
+                    }
+                    Text {
+                        text: "\u{E5CD}";
+                        font-family: "Material Icons";
+                        color: mirror-del-ta.has-hover ? #e57373 : Theme.text-muted;
+                        font-size: Theme.fs-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        LabeledInput {
+            label: "添加镜像（加在 GitHub 下载地址前的前缀）";
+            placeholder: "https://v4.gh-proxy.org/";
+            value <=> root.new-mirror;
+            accepted => {
+                root.add-update-mirror(root.new-mirror);
+                if (root.update-mirror-error == "") { root.new-mirror = ""; }
+            }
+        }
+        if root.update-mirror-error != "" : Text {
+            text: root.update-mirror-error;
+            color: #e57373;
+            font-size: Theme.fs-sm;
+            wrap: word-wrap;
+        }
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: start;
+            PrimaryButton {
+                text: "添加";
+                disabled: root.new-mirror == "";
+                clicked => {
+                    root.add-update-mirror(root.new-mirror);
+                    if (root.update-mirror-error == "") { root.new-mirror = ""; }
+                }
+            }
+            GhostButton {
+                text: "恢复默认";
+                clicked => { root.reset-update-mirrors(); }
+            }
+        }
+    }
+}
+
+export component AboutSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in property <string> app-version: "0.8.2";
+    callback open-repo();
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 24px;
+    padding-bottom: 28px;
+    spacing: 18px;
+    alignment: start;
+
+    Rectangle {
+        height: 96px;
+        border-radius: 12px;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        HorizontalLayout {
+            padding: 18px;
+            spacing: 16px;
+            alignment: start;
+            Image {
+                width: 56px;
+                height: 56px;
+                source: @image-url("../../../assets/icon.png");
+                vertical-alignment: center;
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text {
+                        text: "MeatShell";
+                        color: Theme.text-primary;
+                        font-size: 20px * Theme.panel-font;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        height: 22px;
+                        width: ver-txt.preferred-width + 16px;
+                        border-radius: 11px;
+                        background: Theme.bg-active;
+                        ver-txt := Text {
+                            text: "v" + root.app-version;
+                            color: Theme.text-primary;
+                            font-family: Theme.term-font-family;
+                            font-size: 12px * Theme.panel-font;
+                            font-weight: 600;
+                            width: 100%;
+                            height: 100%;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Text {
+                    text: root.lang-en
+                        ? "Modern cross-platform SSH, SFTP & terminal workbench"
+                        : "现代跨平台 SSH、SFTP 与终端一体化工作台";
+                    color: Theme.text-secondary;
+                    font-size: 13px * Theme.panel-font;
+                }
+            }
+        }
+    }
+
+    SectionHeader { text: root.lang-en ? "HIGHLIGHTS" : "核心特性"; height: 24px; }
+    Rectangle {
+        border-radius: 10px;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+            Text {
+                text: root.lang-en
+                    ? "• Multi-tab SSH, local shell, WSL & AI CLI agent workspace"
+                    : "• 多标签 SSH、本地终端、WSL 与 AI 智能体命令行工作区";
+                color: Theme.text-primary;
+                font-size: 13px * Theme.panel-font;
+            }
+            Text {
+                text: root.lang-en
+                    ? "• Dual-pane SFTP file manager with drag-and-drop, inline creation & port forwarding"
+                    : "• 双栏 SFTP 文件管理器，支持拖拽传输、行内新建与端口转发";
+                color: Theme.text-primary;
+                font-size: 13px * Theme.panel-font;
+            }
+            Text {
+                text: root.lang-en
+                    ? "• Real-time server & local resource telemetry (CPU, memory, disk, network & processes)"
+                    : "• 实时远端与本机系统资源监控（CPU、内存、磁盘、网络与进程）";
+                color: Theme.text-primary;
+                font-size: 13px * Theme.panel-font;
+            }
+            Text {
+                text: root.lang-en
+                    ? "• Built with Rust & Slint — native performance, zero Electron bloat"
+                    : "• 基于 Rust 与 Slint 构建 —— 原生级响应速度与低内存占用";
+                color: Theme.text-primary;
+                font-size: 13px * Theme.panel-font;
+            }
+        }
+    }
+
+    SettingRow {
+        label: root.lang-en ? "Open-source license" : "开源协议";
+        desc: "GNU General Public License v3.0 (GPL-3.0)";
+        show-divider: true;
+        Rectangle { width: 1px; height: 1px; background: transparent; }
+    }
+    SettingRow {
+        label: root.lang-en ? "Source code & issue tracker" : "源码仓库与问题反馈";
+        desc: "github.com/nicehorse06/meatshell";
+        show-divider: false;
+        GhostButton {
+            text: root.lang-en ? "Open GitHub" : "访问 GitHub";
+            clicked => { root.open-repo(); }
+        }
+    }
+}

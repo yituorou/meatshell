@@ -42,10 +42,6 @@ pub(super) fn apply_saved_appearance(ctx: &WinCtx) {
         window.set_terminal_line_spacing(s.terminal_line_spacing());
         window.set_term_font_bold(s.terminal_bold());
         window.set_term_cursor_style(s.terminal_cursor_style().into());
-        if let Some(color) = parse_hex_color(s.terminal_cursor_color()) {
-            window.set_term_cursor_color_hex(s.terminal_cursor_color().into());
-            window.set_term_cursor_color(color);
-        }
         window.set_output_highlight_enabled(s.output_highlight_enabled());
         window.set_json_format_output(s.json_format_output());
         window.set_session_log_enabled(s.session_log_enabled());
@@ -88,6 +84,9 @@ pub(super) fn apply_saved_appearance(ctx: &WinCtx) {
         // theme when the user actively selects them (#theme-persistence).
         apply_wallpaper(&window, &store.borrow(), &bufs, &id, false);
     }
+    // Apply the persisted terminal color scheme (iTerm2-Color-Schemes).
+    // The 915-item scheme gallery is populated lazily when Settings › Terminal opens.
+    apply_terminal_color_scheme(window, &store.borrow(), bufs);
     // Editable inputs (e.g. the SFTP path bar) need a CJK-capable font: the
     // embedded mono font has no Chinese glyphs and native TextInput doesn't
     // glyph-fallback like Text does, so typed Chinese would render as tofu (#54).
@@ -340,7 +339,14 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         let s = store.borrow();
         let collapse_sidebar = s.collapse_sidebar_default();
         let collapse_sftp = s.collapse_sftp_default();
-        let sidebar_dock = s.sidebar_dock();
+        // Default the resource monitor to the left sidebar (FinalShell-style
+        // left-side switching between Quick Connect and Resource Monitor)
+        // instead of occupying the right side of the workspace.
+        let sidebar_dock = if s.sidebar_dock() == "right" {
+            "left".to_string()
+        } else {
+            s.sidebar_dock()
+        };
         let welcome_as_sidebar = s.welcome_as_sidebar();
         let quick_commands_as_sidebar = s.quick_commands_as_sidebar();
         let quick_panel_open = quick_commands_as_sidebar && s.quick_panel_open();
@@ -348,7 +354,9 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         let quick_panel_dock = s.quick_panel_dock();
         let welcome_sidebar_dock = s.welcome_sidebar_dock();
         let mut sidebar_collapsed = s.sidebar_collapsed().unwrap_or(collapse_sidebar);
-        let mut welcome_collapsed = s.welcome_collapsed().unwrap_or(false);
+        // At startup (no active session yet), ensure Quick Connect is expanded
+        // on the left so the user immediately sees their sessions.
+        let mut welcome_collapsed = false;
         if welcome_as_sidebar
             && sidebar_dock == welcome_sidebar_dock
             && !sidebar_collapsed
@@ -367,7 +375,12 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_collapse_sidebar_default(collapse_sidebar);
         window.set_collapse_sftp_default(collapse_sftp);
         // Restore the persisted panel docking layout (#dock).
-        window.set_sidebar_width(s.sidebar_width());
+        let sb_w = s.sidebar_width();
+        window.set_sidebar_width(if (sb_w - 220.0).abs() < f32::EPSILON {
+            280.0
+        } else {
+            sb_w.clamp(250.0, 400.0)
+        });
         window.set_sidebar_height(s.sidebar_height());
         window.set_sidebar_dock(sidebar_dock.into());
         window.set_sftp_panel_width(s.sftp_panel_width());
@@ -389,13 +402,18 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_sftp_show_group(columns.iter().any(|column| column == "group"));
         window.set_sftp_dock(s.sftp_dock().into());
         window.set_quick_commands_as_sidebar(quick_commands_as_sidebar);
-        window.set_quick_panel_open(quick_panel_open);
+        window.set_quick_panel_open(quick_commands_as_sidebar && quick_panel_open);
         window.set_quick_panel_collapsed(quick_panel_collapsed);
         window.set_quick_panel_width(s.quick_panel_width());
         window.set_quick_panel_height(s.quick_panel_height());
         window.set_quick_panel_dock(quick_panel_dock.into());
         window.set_welcome_as_sidebar(welcome_as_sidebar);
-        window.set_welcome_sidebar_width(s.welcome_sidebar_width());
+        let ws_w = s.welcome_sidebar_width();
+        window.set_welcome_sidebar_width(if (ws_w - 240.0).abs() < f32::EPSILON {
+            268.0
+        } else {
+            ws_w.clamp(220.0, 380.0)
+        });
         window.set_welcome_sidebar_dock(welcome_sidebar_dock.into());
         window.set_welcome_collapsed(welcome_collapsed);
         window.set_sidebar_collapsed(sidebar_collapsed);
@@ -464,10 +482,14 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
             let mut s = store.borrow_mut();
             s.set_sidebar_collapsed(v);
             let _ = s.save();
-            let zen = weak
-                .upgrade()
-                .map(|window| window.get_zen_mode())
-                .unwrap_or(false);
+            let zen = if let Some(window) = weak.upgrade() {
+                if !v {
+                    window.invoke_refresh_sidebar();
+                }
+                window.get_zen_mode()
+            } else {
+                false
+            };
             for handle in handles.borrow().values() {
                 handle.set_resource_monitoring(!v && !zen);
             }
@@ -536,26 +558,6 @@ pub(super) fn wire_terminal_settings(ctx: &WinCtx) {
         window,
         ..
     } = ctx;
-    {
-        let weak = window.as_weak();
-        let store = store.clone();
-        window.on_set_term_cursor_color(move |value: SharedString| {
-            let Some(color) = parse_hex_color(value.as_str()) else {
-                return false;
-            };
-            {
-                let mut s = store.borrow_mut();
-                if !s.set_terminal_cursor_color(value.as_str()) {
-                    return false;
-                }
-                let _ = s.save();
-            }
-            if let Some(w) = weak.upgrade() {
-                w.set_term_cursor_color(color);
-            }
-            true
-        });
-    }
     {
         let weak = window.as_weak();
         let store = store.clone();
@@ -773,6 +775,202 @@ pub(super) fn wire_terminal_settings(ctx: &WinCtx) {
             };
             if let Some(w) = weak.upgrade() {
                 w.set_term_cursor_style(normalized.into());
+            }
+        });
+    }
+
+    // --- Terminal Color Schemes (iTerm2-Color-Schemes) ----------------------
+    let scheme_limit = Rc::new(Cell::new(TERMINAL_SCHEME_PAGE_STEP));
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let bufs = bufs.clone();
+        let registry = registry.clone();
+        let limit = scheme_limit.clone();
+        window.on_select_terminal_scheme(move |scheme_id: SharedString| {
+            {
+                let mut s = store.borrow_mut();
+                s.set_terminal_color_scheme(scheme_id.as_str());
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_terminal_scheme_status("".into());
+                apply_terminal_color_scheme(&w, &store.borrow(), &bufs);
+                refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+            }
+            registry.broadcast_config_changed();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let registry = registry.clone();
+        let limit = scheme_limit.clone();
+        window.on_toggle_favorite_terminal_scheme(move |scheme_id: SharedString| {
+            {
+                let mut s = store.borrow_mut();
+                s.toggle_favorite_terminal_scheme(scheme_id.as_str());
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+            }
+            registry.broadcast_config_changed();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let limit = scheme_limit.clone();
+        window.on_filter_terminal_schemes(move |_query: SharedString, _category: SharedString| {
+            limit.set(TERMINAL_SCHEME_PAGE_STEP);
+            if let Some(w) = weak.upgrade() {
+                refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let limit = scheme_limit.clone();
+        window.on_load_more_terminal_schemes(move || {
+            let next = limit.get().saturating_add(TERMINAL_SCHEME_PAGE_STEP);
+            limit.set(next);
+            if let Some(w) = weak.upgrade() {
+                refresh_terminal_scheme_list(&w, &store.borrow(), next);
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let bufs = bufs.clone();
+        let registry = registry.clone();
+        let limit = scheme_limit.clone();
+        window.on_reset_terminal_scheme(move || {
+            {
+                let mut s = store.borrow_mut();
+                s.set_terminal_color_scheme(crate::terminal_theme::DEFAULT_THEME_ID);
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_terminal_scheme_status("".into());
+                apply_terminal_color_scheme(&w, &store.borrow(), &bufs);
+                refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+            }
+            registry.broadcast_config_changed();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let bufs = bufs.clone();
+        let registry = registry.clone();
+        let limit = scheme_limit.clone();
+        window.on_delete_custom_terminal_scheme(move |scheme_id: SharedString| {
+            {
+                let mut s = store.borrow_mut();
+                let mut customs = s.custom_terminal_schemes().to_vec();
+                customs.retain(|t| t.theme_id != scheme_id.as_str());
+                s.set_custom_terminal_schemes(customs);
+                if s.terminal_color_scheme() == scheme_id.as_str() {
+                    s.set_terminal_color_scheme(crate::terminal_theme::DEFAULT_THEME_ID);
+                }
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                apply_terminal_color_scheme(&w, &store.borrow(), &bufs);
+                refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+            }
+            registry.broadcast_config_changed();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let bufs = bufs.clone();
+        let registry = registry.clone();
+        let limit = scheme_limit.clone();
+        window.on_import_terminal_scheme(move || {
+            let picked = DialogOwner::of_weak(&weak)
+                .file()
+                .set_title("导入终端配色方案 / Import Terminal Color Scheme")
+                .add_filter(
+                    "Terminal Color Scheme (.itermcolors, .json)",
+                    &["itermcolors", "json"],
+                )
+                .pick_file();
+            let Some(path) = picked else { return };
+            let Some(w) = weak.upgrade() else { return };
+            let is_dark = w.get_dark_mode();
+            let result = {
+                let mut s = store.borrow_mut();
+                let mut mgr = s.terminal_theme_manager(is_dark);
+                let res = mgr.import_theme_from_path(&path);
+                if let Ok(ref imported) = res {
+                    s.set_custom_terminal_schemes(mgr.custom_themes().to_vec());
+                    s.set_terminal_color_scheme(&imported.theme_id);
+                    let _ = s.save();
+                }
+                res
+            };
+            match result {
+                Ok(imported) => {
+                    let msg = if w.get_lang_en() {
+                        format!("Imported and applied '{}'", imported.name)
+                    } else {
+                        format!("已导入并应用主题「{}」", imported.name)
+                    };
+                    w.set_terminal_scheme_status(msg.into());
+                    apply_terminal_color_scheme(&w, &store.borrow(), &bufs);
+                    refresh_terminal_scheme_list(&w, &store.borrow(), limit.get());
+                    registry.broadcast_config_changed();
+                }
+                Err(err) => {
+                    let msg = if w.get_lang_en() {
+                        format!("Import failed: {err}")
+                    } else {
+                        format!("导入失败：{err}")
+                    };
+                    w.set_terminal_scheme_status(msg.into());
+                }
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        window.on_export_terminal_scheme(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let is_dark = w.get_dark_mode();
+            let mgr = store.borrow().terminal_theme_manager(is_dark);
+            let target_id = mgr.current_theme().theme_id;
+            let default_file = format!("{target_id}.itermcolors");
+            let dest = DialogOwner::of_weak(&weak)
+                .file()
+                .set_title("导出终端配色方案 / Export Terminal Color Scheme")
+                .set_file_name(&default_file)
+                .add_filter("iTerm2 Color Scheme (.itermcolors)", &["itermcolors"])
+                .add_filter("JSON Theme (.json)", &["json"])
+                .save_file();
+            let Some(path) = dest else { return };
+            match mgr.export_theme_to_path(&target_id, &path) {
+                Ok(()) => {
+                    let msg = if w.get_lang_en() {
+                        format!("Exported to {}", path.display())
+                    } else {
+                        format!("已导出至 {}", path.display())
+                    };
+                    w.set_terminal_scheme_status(msg.into());
+                }
+                Err(err) => {
+                    let msg = if w.get_lang_en() {
+                        format!("Export failed: {err}")
+                    } else {
+                        format!("导出失败：{err}")
+                    };
+                    w.set_terminal_scheme_status(msg.into());
+                }
             }
         });
     }

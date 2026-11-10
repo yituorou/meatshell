@@ -1,659 +1,13 @@
 import { Theme } from "theme.slint";
 import { ModalLayer } from "modal.slint";
 import { ComboBox, CheckBox } from "std-widgets.slint";
-import { LabeledInput, PrimaryButton, GhostButton, IconButton } from "widgets.slint";
+import { LabeledInput, PrimaryButton, GhostButton, IconButton, OutlineIcon } from "widgets.slint";
+import { PortFwd, TriggerDraft, JumpHop, SessionDraft, SegOption, MiniInput, SftpModeOption, TermTypePicker } from "components/business/session_types.slint";
+import { GroupCombo, JumpCombo, SerialPortCombo } from "components/business/session_combos.slint";
+import { PortForwardRow, TriggerRow, JumpRow } from "components/business/session_rows.slint";
+import { SessionRdpFields, SessionSerialFields } from "pages/dialogs/session_rdp_serial_fields.slint";
 
-// One SSH port-forward row shown in the session dialog (#56). `summary` is a
-// ready-to-display line like "-L 127.0.0.1:8080 → host:80".
-export struct PortFwd {
-    id: string,
-    kind: string,
-    auto-start: bool,
-    name: string,
-    bind-addr: string,
-    bind-port: string,
-    host: string,
-    host-port: string,
-}
-
-export struct TriggerDraft {
-    expect: string,
-    response: string,
-    append-enter: bool,
-    repeat: bool,
-}
-
-export struct JumpHop {
-    id: string,
-    choice: int,
-    // Only a newly added, never-selected row can be omitted on Save/Test.
-    placeholder: bool,
-}
-
-export struct SessionDraft {
-    id: string,
-    name: string,
-    kind: string,      // "ssh" | "serial" | "telnet" | "rdp"
-    host: string,
-    port: int,
-    user: string,
-    auth: string,      // "password" | "key"
-    password: string,
-    private-key-path: string,
-    private-key-inline: string,
-    private-key-inline-mode: bool,
-    proxy: string,     // "" | "socks5://host:port" | "http://host:port"
-    group: string,     // folder/group name ("" = ungrouped)
-    // Serial-only (ignored unless kind == "serial")
-    serial-port: string,
-    baud-rate: int,
-    data-bits: int,
-    stop-bits: int,
-    parity: string,        // "none" | "odd" | "even"
-    flow-control: string,  // "none" | "hardware" | "software"
-    // RDP-only (ignored unless kind == "rdp")
-    rdp-domain: string,      // Windows logon domain ("" = none)
-    rdp-resolution: string,  // "fullscreen" | "custom" | "WxH"
-    rdp-width: int,          // desktop size used by the "custom" choice
-    rdp-height: int,
-    rdp-legacy-tls: bool,
-    rdp-admin: bool,
-    rdp-smart-sizing: bool,
-    rdp-cert-policy: string,
-    rdp-network: string,
-    rdp-sound: bool,
-    rdp-clipboard: bool,
-    rdp-gfx: bool,
-    rdp-extra-args: string,
-    encoding: string,
-    // Honor VT100 line drawing (DEC Special Graphics) even in UTF-8 mode (#376),
-    // like PuTTY's Window → Translation option. On by default.
-    vt100-drawing: bool,
-    // Terminal type announced to the server (#498): SSH pty-req TERM and the
-    // Telnet TERMINAL-TYPE reply. Default "xterm-256color".
-    term-type: string,
-    // Session logging override (#265): "default" | "on" | "off".
-    session-log: string,
-    // Skip shell-integration setup for Windows / pwsh servers or interactive
-    // auto-login scripts where injected commands break the shell.
-    disable-shell-integration: bool,
-    // Who the SFTP panel works as (#438): "" login user | "sudo" root |
-    // "custom" = run `sftp-command` as the SFTP server.
-    sftp-mode: string,
-    sftp-command: string,
-    // Free-form note (B站 suggestion).
-    note: string,
-    // Explicit first-hop-first route, owned by this session (#211).
-    jumps: [JumpHop],
-    allow-secret-reveal: bool,
-    // Expose this session to MCP clients (#432).
-    allow-mcp-access: bool,
-}
-
-// A single segment in a segmented selector (auth toggle, baud presets, …).
-component SegOption inherits Rectangle {
-    in property <string> label;
-    in property <bool> active;
-    callback clicked();
-    height: 30px;
-    horizontal-stretch: 1;
-    border-radius: Theme.radius-sm;
-    border-width: 1px;
-    background: active ? Theme.accent : Theme.bg-root;
-    border-color: active ? Theme.accent : Theme.border-subtle;
-    Text {
-        text: root.label;
-        color: active ? white : Theme.text-primary;
-        font-size: Theme.fs-md;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
-// Compact single-line input (no label) used in the port-forward add form (#56).
-component MiniInput inherits Rectangle {
-    in property <string> placeholder;
-    in-out property <string> value;
-    callback edited(string);
-    height: 30px;
-    horizontal-stretch: 1;
-    border-radius: Theme.radius-sm;
-    border-width: 1px;
-    border-color: mi.has-focus ? Theme.accent : Theme.border-subtle;
-    background: Theme.bg-root;
-    // Hide on focus: IME preedit is visible before value is committed.
-    if root.value == "" && !mi.has-focus : Text {
-        x: 8px;
-        width: parent.width - 16px;
-        height: parent.height;
-        overflow: elide;
-        text: root.placeholder;
-        color: Theme.text-muted;
-        font-family: Theme.ui-font-family;
-        font-size: Theme.fs-md;
-        vertical-alignment: center;
-    }
-
-    mi := TextInput {
-        x: 8px;
-        width: parent.width - 16px;
-        height: parent.height;
-        color: Theme.text-primary;
-        font-family: Theme.ui-font-family;
-        font-size: Theme.fs-md;
-        vertical-alignment: center;
-        single-line: true;
-        text <=> root.value;
-        edited => { root.edited(root.value); }
-    }
-}
-
-// Every forwarding rule stays editable in-place. "Add" creates another row
-// of this same form instead of converting the current form into a summary (#277).
-component PortForwardRow inherits VerticalLayout {
-    in property <PortFwd> forward;
-    in property <int> index;
-    callback updated(int, PortFwd);
-    callback remove(int);
-
-    property <string> kind: forward.kind;
-    property <bool> auto-start: forward.auto-start;
-    property <string> name: forward.name;
-    property <string> bind-addr: forward.bind-addr;
-    property <string> bind-port: forward.bind-port;
-    property <string> host: forward.host;
-    property <string> host-port: forward.host-port;
-
-    function notify-updated() {
-        root.updated(root.index, {
-            id: root.forward.id,
-            kind: root.kind,
-            auto-start: root.auto-start,
-            name: root.name,
-            bind-addr: root.bind-addr,
-            bind-port: root.bind-port,
-            host: root.host,
-            host-port: root.host-port,
-        });
-    }
-
-    spacing: 6px;
-    padding: 8px;
-
-    HorizontalLayout {
-        spacing: 6px;
-        SegOption { label: @tr("Local (-L)"); active: root.kind == "local"; clicked => { root.kind = "local"; root.notify-updated(); } }
-        SegOption { label: @tr("Remote (-R)"); active: root.kind == "remote"; clicked => { root.kind = "remote"; root.notify-updated(); } }
-        SegOption { label: @tr("Dynamic (-D)"); active: root.kind == "dynamic"; clicked => { root.kind = "dynamic"; root.notify-updated(); } }
-        Rectangle {
-            width: 30px;
-            height: 30px;
-            border-radius: Theme.radius-sm;
-            background: remove-area.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
-            remove-area := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.remove(root.index); }
-            }
-            Text {
-                text: "\u{E5CD}";
-                font-family: "Material Icons";
-                color: Theme.danger;
-                font-size: Theme.fs-sm;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-    }
-    HorizontalLayout {
-        spacing: 6px;
-        Rectangle {
-            width: 16px; height: 16px; border-radius: 3px;
-            border-width: 1px; border-color: Theme.border-subtle;
-            background: root.auto-start ? Theme.accent : Theme.bg-root;
-            TouchArea { clicked => { root.auto-start = !root.auto-start; root.notify-updated(); } }
-            Text { text: root.auto-start ? "X" : ""; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
-        }
-        Text { text: @tr("Start automatically when connecting"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
-    }
-    MiniInput {
-        placeholder: @tr("Name (optional)");
-        value <=> root.name;
-        edited(value) => { root.name = value; root.notify-updated(); }
-    }
-    HorizontalLayout {
-        spacing: 6px;
-        MiniInput {
-            placeholder: "127.0.0.1";
-            value <=> root.bind-addr;
-            edited(value) => { root.bind-addr = value; root.notify-updated(); }
-        }
-        MiniInput {
-            placeholder: @tr("Listen port");
-            value <=> root.bind-port;
-            edited(value) => { root.bind-port = value; root.notify-updated(); }
-        }
-    }
-    if root.kind != "dynamic" : HorizontalLayout {
-        spacing: 6px;
-        MiniInput {
-            placeholder: @tr("Target host");
-            value <=> root.host;
-            edited(value) => { root.host = value; root.notify-updated(); }
-        }
-        MiniInput {
-            placeholder: @tr("Target port");
-            value <=> root.host-port;
-            edited(value) => { root.host-port = value; root.notify-updated(); }
-        }
-    }
-}
-
-component TriggerRow inherits VerticalLayout {
-    in property <TriggerDraft> trigger;
-    in property <int> index;
-    callback updated(int, TriggerDraft);
-    callback remove(int);
-
-    property <string> expect: trigger.expect;
-    property <string> response: trigger.response;
-    property <bool> append-enter: trigger.append-enter;
-    property <bool> repeat: trigger.repeat;
-
-    function notify-updated() {
-        root.updated(root.index, {
-            expect: root.expect,
-            response: root.response,
-            append-enter: root.append-enter,
-            repeat: root.repeat,
-        });
-    }
-
-    spacing: 6px;
-    padding: 8px;
-    HorizontalLayout {
-        spacing: 6px;
-        MiniInput {
-            placeholder: @tr("Expected output");
-            value <=> root.expect;
-            edited(value) => { root.expect = value; root.notify-updated(); }
-        }
-        Rectangle {
-            width: 30px; height: 30px;
-            border-radius: Theme.radius-sm;
-            background: trigger-remove.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
-            trigger-remove := TouchArea { mouse-cursor: pointer; clicked => { root.remove(root.index); } }
-            Text {
-                text: "\u{E5CD}"; font-family: "Material Icons"; color: Theme.danger;
-                font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center;
-            }
-        }
-    }
-    MiniInput {
-        placeholder: @tr("Response (leave blank to keep saved value)");
-        value <=> root.response;
-        edited(value) => { root.response = value; root.notify-updated(); }
-    }
-    HorizontalLayout {
-        spacing: 14px;
-        SegOption {
-            label: @tr("Send Enter"); active: root.append-enter;
-            clicked => { root.append-enter = !root.append-enter; root.notify-updated(); }
-        }
-        SegOption {
-            label: @tr("Repeat"); active: root.repeat;
-            clicked => { root.repeat = !root.repeat; root.notify-updated(); }
-        }
-    }
-}
-
-// Group field with an editable text box + a dropdown of existing groups (#179).
-// Type to create a new group, or click the ▾ to pick one already in use.
-component GroupCombo inherits VerticalLayout {
-    in property <string> label;
-    in property <string> placeholder;
-    in-out property <string> value;
-    in property <[string]> groups;       // existing group names
-    spacing: 4px;
-
-    Text {
-        text: root.label;
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-    }
-
-    Rectangle {
-        height: 32px;
-        border-radius: Theme.radius-sm;
-        border-width: 1px;
-    border-color: ginput.has-focus ? Theme.accent : Theme.border-strong;
-    background: Theme.bg-elevated;
-
-        // Hide on focus: IME preedit is visible before value is committed.
-        if root.value == "" && !ginput.has-focus : Text {
-            x: 10px;
-            width: parent.width - 44px;
-            height: parent.height;
-            overflow: elide;
-            text: root.placeholder;
-            color: Theme.text-muted;
-            font-family: Theme.ui-font-family;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-        }
-
-        ginput := TextInput {
-            x: 10px;
-            width: parent.width - 44px;     // room for the ▾ button
-            height: parent.height;
-            text <=> root.value;
-            color: Theme.text-primary;
-            font-family: Theme.ui-font-family;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-            single-line: true;
-        }
-
-
-        // ▾ — opens the existing-groups list (no-op when there are none).
-        drop-ta := TouchArea {
-            x: parent.width - 36px;
-            width: 36px;
-            height: parent.height;
-            mouse-cursor: root.groups.length > 0 ? pointer : default;
-            clicked => { if (root.groups.length > 0) { groups-popup.show(); } }
-            Rectangle {
-                width: 28px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: (drop-ta.has-hover && root.groups.length > 0) ? Theme.bg-hover : transparent;
-                Text {
-                    // Plain Unicode caret — the dialog's CJK UI font has this but
-                    // not the Material icon range, which would tofu (#179).
-                    text: "▼";
-                    color: root.groups.length > 0 ? Theme.text-secondary : Theme.border-strong;
-                    font-size: Theme.fs-xs;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        groups-popup := PopupWindow {
-            x: 0;
-            y: parent.height + 3px;
-            width: parent.width;
-            Rectangle {
-                background: Theme.popup-bg-alt;
-                border-radius: Theme.radius-sm;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                VerticalLayout {
-                    padding: 4px;
-                    spacing: 1px;
-                    for g in root.groups : Rectangle {
-                        height: 28px;
-                        border-radius: Theme.radius-sm;
-                        background: g-ta.has-hover ? Theme.bg-hover : transparent;
-                        g-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.value = g; groups-popup.close(); }
-                        }
-                        Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: g;
-                            color: Theme.text-primary;
-                            font-size: Theme.fs-md;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Read-only dropdown picking an SSH jump host from a fixed list of saved
-// sessions (#211). Index-based: `choices[0]` is the unselected entry, and
-// `selected-index` maps into the parallel `ids` list held by the caller.
-component JumpCombo inherits VerticalLayout {
-    in property <string> label;
-    in property <[string]> choices;      // display labels; index 0 = unselected
-    in-out property <int> selected-index: 0;
-    callback selected(int);
-    spacing: 4px;
-
-    Text {
-        text: root.label;
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-    }
-
-    Rectangle {
-        height: 32px;
-        border-radius: Theme.radius-sm;
-        border-width: 1px;
-    border-color: jump-ta.has-hover ? Theme.accent : Theme.border-strong;
-    background: Theme.bg-elevated;
-
-        jump-ta := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { jump-popup.show(); }
-        }
-
-        Text {
-            x: 10px;
-            width: parent.width - 44px;
-            height: parent.height;
-            text: (root.selected-index >= 0 && root.selected-index < root.choices.length)
-                ? root.choices[root.selected-index] : "";
-            color: root.selected-index > 0 ? Theme.text-primary : Theme.text-muted;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
-        Rectangle {
-            x: parent.width - 36px;
-            width: 28px;
-            height: 28px;
-            border-radius: Theme.radius-sm;
-            background: jump-ta.has-hover ? Theme.bg-hover : transparent;
-            Text {
-                text: "▼";
-                color: Theme.text-secondary;
-                font-size: Theme.fs-xs;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        jump-popup := PopupWindow {
-            x: 0;
-            y: parent.height + 3px;
-            width: parent.width;
-            Rectangle {
-                background: Theme.popup-bg-alt;
-                border-radius: Theme.radius-sm;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                VerticalLayout {
-                    padding: 4px;
-                    spacing: 1px;
-                    for c[idx] in root.choices : Rectangle {
-                        height: 28px;
-                        border-radius: Theme.radius-sm;
-                        background: c-ta.has-hover ? Theme.bg-hover : transparent;
-                        c-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            // Report the choice BEFORE closing: statements after
-                            // close() in a popup's own handler never run, so the
-                            // hop showed as picked but saved empty (#509).
-                            clicked => { root.selected-index = idx; root.selected(idx); jump-popup.close(); }
-                        }
-                        Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: c;
-                            color: Theme.text-primary;
-                            font-size: Theme.fs-md;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// SerialPort field with an editable text box + a dropdown of existing serial ports.
-// Type to input a serial port, or click the ▾ to pick one already in use.
-component SerialPortCombo inherits VerticalLayout {
-    in property <string> label;
-    in property <string> placeholder;
-    in-out property <string> value;
-    in property <[string]> serial-ports;       // existing serial_port names
-    spacing: 4px;
-
-    Text {
-        text: root.label;
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-    }
-
-    Rectangle {
-        height: 32px;
-        border-radius: Theme.radius-sm;
-        border-width: 1px;
-    border-color: ginput.has-focus ? Theme.accent : Theme.border-strong;
-    background: Theme.bg-elevated;
-
-        // Hide on focus: IME preedit is visible before value is committed.
-        if root.value == "" && !ginput.has-focus : Text {
-            x: 10px;
-            width: parent.width - 44px;
-            height: parent.height;
-            overflow: elide;
-            text: root.placeholder;
-            color: Theme.text-muted;
-            font-family: Theme.ui-font-family;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-        }
-
-        ginput := TextInput {
-            x: 10px;
-            width: parent.width - 44px;     // room for the ▾ button
-            height: parent.height;
-            text <=> root.value;
-            color: Theme.text-primary;
-            font-family: Theme.ui-font-family;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-            single-line: true;
-        }
-
-
-        // ▾ — opens the existing-serial-ports list (no-op when there are none).
-        drop-ta := TouchArea {
-            x: parent.width - 36px;
-            width: 36px;
-            height: parent.height;
-            mouse-cursor: root.serial-ports.length > 0 ? pointer : default;
-            clicked => { if (root.serial-ports.length > 0) { serial-ports-popup.show(); } }
-            Rectangle {
-                width: 28px;
-                height: 28px;
-                border-radius: Theme.radius-sm;
-                background: (drop-ta.has-hover && root.serial-ports.length > 0) ? Theme.bg-hover : transparent;
-                Text {
-                    // Plain Unicode caret — the dialog's CJK UI font has this but
-                    // not the Material icon range, which would tofu (#179).
-                    text: "▼";
-                    color: root.serial-ports.length > 0 ? Theme.text-secondary : Theme.border-strong;
-                    font-size: Theme.fs-xs;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        serial-ports-popup := PopupWindow {
-            x: 0;
-            y: parent.height + 3px;
-            width: parent.width;
-            Rectangle {
-                background: Theme.popup-bg-alt;
-                border-radius: Theme.radius-sm;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                VerticalLayout {
-                    padding: 4px;
-                    spacing: 1px;
-                    for g in root.serial-ports : Rectangle {
-                        height: 28px;
-                        border-radius: Theme.radius-sm;
-                        background: g-ta.has-hover ? Theme.bg-hover : transparent;
-                        g-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.value = g; serial-ports-popup.close(); }
-                        }
-                        Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: g;
-                            color: Theme.text-primary;
-                            font-size: Theme.fs-md;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// One choice of the SFTP privileges radio group (#438).
-component SftpModeOption inherits Rectangle {
-    in property <string> label;
-    in property <bool> checked;
-    callback clicked();
-    height: 22px;
-    accessible-role: checkbox;
-    accessible-label: root.label;
-    accessible-checked: root.checked;
-    HorizontalLayout {
-        spacing: 8px;
-        Rectangle {
-            width: 16px; height: 16px;
-            y: (parent.height - self.height) / 2;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: root.checked ? Theme.accent : Theme.border-strong;
-            Rectangle {
-                width: 8px; height: 8px;
-                border-radius: 4px;
-                background: root.checked ? Theme.accent : transparent;
-            }
-        }
-        Text {
-            text: root.label;
-            color: Theme.text-primary; font-size: Theme.fs-sm;
-            vertical-alignment: center; horizontal-stretch: 1;
-        }
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
+export { PortFwd, TriggerDraft, JumpHop, SessionDraft, JumpRow }
 
 // Terminal character encoding picker (#338, #435). Shared by SSH/Telnet (in
 // the Advanced section) and serial (main section: serial has no Advanced).
@@ -681,92 +35,6 @@ component EncodingPicker inherits VerticalLayout {
         font-size: Theme.fs-xs;
     }
     Rectangle { height: 6px; }
-}
-
-// Terminal type picker (#498): the TERM sent in the SSH PTY request and the
-// Telnet TERMINAL-TYPE reply. Some targets (e.g. a telnet app reached from the
-// SSH shell) only accept plain "xterm". A value not in the list (hand-edited
-// config) still shows as the current one.
-component TermTypePicker inherits VerticalLayout {
-    in-out property <string> value: "xterm-256color";
-    spacing: 4px;
-    Text {
-        text: @tr("Terminal type");
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-    }
-    ComboBox {
-        model: [
-            "xterm-256color", "xterm", "xterm-color", "xterm-16color",
-            "screen-256color", "tmux-256color", "linux", "vt100", "vt102",
-            "vt220", "ansi", "dumb",
-        ];
-        current-value: root.value;
-        selected(value) => { root.value = value; }
-    }
-    Text {
-        text: @tr("Sent to the server as TERM. Try xterm if a program fails to start or shows garbled output.");
-        color: Theme.text-muted;
-        font-size: Theme.fs-xs;
-        wrap: word-wrap;
-    }
-    Rectangle { height: 6px; }
-}
-
-// A fixed-height row keeps the drop position independent of text length.
-export component JumpRow inherits Rectangle {
-    in property <JumpHop> hop;
-    in property <int> index;
-    in property <int> count;
-    in property <[string]> choices;
-    callback selected(int);
-    callback remove();
-    callback move(int);
-    property <length> grab-y;
-    property <int> drop-index: root.index;
-    height: 58px;
-    border-radius: Theme.radius-sm;
-    background: handle.pressed ? Theme.bg-active : transparent;
-    HorizontalLayout {
-        spacing: 6px;
-        Rectangle {
-            width: 26px;
-            Text {
-                text: "≡"; color: Theme.text-secondary;
-                vertical-alignment: center; horizontal-alignment: center;
-            }
-            handle := TouchArea {
-                mouse-cursor: MouseCursor.move;
-                pointer-event(e) => {
-                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                        root.grab-y = self.mouse-y;
-                        root.drop-index = root.index;
-                    } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
-                        if root.drop-index != root.index { root.move(root.drop-index); }
-                    } else if e.kind == PointerEventKind.cancel { root.drop-index = root.index; }
-                }
-                moved => {
-                    if self.pressed {
-                        root.drop-index = clamp(root.index + round((self.mouse-y - root.grab-y) / 64px), 0, root.count - 1);
-                    }
-                }
-            }
-        }
-        JumpCombo {
-            horizontal-stretch: 1;
-            label: handle.pressed && root.drop-index != root.index
-                ? @tr("Move to hop") + " " + (root.drop-index + 1)
-                : @tr("Hop") + " " + (root.index + 1)
-                    + (root.hop.choice == 0 && root.hop.id != "" ? " (" + @tr("Unavailable") + ")" : "");
-            choices: root.choices;
-            selected-index: root.hop.choice;
-            selected(choice) => { root.selected(choice); }
-        }
-        VerticalLayout {
-            padding-top: 22px;
-            IconButton { glyph: "×"; fg: Theme.danger; clicked => { root.remove(); } }
-        }
-    }
 }
 
 // Modal dialog for creating / editing a session (SSH / Serial / Telnet).
@@ -867,7 +135,10 @@ export component SessionDialog inherits ModalLayer {
     changed draft-password => { root.connection-draft-changed(); }
     changed draft-key-path => { root.connection-draft-changed(); }
     changed draft-key-inline => { root.connection-draft-changed(); }
-    changed draft-proxy-type => { root.connection-draft-changed(); }
+    changed draft-proxy-type => {
+        root.connection-draft-changed();
+        if (self.draft-proxy-type != "none") { self.show-advanced = true; }
+    }
     changed draft-proxy-hostport => { root.connection-draft-changed(); }
     changed draft-serial-port => { root.connection-draft-changed(); }
     changed draft-baud => { root.connection-draft-changed(); }
@@ -963,6 +234,11 @@ export component SessionDialog inherits ModalLayer {
     callback update-trigger(int /* index */, TriggerDraft);
     callback delete-trigger(int /* index */);
     callback pick-key-file();   // open a native file picker for the private key
+    // Segmented filter inside the expanded Advanced section (0 = All, 1 = Terminal/Proxy, 2 = Tunnels/SFTP, 3 = Triggers).
+    property <int> adv-tab: 0;
+    // Use the wider 2-column partitioned layout in application windows (>720px),
+    // falling back to single-column in narrow windows and 700px test fixtures.
+    property <bool> wide-card: root.width > 720px;
 
     cancel-requested => { root.cancel(); }
     background: #00000080;
@@ -985,12 +261,12 @@ export component SessionDialog inherits ModalLayer {
 
 
     Rectangle {
-        width: 440px;
+        width: root.wide-card ? min(680px * Theme.ui-scale, parent.width - 32px) : min(440px, parent.width - 32px);
         // Height follows the content, but never exceeds the window — past that
         // the body scrolls (the dialog grows with the advanced section / many
         // port forwards) (#56). Header (52px + 1px divider) and the pinned
         // action footer (1px divider + its row) stay outside the scroll (#525).
-        height: min(body.preferred-height + 54px + footer.preferred-height, parent.height - 40px);
+        height: min(body.preferred-height + 54px + footer.preferred-height, parent.height - (root.wide-card ? 48px : 40px));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         background: Theme.popup-bg;
@@ -1012,7 +288,8 @@ export component SessionDialog inherits ModalLayer {
             width: 100%;
             height: 52px;
             background: Theme.bg-panel-alt;
-            border-radius: Theme.radius-lg;
+            border-top-left-radius: Theme.radius-lg;
+            border-top-right-radius: Theme.radius-lg;
 
             HorizontalLayout {
                 padding-left: 20px;
@@ -1030,25 +307,22 @@ export component SessionDialog inherits ModalLayer {
                 }
 
                 Rectangle {
-                    width: 32px;
-                    height: 32px;
+                    width: 30px;
+                    height: 30px;
                     y: (parent.height - self.height) / 2;
-                    border-radius: Theme.radius-sm;
-                    // Match ProcWindow's close button: red (#e81123) on hover,
-                    // white glyph, smooth 90ms transition (#close-hover-red).
-                    background: close-ta.has-hover ? #e81123 : transparent;
+                    border-radius: 7px;
+                    background: close-ta.has-hover ? Theme.bg-hover : transparent;
                     animate background { duration: 90ms; }
                     close-ta := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.cancel(); }
                     }
-                    Text {
-                        text: "\u{E5CD}";
-                        font-family: "Material Icons";
-                        color: close-ta.has-hover ? white : Theme.text-secondary;
-                        font-size: 18px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                    OutlineIcon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        name: "close";
+                        icon-size: 16px;
+                        color: close-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
                     }
                 }
             }
@@ -1121,7 +395,26 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
-            LabeledInput {
+            if root.wide-card : HorizontalLayout {
+                spacing: 12px;
+                LabeledInput {
+                    horizontal-stretch: 1;
+                    input-background: Theme.bg-elevated;
+                    idle-border: Theme.border-strong;
+                    label: @tr("Name");
+                    placeholder: @tr("e.g. production web-01");
+                    value <=> root.draft-name;
+                }
+                GroupCombo {
+                    horizontal-stretch: 1;
+                    label: @tr("Group (optional)");
+                    placeholder: @tr("e.g. Production / Database");
+                    value <=> root.draft-group;
+                    groups: root.session-groups;
+                }
+            }
+
+            if !root.wide-card : LabeledInput {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: @tr("Name");
@@ -1131,15 +424,16 @@ export component SessionDialog inherits ModalLayer {
 
             // Optional group/folder to organize sessions by business (#41).
             // Editable + dropdown of existing groups (#179).
-            GroupCombo {
+            if !root.wide-card : GroupCombo {
                 label: @tr("Group (optional)");
                 placeholder: @tr("e.g. Production / Database");
                 value <=> root.draft-group;
                 groups: root.session-groups;
             }
 
-            // Free-form note — extra info to keep with the session (B站 suggestion).
-            LabeledInput {
+            // Free-form note — in wide layout, moved to the Advanced section so
+            // the primary form stays focused on connection + authentication.
+            if !root.wide-card : LabeledInput {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: @tr("Note (optional)");
@@ -1149,7 +443,7 @@ export component SessionDialog inherits ModalLayer {
 
             // ── SSH / Telnet share host + port ──────────────────────────────
             if root.draft-kind != "serial" : HorizontalLayout {
-                spacing: 10px;
+                spacing: 12px;
                 LabeledInput {
                     input-background: Theme.bg-elevated;
                     idle-border: Theme.border-strong;
@@ -1174,6 +468,11 @@ export component SessionDialog inherits ModalLayer {
                 text: @tr("Please enter a host / IP address.");
                 color: Theme.danger;
                 font-size: Theme.fs-sm;
+            }
+
+            if root.wide-card && root.draft-kind != "serial" : Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
             }
 
             // ── SSH: user + auth. Telnet: optional auto-login (#507) ────────
@@ -1431,224 +730,40 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // ── RDP-only fields ─────────────────────────────────────────────
-            if root.draft-kind == "rdp" : LabeledInput {
-                input-background: Theme.bg-elevated;
-                idle-border: Theme.border-strong;
-                label: @tr("Username");
-                placeholder: @tr("DOMAIN\\user or user@domain");
-                value <=> root.draft-user;
-            }
-
-            if root.draft-kind == "rdp" : LabeledInput {
-                input-background: Theme.bg-elevated;
-                idle-border: Theme.border-strong;
-                label: @tr("Password");
-                placeholder: root.is-editing
-                    ? (root.allow-secret-reveal ? @tr("Enter a new password") : @tr("Leave blank to keep the current password"))
-                    : "••••••••";
-                password: true;
-                reveal-enabled: root.allow-secret-reveal;
-                revealed <=> root.password-revealed;
-                reveal => { root.reveal-secret(false) }
-                value <=> root.draft-password;
-            }
-
-            if root.draft-kind == "rdp" : LabeledInput {
-                input-background: Theme.bg-elevated;
-                idle-border: Theme.border-strong;
-                label: @tr("Domain (optional)");
-                placeholder: "CONTOSO";
-                value <=> root.draft-rdp-domain;
-            }
-
-            // Resolution: full screen, a common desktop size, or a custom one.
-            // Keep the preset list in sync with RDP_RESOLUTION_PRESETS in
-            // src/app/session_models.rs.
-            if root.draft-kind == "rdp" : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: @tr("Resolution");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                }
-                ComboBox {
-                    model: [@tr("Full screen"), "1280x720", "1366x768", "1440x900",
-                            "1600x900", "1920x1080", "2560x1440", "3840x2160",
-                            @tr("Custom")];
-                    current-value: root.draft-rdp-resolution == "fullscreen"
-                        ? @tr("Full screen")
-                        : root.draft-rdp-resolution == "custom"
-                            ? @tr("Custom")
-                            : root.draft-rdp-resolution;
-                    selected(value) => {
-                        root.draft-rdp-resolution = value == @tr("Full screen")
-                            ? "fullscreen"
-                            : value == @tr("Custom") ? "custom" : value;
-                    }
-                }
-                Text {
-                    text: @tr("Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window.");
-                    color: Theme.text-muted;
-                    font-size: Theme.fs-xs;
-                }
-            }
-
-            if root.draft-kind == "rdp" && root.draft-rdp-resolution == "custom" : HorizontalLayout {
-                spacing: 10px;
-                LabeledInput {
-                    input-background: Theme.bg-elevated;
-                    idle-border: Theme.border-strong;
-                    label: @tr("Width");
-                    placeholder: "1920";
-                    value <=> root.draft-rdp-width;
-                    horizontal-stretch: 1;
-                }
-                LabeledInput {
-                    input-background: Theme.bg-elevated;
-                    idle-border: Theme.border-strong;
-                    label: @tr("Height");
-                    placeholder: "1080";
-                    value <=> root.draft-rdp-height;
-                    horizontal-stretch: 1;
-                }
-            }
-
-            if root.draft-kind == "rdp" : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: @tr("FreeRDP server compatibility (Linux / macOS)");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                }
-                CheckBox {
-                    text: @tr("Legacy TLS (security level 0; less secure)");
-                    checked <=> root.draft-rdp-legacy-tls;
-                }
-                CheckBox {
-                    text: @tr("Administrative session (/admin)");
-                    checked <=> root.draft-rdp-admin;
-                }
-                CheckBox {
-                    text: @tr("Smart sizing (scale fixed resolution)");
-                    checked <=> root.draft-rdp-smart-sizing;
-                }
-                Text { text: @tr("Certificate policy"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
-                ComboBox {
-                    model: [@tr("Ignore certificate (less secure)"), @tr("Trust on first use"), @tr("Reject untrusted")];
-                    current-value: root.draft-rdp-cert-policy == "tofu" ? @tr("Trust on first use")
-                        : root.draft-rdp-cert-policy == "deny" ? @tr("Reject untrusted")
-                        : @tr("Ignore certificate (less secure)");
-                    selected(value) => {
-                        root.draft-rdp-cert-policy = value == @tr("Trust on first use") ? "tofu"
-                            : value == @tr("Reject untrusted") ? "deny" : "ignore";
-                    }
-                }
-                Text { text: @tr("Network profile"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
-                ComboBox {
-                    model: [@tr("Automatic"), "LAN", "WAN", @tr("Fast broadband"), @tr("Slow broadband")];
-                    current-value: root.draft-rdp-network == "lan" ? "LAN"
-                        : root.draft-rdp-network == "wan" ? "WAN"
-                        : root.draft-rdp-network == "broadband-high" ? @tr("Fast broadband")
-                        : root.draft-rdp-network == "broadband-low" ? @tr("Slow broadband") : @tr("Automatic");
-                    selected(value) => {
-                        root.draft-rdp-network = value == "LAN" ? "lan" : value == "WAN" ? "wan"
-                            : value == @tr("Fast broadband") ? "broadband-high"
-                            : value == @tr("Slow broadband") ? "broadband-low" : "auto";
-                    }
-                }
-                CheckBox { text: @tr("Redirect sound"); checked <=> root.draft-rdp-sound; }
-                CheckBox { text: @tr("Clipboard sharing"); checked <=> root.draft-rdp-clipboard; }
-                CheckBox { text: @tr("Graphics acceleration (GFX)"); checked <=> root.draft-rdp-gfx; }
-                CheckBox { text: @tr("Advanced FreeRDP arguments"); checked <=> root.show-rdp-advanced; }
-                if root.show-rdp-advanced : VerticalLayout {
-                    spacing: 4px;
-                    Text {
-                        text: @tr("One argument per line. Chinese aliases or native English FreeRDP options.");
-                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
-                    }
-                    Rectangle {
-                        height: 92px; horizontal-stretch: 1; clip: true;
-                        border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border-strong;
-                        background: Theme.bg-elevated;
-                        rdp-args-input := TextInput {
-                            x: 8px; y: 6px; width: parent.width - 16px; height: parent.height - 12px;
-                            text <=> root.draft-rdp-extra-args; single-line: false; wrap: word-wrap;
-                            color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.fs-sm;
-                        }
-                    }
-                    Text {
-                        text: @tr("Examples: 网络=局域网, 音频=开, /bpp:24, /drive:资料,/tmp/中文路径");
-                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
-                    }
-                    Text {
-                        text: @tr("Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录");
-                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
-                    }
-                    Text {
-                        text: @tr("Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list.");
-                        color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
-                    }
-                }
-                GhostButton {
-                    text: @tr("Preview FreeRDP arguments");
-                    clicked => { root.rdp-preview = root.preview-rdp(root.current-draft()); }
-                }
-                if root.rdp-preview != "" : Text {
-                    text: root.rdp-preview; color: Theme.text-muted;
-                    font-family: Theme.font-mono; font-size: Theme.fs-xs; wrap: word-wrap;
-                }
+            if root.draft-kind == "rdp" : SessionRdpFields {
+                is-editing: root.is-editing;
+                allow-secret-reveal: root.allow-secret-reveal;
+                password-revealed <=> root.password-revealed;
+                draft-user <=> root.draft-user;
+                draft-password <=> root.draft-password;
+                draft-rdp-domain <=> root.draft-rdp-domain;
+                draft-rdp-resolution <=> root.draft-rdp-resolution;
+                draft-rdp-width <=> root.draft-rdp-width;
+                draft-rdp-height <=> root.draft-rdp-height;
+                draft-rdp-legacy-tls <=> root.draft-rdp-legacy-tls;
+                draft-rdp-admin <=> root.draft-rdp-admin;
+                draft-rdp-smart-sizing <=> root.draft-rdp-smart-sizing;
+                draft-rdp-cert-policy <=> root.draft-rdp-cert-policy;
+                draft-rdp-network <=> root.draft-rdp-network;
+                draft-rdp-sound <=> root.draft-rdp-sound;
+                draft-rdp-clipboard <=> root.draft-rdp-clipboard;
+                draft-rdp-gfx <=> root.draft-rdp-gfx;
+                draft-rdp-extra-args <=> root.draft-rdp-extra-args;
+                show-rdp-advanced <=> root.show-rdp-advanced;
+                rdp-preview <=> root.rdp-preview;
+                reveal-password => { root.reveal-secret(false) }
+                trigger-preview => { root.rdp-preview = root.preview-rdp(root.current-draft()); }
             }
 
             // ── Serial-only fields ──────────────────────────────────────────
-            if root.draft-kind == "serial" : SerialPortCombo {
-                label: @tr("Serial port");
-                placeholder: "COM3  /  /dev/ttyUSB0";
-                value <=> root.draft-serial-port;
-                serial-ports: root.session-serial-ports;
-            }
-
-            if root.draft-kind == "serial" : LabeledInput {
-                input-background: Theme.bg-elevated;
-                idle-border: Theme.border-strong;
-                label: @tr("Baud rate");
-                placeholder: "115200";
-                value <=> root.draft-baud;
-            }
-
-            if root.draft-kind == "serial" : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: @tr("Data bits / Stop bits / Parity");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    SegOption { label: "7"; active: root.draft-data-bits == "7"; clicked => { root.draft-data-bits = "7"; } }
-                    SegOption { label: "8"; active: root.draft-data-bits == "8"; clicked => { root.draft-data-bits = "8"; } }
-                    Rectangle { width: 8px; }
-                    SegOption { label: "1"; active: root.draft-stop-bits == "1"; clicked => { root.draft-stop-bits = "1"; } }
-                    SegOption { label: "2"; active: root.draft-stop-bits == "2"; clicked => { root.draft-stop-bits = "2"; } }
-                    Rectangle { width: 8px; }
-                    SegOption { label: "N"; active: root.draft-parity == "none"; clicked => { root.draft-parity = "none"; } }
-                    SegOption { label: "O"; active: root.draft-parity == "odd"; clicked => { root.draft-parity = "odd"; } }
-                    SegOption { label: "E"; active: root.draft-parity == "even"; clicked => { root.draft-parity = "even"; } }
-                }
-            }
-
-            if root.draft-kind == "serial" : VerticalLayout {
-                spacing: 4px;
-                Text {
-                    text: @tr("Flow control");
-                    color: Theme.text-secondary;
-                    font-size: Theme.fs-sm;
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    SegOption { label: @tr("None"); active: root.draft-flow == "none"; clicked => { root.draft-flow = "none"; } }
-                    SegOption { label: @tr("Hardware"); active: root.draft-flow == "hardware"; clicked => { root.draft-flow = "hardware"; } }
-                    SegOption { label: @tr("Software"); active: root.draft-flow == "software"; clicked => { root.draft-flow = "software"; } }
-                }
+            if root.draft-kind == "serial" : SessionSerialFields {
+                draft-serial-port <=> root.draft-serial-port;
+                session-serial-ports: root.session-serial-ports;
+                draft-baud <=> root.draft-baud;
+                draft-data-bits <=> root.draft-data-bits;
+                draft-stop-bits <=> root.draft-stop-bits;
+                draft-parity <=> root.draft-parity;
+                draft-flow <=> root.draft-flow;
             }
 
             // Serial has no Advanced section; console gear (switches, PLCs)
@@ -1662,18 +777,31 @@ export component SessionDialog inherits ModalLayer {
             // live in the main section, and the SSH-only parts do not apply).
             if root.draft-kind != "serial" && root.draft-kind != "rdp" : Rectangle {
                 height: 26px;
+                border-radius: Theme.radius-sm;
+                background: adv-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
                 adv-ta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.show-advanced = !root.show-advanced; }
                 }
                 HorizontalLayout {
-                    spacing: 4px;
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 6px;
                     Text {
-                        text: @tr("Advanced (encoding, proxy, tunnels)");
-                        color: adv-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                        text: "\u{E429}"; // tune
+                        font-family: "Material Icons";
+                        color: root.show-advanced ? Theme.accent : Theme.text-muted;
                         font-size: Theme.fs-sm;
                         vertical-alignment: center;
                     }
+                    Text {
+                        text: @tr("Advanced (encoding, proxy, tunnels)");
+                        color: root.show-advanced ? Theme.text-primary : (adv-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+                        font-size: Theme.fs-sm;
+                        font-weight: root.show-advanced ? 600 : 400;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
                     Text {
                         text: root.show-advanced ? "\u{E5CE}" : "\u{E5CF}";
                         font-family: "Material Icons";
@@ -1681,17 +809,49 @@ export component SessionDialog inherits ModalLayer {
                         font-size: Theme.fs-md;
                         vertical-alignment: center;
                     }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
 
+            // Segmented category switcher for the Advanced section
+            if root.show-advanced && root.draft-kind != "serial" && root.draft-kind != "rdp" : HorizontalLayout {
+                spacing: 6px;
+                SegOption {
+                    label: @tr("Terminal");
+                    active: root.adv-tab == 0;
+                    clicked => { root.adv-tab = 0; }
+                }
+                SegOption {
+                    label: @tr("Proxy (optional)");
+                    active: root.adv-tab == 1;
+                    clicked => { root.adv-tab = 1; }
+                }
+                if root.draft-kind == "ssh" : SegOption {
+                    label: @tr("Port forwarding");
+                    active: root.adv-tab == 2;
+                    clicked => { root.adv-tab = 2; }
+                }
+                if root.draft-kind == "ssh" : SegOption {
+                    label: @tr("Login triggers");
+                    active: root.adv-tab == 3;
+                    clicked => { root.adv-tab = 3; }
+                }
+            }
+
+            if root.wide-card && root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) : LabeledInput {
+                input-background: Theme.bg-elevated;
+                idle-border: Theme.border-strong;
+                label: @tr("Note (optional)");
+                placeholder: @tr("Anything to remember about this host");
+                value <=> root.draft-note;
+            }
+
             // ── Terminal character encoding (SSH / Telnet) (#338, #435) ─────
-            if root.show-advanced && (root.draft-kind == "ssh" || root.draft-kind == "telnet") : EncodingPicker {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) && (root.draft-kind == "ssh" || root.draft-kind == "telnet") : EncodingPicker {
                 value <=> root.draft-encoding;
             }
 
             // ── Terminal type (SSH / Telnet) (#498) ─────────────────────────
-            if root.show-advanced && (root.draft-kind == "ssh" || root.draft-kind == "telnet") : TermTypePicker {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) && (root.draft-kind == "ssh" || root.draft-kind == "telnet") : TermTypePicker {
                 value <=> root.draft-term-type;
             }
 
@@ -1699,7 +859,7 @@ export component SessionDialog inherits ModalLayer {
             // Mirror of PuTTY's "Enable VT100 line drawing even in UTF-8 mode":
             // honor ESC(0 / SO-SI charset switches and map DEC Special Graphics
             // to box-drawing glyphs even when the encoding is UTF-8.
-            if root.show-advanced : VerticalLayout {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) : VerticalLayout {
                 spacing: 6px;
 
                 HorizontalLayout {
@@ -1735,7 +895,7 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // ── Session log override (terminal sessions) (#265) ─────────────
-            if root.show-advanced && root.draft-kind != "rdp" : VerticalLayout {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) && root.draft-kind != "rdp" : VerticalLayout {
                 spacing: 4px;
                 Text {
                     text: @tr("Session log");
@@ -1768,7 +928,7 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // ── Optional outbound proxy (SSH / Telnet only) ─────────────────
-            if root.show-advanced && root.draft-kind != "serial" : VerticalLayout {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1) && root.draft-kind != "serial" : VerticalLayout {
                 spacing: 4px;
                 Text {
                     text: @tr("Proxy (optional)");
@@ -1798,7 +958,8 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // Each row is one actual hop. Reordering never rewrites saved hops.
-            if root.draft-kind == "ssh" : VerticalLayout {
+            // In wide layout, Jump chain is part of the collapsible Advanced section.
+            if root.draft-kind == "ssh" && (!root.wide-card || (root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 1))) : VerticalLayout {
                 spacing: 6px;
                 Text { text: @tr("Jump chain (optional)"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
                 Text {
@@ -1817,14 +978,14 @@ export component SessionDialog inherits ModalLayer {
                     text: @tr("+ Add jump host");
                     clicked => { if root.jumps.length < 16 { root.add-jump(); } }
                 }
-                Text {
-                    text: @tr("Target") + ": " + root.draft-user + "@" + root.draft-host + ":" + root.draft-port;
+                if root.draft-host != "" : Text {
+                    text: @tr("Target") + ": " + (root.draft-user != "" ? root.draft-user + "@" : "") + root.draft-host + ":" + root.draft-port;
                     color: Theme.text-secondary; font-size: Theme.fs-sm; overflow: elide;
                 }
             }
 
             // ── Port forwarding / tunnels (SSH only) (#56) ──────────────────
-            if root.show-advanced && root.draft-kind == "ssh" : VerticalLayout {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 2) && root.draft-kind == "ssh" : VerticalLayout {
                 spacing: 6px;
 
                 // Interactive-login compatibility toggle (#140): shell hooks and
@@ -1926,7 +1087,7 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // ── Expect/send login triggers (SSH only) (#212) ───────────────
-            if root.show-advanced && root.draft-kind == "ssh" : VerticalLayout {
+            if root.show-advanced && (root.adv-tab == 0 || root.adv-tab == 3) && root.draft-kind == "ssh" : VerticalLayout {
                 spacing: 6px;
                 Text { text: @tr("Login triggers"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
                 for trigger[i] in root.triggers : TriggerRow {
@@ -1999,6 +1160,14 @@ export component SessionDialog inherits ModalLayer {
                     }
                 }
             }
+        }
+        Rectangle {
+            x: 0; y: 0;
+            width: 100%; height: 100%;
+            border-radius: Theme.radius-lg;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            background: transparent;
         }
     }
 }

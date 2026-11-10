@@ -1,0 +1,400 @@
+// Appearance pickers and data structs for settings pages.
+
+import { Theme } from "../../theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ThemeDot } from "../common/settings_controls.slint";
+
+export struct OutputRuleItem {
+    pattern: string,
+    regex: bool,
+    case-sensitive: bool,
+    whole-line: bool,
+    color: string,
+    enabled: bool,
+}
+
+// One download source on Settings → Updates (GitHub first, then mirrors).
+// `key` is the normalised prefix ("" = GitHub). `selected` is the source a
+// one-click update will use first (the user's pick, or the fastest in auto).
+// `level`: 0 untested/testing, 1 fast, 2 medium, 3 slow, 4 failed.
+export struct UpdateMirrorRow {
+    url: string,
+    key: string,
+    ping: string,
+    level: int,
+    fastest: bool,
+    selected: bool,
+    removable: bool,
+}
+
+export struct WslProfileInfo {
+    id: string,
+    name: string,
+    distribution: string,
+    directory: string,
+}
+
+// One colour theme preset in Settings › Wallpaper & theme. `swatch` is the
+// dot shown next to the name.
+export struct ColorThemeItem {
+    id: string,
+    name-en: string,
+    name-zh: string,
+    swatch: color,
+}
+
+// One terminal color scheme (iTerm2-Color-Schemes + custom themes) in Settings › Terminal.
+export struct TerminalSchemeItem {
+    id: string,
+    name: string,
+    author: string,
+    is-dark: bool,
+    is-favorite: bool,
+    is-custom: bool,
+    bg: color,
+    fg: color,
+    cursor: color,
+    cursor-text: color,
+    selection: color,
+    selection-text: color,
+    c0: color,
+    c1: color,
+    c2: color,
+    c3: color,
+    c4: color,
+    c5: color,
+    c6: color,
+    c7: color,
+    c8: color,
+    c9: color,
+    c10: color,
+    c11: color,
+    c12: color,
+    c13: color,
+    c14: color,
+    c15: color,
+}
+
+// A user-defined agent launcher (#427).
+export struct CustomAgentInfo {
+    id: string,
+    name: string,
+    command: string,
+    directory: string,
+}
+
+// One rebindable action in the Shortcuts page.
+export struct ShortcutBinding {
+    id: string,
+    header: string,
+    desc: string,
+    keys: string,
+    is-default: bool,
+}
+
+// Compact cursor-shape choice with a live visual sample (#275).
+export component CursorStyleButton inherits Rectangle {
+    in property <string> label;
+    in property <string> cursor-kind;
+    in property <bool> selected;
+    callback clicked();
+    width: 74px;
+    height: 30px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border-subtle;
+    background: root.selected ? Theme.bg-active : (cursor-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+    cursor-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 7px;
+        padding-right: 7px;
+        spacing: 6px;
+        alignment: center;
+        Rectangle {
+            width: 14px;
+            height: 100%;
+            background: transparent;
+            Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 14px;
+                height: 18px;
+                background: Theme.term-bg;
+                Rectangle {
+                    x: 2px;
+                    y: root.cursor-kind == "underline" ? parent.height - 3px : 2px;
+                    width: root.cursor-kind == "bar" ? 2px : 10px;
+                    height: root.cursor-kind == "underline" ? 2px : 14px;
+                    background: Theme.term-cursor;
+                }
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.selected ? Theme.text-primary : Theme.text-secondary;
+            font-size: 11px * Theme.panel-font;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component CursorPaletteSwatch inherits Rectangle {
+    in property <string> hex;
+    in property <color> swatch-color;
+    in property <bool> selected;
+    callback chosen(string);
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border-strong;
+    background: root.swatch-color;
+    swatch-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(root.hex); }
+    }
+}
+
+// Hex RGB editor with a live swatch. Incomplete/invalid input remains editable
+// but is marked red and is not applied or persisted.
+export component CursorColorInput inherits Rectangle {
+    in-out property <string> value;
+    in property <color> preview-color;
+    property <bool> valid: true;
+    callback apply-color(string) -> bool;
+    width: 160px;
+    height: 30px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.valid ? Theme.border-subtle : #e05252;
+    background: Theme.bg-elevated;
+    Rectangle {
+        x: 7px;
+        y: 6px;
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        background: root.preview-color;
+        color-button := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { color-picker.show(); }
+        }
+    }
+    color-input := TextInput {
+        x: 34px;
+        width: parent.width - 41px;
+        height: parent.height;
+        text <=> root.value;
+        color: Theme.text-primary;
+        font-family: Theme.term-font-family;
+        font-size: 12px * Theme.panel-font;
+        vertical-alignment: center;
+        single-line: true;
+        changed text => { root.valid = root.apply-color(self.text); }
+    }
+    color-picker := PopupWindow {
+        x: parent.width - self.width;
+        y: parent.height + 4px;
+        width: 210px;
+        height: 160px;
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000060;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 7px;
+                Text {
+                    text: root.value;
+                    color: Theme.text-secondary;
+                    font-family: Theme.term-font-family;
+                    font-size: 11px * Theme.panel-font;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    CursorPaletteSwatch { hex: "#D4D4D4"; swatch-color: #D4D4D4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FFFFFF"; swatch-color: #FFFFFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FF5252"; swatch-color: #FF5252; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FF9800"; swatch-color: #FF9800; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FFD740"; swatch-color: #FFD740; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#69F0AE"; swatch-color: #69F0AE; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    CursorPaletteSwatch { hex: "#00E676"; swatch-color: #00E676; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#00E5FF"; swatch-color: #00E5FF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#40C4FF"; swatch-color: #40C4FF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#448AFF"; swatch-color: #448AFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#7C4DFF"; swatch-color: #7C4DFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#E040FB"; swatch-color: #E040FB; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    CursorPaletteSwatch { hex: "#F48FB1"; swatch-color: #F48FB1; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FF8A65"; swatch-color: #FF8A65; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#FFF176"; swatch-color: #FFF176; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#A5D6A7"; swatch-color: #A5D6A7; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#80CBC4"; swatch-color: #80CBC4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#90CAF9"; swatch-color: #90CAF9; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    CursorPaletteSwatch { hex: "#B39DDB"; swatch-color: #B39DDB; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#CE93D8"; swatch-color: #CE93D8; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#BCAAA4"; swatch-color: #BCAAA4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#9E9E9E"; swatch-color: #9E9E9E; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#607D8B"; swatch-color: #607D8B; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                    CursorPaletteSwatch { hex: "#2D2D2F"; swatch-color: #2D2D2F; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
+                }
+            }
+        }
+    }
+}
+
+// Colour theme dropdown: the current theme's dot + name, opening a list of
+// presets with a check on the selected one.
+export component ColorThemePicker inherits Rectangle {
+    in property <[ColorThemeItem]> items;
+    in property <string> current;
+    in property <bool> lang-en;
+    callback selected(string);
+    height: 30px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: picker-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+    background: Theme.bg-elevated;
+
+    picker-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { theme-list.show(); }
+    }
+    // The current theme's row; all rows are stacked and only the match shows.
+    for item in root.items : Rectangle {
+        x: 0; y: 0;
+        width: parent.width - 26px;
+        height: parent.height;
+        visible: item.id == root.current;
+        HorizontalLayout {
+            padding-left: 10px;
+            spacing: 8px;
+            alignment: start;
+            VerticalLayout { alignment: center; ThemeDot { swatch: item.swatch; } }
+            Text {
+                text: root.lang-en ? item.name-en : item.name-zh;
+                color: Theme.text-primary;
+                font-size: 12px * Theme.panel-font;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+    Text {
+        x: parent.width - 24px;
+        width: 18px;
+        height: parent.height;
+        text: "\u{E5CF}"; // expand_more
+        font-family: "Material Icons";
+        font-size: 16px * Theme.panel-font;
+        color: Theme.text-secondary;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    theme-list := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+        height: min(root.items.length * 28px + 10px, 360px);
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000060;
+            ScrollView {
+                content-width: self.visible-width;
+                content-height: list.preferred-height;
+                list := VerticalLayout {
+                    padding: 5px;
+                    spacing: 0;
+                    for item in root.items : Rectangle {
+                        height: 28px;
+                        border-radius: 5px;
+                        background: item.id == root.current
+                            ? Theme.bg-active
+                            : (row-ta.has-hover ? Theme.bg-hover : transparent);
+                        row-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.selected(item.id);
+                                theme-list.close();
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            VerticalLayout { alignment: center; ThemeDot { swatch: item.swatch; } }
+                            Text {
+                                text: root.lang-en ? item.name-en : item.name-zh;
+                                color: Theme.text-primary;
+                                font-size: 12px * Theme.panel-font;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: item.id == root.current ? "\u{E5CA}" : ""; // check
+                                font-family: "Material Icons";
+                                font-size: 15px * Theme.panel-font;
+                                color: Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A macOS-style wallpaper thumbnail: a rounded, clipped preview (passed via
+// @children) with a selection ring + check badge. The label sits below it in
+// the page, not inside.
+export component WallpaperSwatch inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+    width: 120px;
+    height: 74px;
+    border-radius: 8px;
+    border-width: root.selected ? 3px : 1px;
+    border-color: root.selected ? Theme.accent : Theme.border-strong;
+    clip: true;
+    @children
+    if root.selected : Rectangle {
+        x: parent.width - self.width - 5px;
+        y: 5px;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        background: Theme.accent;
+        Text {
+            text: "\u{E5CA}"; // check
+            font-family: "Material Icons"; color: white; font-size: 13px * Theme.panel-font;
+            width: 100%; height: 100%;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

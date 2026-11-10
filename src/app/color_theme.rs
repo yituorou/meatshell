@@ -100,49 +100,49 @@ impl Palette {
     }
 }
 
-/// The original MeatShell dark palette (same values as `theme.slint`).
+/// The default MeatShell dark palette (ChatGPT desktop dark style, same values as `theme.slint`).
 fn default_dark() -> Palette {
     Palette {
-        bg_root: hex(0x1b1d23),
-        bg_panel: hex(0x23262d),
-        bg_panel_alt: hex(0x2a2d35),
-        bg_elevated: hex(0x30333c),
-        bg_hover: hex(0x373a44),
-        bg_active: hex(0x3f4350),
-        tab_active_bg: hex(0x171a20),
-        tab_active_border: hex(0x06070a),
-        border_subtle: hex(0x3a3d46),
-        border_strong: hex(0x4a4e59),
-        text_primary: hex(0xe6e8ee),
-        text_secondary: hex(0xb4b9c4),
-        text_muted: hex(0x9196a3),
-        accent: hex(0x4a90e2),
-        accent_hover: hex(0x5aa0f2),
-        accent_pressed: hex(0x3a80d2),
-        term_bg: hex(0x0e0f13),
+        bg_root: hex(0x212121),
+        bg_panel: hex(0x171717),
+        bg_panel_alt: hex(0x1d1d1d),
+        bg_elevated: hex(0x242424),
+        bg_hover: hex(0x2b2b2b),
+        bg_active: hex(0x333333),
+        tab_active_bg: hex(0x212121),
+        tab_active_border: hex(0x3b82f6),
+        border_subtle: hex(0x2e2e2e),
+        border_strong: hex(0x3e3e3e),
+        text_primary: hex(0xececec),
+        text_secondary: hex(0xb4b4b4),
+        text_muted: hex(0x8e8e8e),
+        accent: hex(0x3b82f6),
+        accent_hover: hex(0x60a5fa),
+        accent_pressed: hex(0x2563eb),
+        term_bg: hex(0x212121),
     }
 }
 
-/// The original MeatShell light palette (same values as `theme.slint`).
+/// The default MeatShell light palette (ChatGPT desktop light style, same values as `theme.slint`).
 fn default_light() -> Palette {
     Palette {
-        bg_root: hex(0xf5f5f7),
-        bg_panel: hex(0xffffff),
-        bg_panel_alt: hex(0xf2f2f7),
-        bg_elevated: hex(0xe8e8ed),
-        bg_hover: hex(0xe0e0e6),
-        bg_active: hex(0xd8d8de),
+        bg_root: hex(0xffffff),
+        bg_panel: hex(0xf9f9f9),
+        bg_panel_alt: hex(0xf3f3f3),
+        bg_elevated: hex(0xefefef),
+        bg_hover: hex(0xe8e8e8),
+        bg_active: hex(0xe0e0e0),
         tab_active_bg: hex(0xffffff),
-        tab_active_border: hex(0xc7c7cc),
-        border_subtle: hex(0xe2e2e8),
-        border_strong: hex(0xc7c7cc),
-        text_primary: hex(0x1d1d1f),
-        text_secondary: hex(0x45454a),
-        text_muted: hex(0x606066),
-        accent: hex(0x0071e3),
-        accent_hover: hex(0x0077ed),
-        accent_pressed: hex(0x006adb),
-        term_bg: hex(0xfafafa),
+        tab_active_border: hex(0x2563eb),
+        border_subtle: hex(0xe8e8e8),
+        border_strong: hex(0xd4d4d4),
+        text_primary: hex(0x0d0d0d),
+        text_secondary: hex(0x4e4e4e),
+        text_muted: hex(0x6b6b6b),
+        accent: hex(0x2563eb),
+        accent_hover: hex(0x1d4ed8),
+        accent_pressed: hex(0x1e40af),
+        term_bg: hex(0xffffff),
     }
 }
 

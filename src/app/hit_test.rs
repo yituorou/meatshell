@@ -97,16 +97,16 @@ pub(super) fn terminal_wheel_hit(
     let mut term_w = term.w;
     let mut term_h = term.h;
 
-    // Zen mode / terminal fullscreen remove the 24px status strip; the
+    // Zen mode / terminal fullscreen remove the 32px status strip; the
     // command bar stays on screen.
     if !panels_hidden(win) {
-        term_y += 24.0;
-        term_h = (term_h - 24.0).max(0.0);
+        term_y += 32.0;
+        term_h = (term_h - 32.0).max(0.0);
     }
 
     let sftp_dock = win.get_sftp_dock().to_string();
-    let sftp_take = if term_state.sftp_collapsed {
-        36.0
+    let sftp_take = if term_state.sftp_collapsed || !term_state.sftp_available {
+        0.0
     } else if sftp_dock == "left" || sftp_dock == "right" {
         side_sftp_width(term_state.sftp_panel_width) + 4.0
     } else {
@@ -125,7 +125,7 @@ pub(super) fn terminal_wheel_hit(
     // for terminal output only. The bar is present in every mode unless the
     // toolbar toggle hid it.
     if !win.get_cmd_bar_hidden() {
-        term_h = (term_h - 34.0).max(0.0);
+        term_h = (term_h - 38.0).max(0.0);
     }
     if !contains_logical(
         LogicalRect {
@@ -327,13 +327,13 @@ pub(super) fn active_sftp_local_pane_rect(win: &AppWindow) -> Option<(String, Lo
         return None;
     }
 
-    // TerminalView starts with a 24px connection-status strip; the SFTP panel
+    // TerminalView starts with a 32px connection-status strip; the SFTP panel
     // is docked inside the region below it.
     let region = LogicalRect {
         x: term.x,
-        y: term.y + 24.0,
+        y: term.y + 32.0,
         w: term.w,
-        h: (term.h - 24.0).max(0.0),
+        h: (term.h - 32.0).max(0.0),
     };
     let dock = win.get_sftp_dock().to_string();
     let vertical = dock == "left" || dock == "right";
@@ -362,10 +362,10 @@ pub(super) fn active_sftp_local_pane_rect(win: &AppWindow) -> Option<(String, Lo
         h: panel_h,
     };
 
-    // SftpPanel: toolbar (62px in the two-row compact layout), content, 18px
+    // SftpPanel: toolbar (66px in the two-row compact layout), content, 18px
     // status bar. The split view hides the tree, so the compact threshold is
     // the bare 560px.
-    let toolbar = if panel.w < 560.0 { 62.0 } else { 34.0 };
+    let toolbar = if panel.w < 560.0 { 66.0 } else { 38.0 };
     let content_h = (panel.h - toolbar - 18.0).max(0.0);
     // Mirrors `local-w` in ui/sftp_panel.slint: the dragged width, else the
     // remembered share, else an even split.

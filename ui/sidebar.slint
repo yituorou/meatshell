@@ -1,449 +1,21 @@
 import { Theme } from "theme.slint";
-import { Sparkline } from "widgets.slint";
+import { DiskInfo, StatsBlock } from "components/business/resource_stat_row.slint";
+import { NetBlock } from "components/business/resource_net_block.slint";
+import { StatusBlock, DiskBlock } from "components/business/resource_status_disk.slint";
 
-// One filesystem row for the disk-usage panel.
-export struct DiskInfo {
-    path: string,
-    detail: string,   // "available/total"
-    percent: float,   // used fraction 0.0..1.0
-}
-
-// --- StatRow ---------------------------------------------------------------
-// A single label / percentage / progress-bar row used for CPU / memory / swap.
-component StatRow inherits HorizontalLayout {
-    in property <string> label;
-    in property <float> percent; // 0.0 .. 1.0
-    in property <string> detail;
-    in property <brush> bar-color: Theme.accent;
-
-    spacing: 6px;
-    padding-left: 8px;
-    padding-right: 8px;
-    height: 22px;
-
-    Text {
-        text: label;
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-        width: 52px;          // fits English "Memory" as well as 中文 "内存"
-        vertical-alignment: center;
-        overflow: elide;
-    }
-
-    // Progress bar — stretches to fill the row, with a floor so it stays usable.
-    Rectangle {
-        background: Theme.bg-root;
-        border-radius: 2px;
-        horizontal-stretch: 2;
-        min-width: 60px;
-
-        Rectangle {
-            x: 0;
-            y: 0;
-            height: parent.height;
-            width: parent.width * clamp(percent, 0.0, 1.0);
-            background: bar-color;
-            border-radius: 2px;
-            animate width { duration: 500ms; easing: ease-out; }
-        }
-
-        Text {
-            x: 6px;
-            text: Math.round(percent * 100) + "%";
-            color: Theme.text-primary;
-            font-size: Theme.fs-xs;
-            vertical-alignment: center;
-            height: parent.height;
-        }
-    }
-
-    // Used/total figure, right-aligned; reserve width so it never gets clipped.
-    Text {
-        text: detail;
-        color: Theme.text-muted;
-        font-size: Theme.fs-xs;
-        horizontal-stretch: 1;
-        min-width: 64px;
-        horizontal-alignment: right;
-        vertical-alignment: center;
-    }
-}
-
-// --- NetGraph --------------------------------------------------------------
-// One network throughput graph: a header row (↑ tx / ↓ rx, plus an optional
-// NIC selector dropdown) over an auto-scaled sparkline.
-component NetGraph inherits VerticalLayout {
-    in property <string> up-text;
-    in property <string> down-text;
-    in property <[float]> history;
-    in property <bool> show-selector: false;
-    in property <[string]> ifaces;
-    in property <string> selected;
-    callback iface-selected(string);
-
-    // Stay at preferred height; without this the inherited VerticalLayout grabs
-    // a stretch share of the sidebar and balloons the sparkline into blank space.
-    vertical-stretch: 0;
-    spacing: 3px;
-
-    HorizontalLayout {
-        spacing: 3px;
-        Text {                              // ↑ upload (green)
-            text: "\u{E5D8}";
-            font-family: "Material Icons";
-            color: Theme.success;
-            font-size: Theme.fs-xs;
-            vertical-alignment: center;
-        }
-        Text {
-            text: root.up-text;
-            color: Theme.text-secondary;
-            font-size: Theme.fs-xs;
-            vertical-alignment: center;
-        }
-        Text {                              // ↓ download (blue)
-            text: "\u{E5DB}";
-            font-family: "Material Icons";
-            color: Theme.accent;
-            font-size: Theme.fs-xs;
-            vertical-alignment: center;
-        }
-        Text {
-            text: root.down-text;
-            color: Theme.text-secondary;
-            font-size: Theme.fs-xs;
-            vertical-alignment: center;
-        }
-        Rectangle { horizontal-stretch: 1; } // spacer pushes selector to the right
-
-        if root.show-selector : Rectangle {
-            width: 64px;
-            height: 18px;
-            border-radius: 3px;
-            background: sel-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
-
-            HorizontalLayout {
-                padding-left: 5px; padding-right: 4px; spacing: 2px;
-                Text {
-                    text: root.selected;
-                    color: Theme.text-primary;
-                    font-size: Theme.fs-xs;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-                Text {
-                    text: "\u{E5CF}";
-                    font-family: "Material Icons";
-                    color: Theme.text-muted;
-                    font-size: 8px;
-                    vertical-alignment: center;
-                }
-            }
-
-            sel-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { popup.show(); }
-            }
-
-            popup := PopupWindow {
-                x: 0; y: parent.height + 2px;
-                width: 96px;
-                Rectangle {
-                    background: Theme.popup-bg;
-                    border-radius: 4px;
-                    border-width: 1px;
-                    border-color: Theme.border-strong;
-                    drop-shadow-blur: 10px;
-                    drop-shadow-color: #00000050;
-                    VerticalLayout {
-                        padding: 4px;
-                        spacing: 1px;
-                        for iface in root.ifaces : Rectangle {
-                            height: 22px;
-                            border-radius: 3px;
-                            background: row-ta.has-hover ? Theme.bg-hover : transparent;
-                            row-ta := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.iface-selected(iface); }
-                            }
-                            Text {
-                                x: 6px;
-                                text: iface;
-                                color: Theme.text-primary;
-                                font-size: Theme.fs-xs;
-                                vertical-alignment: center;
-                                height: parent.height;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Sparkline {
-        height: 48px;
-        values: root.history;
-        line-color: Theme.accent;
-    }
-}
-
-// --- Reusable sections -----------------------------------------------------
-// Each block is self-contained so the sidebar can lay them out vertically (when
-// docked left/right) or horizontally (docked top/bottom) without duplicating
-// their internals (#dock).
-
-// Status header — also the drag handle (a grip TouchArea behind the texts) and
-// home of the collapse button, so collapsing follows the panel to any edge.
-component StatusBlock inherits Rectangle {
-    in property <int> conn-state;
-    in property <string> connection-state;
-    in property <string> conn-host;        // clean IP/host to copy ("" = not clickable) (#192)
-    in property <string> collapse-icon;   // chevron pointing toward the docked edge
-    callback dock-drag-move(length, length);
-    callback dock-drag-end();
-    callback collapse();
-    callback copy-host(string);
-    property <bool> copied;                // shows a brief "Copied" badge after a click
-    TouchArea {
-        mouse-cursor: move;
-        moved => {
-            if (self.pressed) {
-                root.dock-drag-move(self.absolute-position.x + self.mouse-x,
-                                    self.absolute-position.y + self.mouse-y);
-            }
-        }
-        pointer-event(ev) => {
-            if (ev.kind == PointerEventKind.up) { root.dock-drag-end(); }
-            // Grab taken away (popup, deactivation): end the gesture
-            // anyway so no dock preview is stranded.
-            else if (ev.kind == PointerEventKind.cancel) { root.dock-drag-end(); }
-        }
-    }
-    VerticalLayout {
-        spacing: 4px;
-        HorizontalLayout {
-            spacing: 6px;
-            Rectangle {
-                width: 8px; height: 8px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: root.conn-state == 1 ? Theme.success
-                          : root.conn-state == 2 ? Theme.warning
-                          : Theme.text-muted;
-            }
-            Text { text: @tr("Status"); color: Theme.text-primary;
-                   font-size: Theme.fs-md; font-weight: 600;
-                   vertical-alignment: center; }
-            Rectangle { horizontal-stretch: 1; }
-            // Collapse button — sits in front of the drag grip so it takes the click.
-            Rectangle {
-                width: 18px; height: 18px;
-                y: (parent.height - self.height) / 2;
-                border-radius: Theme.radius-sm;
-                background: cl-ta.has-hover ? Theme.bg-hover : transparent;
-                cl-ta := TouchArea { mouse-cursor: pointer; clicked => { root.collapse(); } }
-                Text { text: root.collapse-icon; font-family: "Material Icons";
-                       font-size: 14px; color: Theme.text-secondary;
-                       horizontal-alignment: center; vertical-alignment: center; }
-            }
-        }
-        // IP / host line — click to copy (#192). Only interactive when there's a
-        // real host (skips the "Not connected" placeholder). Hover gives a hand
-        // cursor + subtle highlight; a brief "Copied" badge confirms the copy.
-        HorizontalLayout {
-            spacing: 6px;
-            alignment: start;
-            ip-wrap := Rectangle {
-                width: ip-txt.preferred-width + (root.conn-host != "" ? 10px : 0px);
-                height: ip-txt.preferred-height + 4px;
-                border-radius: Theme.radius-sm;
-                background: (root.conn-host != "" && ip-ta.has-hover) ? Theme.bg-hover : transparent;
-                ip-txt := Text {
-                    x: root.conn-host != "" ? 5px : 0px;
-                    y: (parent.height - self.height) / 2;
-                    text: root.connection-state;
-                    color: Theme.text-secondary; font-size: Theme.fs-sm;
-                }
-                ip-ta := TouchArea {
-                    enabled: root.conn-host != "";
-                    mouse-cursor: pointer;
-                    clicked => {
-                        root.copy-host(root.conn-host);
-                        root.copied = true;
-                        copied-timer.running = true;
-                    }
-                }
-            }
-            if root.copied : Text {
-                text: @tr("Copied");
-                color: Theme.success; font-size: Theme.fs-sm;
-                vertical-alignment: center;
-            }
-        }
-    }
-    // Auto-hide the "Copied" badge a moment after the click.
-    copied-timer := Timer {
-        interval: 1400ms;
-        running: false;
-        triggered => { root.copied = false; self.running = false; }
-    }
-}
-
-// Resource title + Processes button + CPU/Memory/Swap rows.
-component StatsBlock inherits VerticalLayout {
-    in property <string> resource-title;
-    in property <bool> system-info-available;
-    in property <bool> proc-available;
-    in property <float> cpu-percent;
-    in property <float> mem-percent;
-    in property <float> swap-percent;
-    in property <string> mem-detail;
-    in property <string> swap-detail;
-    callback show-system-info();
-    callback show-processes();
-    spacing: 6px;
-    HorizontalLayout {
-        spacing: 6px;
-        Rectangle {
-            height: 20px;
-            horizontal-stretch: 1;
-            border-radius: Theme.radius-sm;
-            background: root.system-info-available && sys-ta.has-hover ? Theme.bg-hover : transparent;
-            sys-ta := TouchArea {
-                enabled: root.system-info-available;
-                mouse-cursor: root.system-info-available ? pointer : default;
-                clicked => { root.show-system-info(); }
-            }
-            Text {
-                x: 4px;
-                width: parent.width - 8px;
-                text: root.resource-title;
-                color: Theme.text-secondary;
-                font-size: Theme.fs-sm;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
-        if root.system-info-available : Rectangle {
-            width: 22px; height: 20px;
-            border-radius: Theme.radius-sm;
-            background: info-ta.has-hover ? Theme.bg-hover : transparent;
-            info-ta := TouchArea { mouse-cursor: pointer; clicked => { root.show-system-info(); } }
-            Text {
-                text: "\u{E88E}";
-                font-family: "Material Icons";
-                color: Theme.text-secondary;
-                font-size: Theme.fs-sm;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-        if root.proc-available : Rectangle {
-            width: 52px; height: 20px;
-            border-radius: Theme.radius-sm;
-            background: proc-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
-            proc-ta := TouchArea { mouse-cursor: pointer; clicked => { root.show-processes(); } }
-            Text { text: @tr("Processes"); color: Theme.text-secondary; font-size: Theme.fs-xs;
-                   horizontal-alignment: center; vertical-alignment: center; }
-        }
-    }
-    StatRow { label: "CPU"; percent: root.cpu-percent; detail: ""; bar-color: Theme.accent; }
-    StatRow { label: @tr("Memory"); percent: root.mem-percent; detail: root.mem-detail; bar-color: Theme.success; }
-    StatRow { label: @tr("Swap"); percent: root.swap-percent; detail: root.swap-detail; bar-color: Theme.warning; }
-}
-
-// Dual network graph (active tab on top, local below).
-component NetBlock inherits VerticalLayout {
-    in property <string> net-top-up;
-    in property <string> net-top-down;
-    in property <[float]> net-top-history;
-    in property <bool> net-show-selector;
-    in property <[string]> net-ifaces;
-    in property <string> net-selected;
-    in property <string> net-bot-up;
-    in property <string> net-bot-down;
-    in property <[float]> net-bot-history;
-    callback select-net-iface(string);
-    spacing: 6px;
-    NetGraph {
-        up-text: root.net-top-up; down-text: root.net-top-down; history: root.net-top-history;
-        show-selector: root.net-show-selector; ifaces: root.net-ifaces; selected: root.net-selected;
-        iface-selected(i) => { root.select-net-iface(i); }
-    }
-    Text { text: @tr("Local"); color: Theme.text-muted; font-size: Theme.fs-xs; }
-    NetGraph { up-text: root.net-bot-up; down-text: root.net-bot-down; history: root.net-bot-history; }
-}
-
-// Disk-usage list with a hover tooltip, self-contained.
-component DiskBlock inherits Rectangle {
-    in property <[DiskInfo]> disks;
-    private property <int>    tip-idx: -1;
-    private property <string> tip-path: "";
-    private property <length> tip-y: tip-idx >= 0
-        ? clamp(flick.y + tip-idx * 21px + flick.content-y + 20px, 2px, root.height - 28px) : 0px;
-    VerticalLayout {
-        spacing: 3px;
-        HorizontalLayout {
-            padding-left: 6px; padding-right: 6px;
-            Text { text: @tr("Path"); color: Theme.text-muted; font-size: Theme.fs-xs; horizontal-stretch: 1; }
-            Text { text: @tr("Free/Total"); color: Theme.text-muted; font-size: Theme.fs-xs; }
-        }
-        flick := Flickable {
-            vertical-stretch: 1;
-            content-width: self.width;
-            content-height: max(self.height, disk-col.preferred-height);
-            disk-col := VerticalLayout {
-                alignment: start;
-                spacing: 1px;
-                for d[i] in root.disks : Rectangle {
-                    height: 20px; border-radius: 2px; clip: true;
-                    ta := TouchArea {
-                        changed has-hover => {
-                            if (self.has-hover) {
-                                root.tip-path = d.path; root.tip-idx = i;
-                            } else if (root.tip-path == d.path) {
-                                root.tip-path = ""; root.tip-idx = -1;
-                            }
-                        }
-                    }
-                    Rectangle {
-                        x: 0; y: 0; height: parent.height;
-                        width: parent.width * clamp(d.percent, 0.0, 1.0);
-                        background: d.percent > 0.9 ? Theme.danger.with-alpha(0.32)
-                                  : d.percent > 0.75 ? Theme.warning.with-alpha(0.30)
-                                  : Theme.accent.with-alpha(0.22);
-                    }
-                    HorizontalLayout {
-                        padding-left: 6px; padding-right: 6px; spacing: 4px;
-                        Text { text: d.path; color: Theme.text-secondary; font-size: Theme.fs-xs;
-                               vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                        Text { text: d.detail; color: Theme.text-muted; font-size: Theme.fs-xs;
-                               vertical-alignment: center; horizontal-alignment: right; }
-                    }
-                }
-            }
-        }
-    }
-    if tip-path != "" : Rectangle {
-        x: 4px; y: tip-y; width: parent.width - 8px; height: 24px; z: 100;
-        background: Theme.bg-elevated; border-radius: Theme.radius-sm;
-        border-width: 1px; border-color: Theme.border-subtle;
-        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px; drop-shadow-color: #00000040;
-        Text { x: 8px; y: (parent.height - self.height) / 2; width: parent.width - 16px;
-               text: tip-path; color: Theme.text-primary; font-size: Theme.fs-xs; overflow: elide; }
-    }
-}
+export { DiskInfo }
 
 // --- Sidebar ---------------------------------------------------------------
-// Left-hand panel showing local machine health, mimicking FinalShell's
-// @tr("Status") column but kept minimal for the v0.1 baseline.
+// Left-hand or right-hand panel showing local or remote machine health.
 export component Sidebar inherits Rectangle {
+    in property <string> status-heading: @tr("Status");
     in property <string> connection-state: @tr("Not connected");
-    in property <bool> system-info-available; // connected Linux session only (#268)
-    in property <string> conn-host;                  // clean IP/host to copy (#192)
-    in property <int> conn-state;                    // 0 gray / 1 green / 2 yellow
+    in property <bool> system-info-available;
+    in property <string> conn-host;
+    in property <int> conn-state;
+    in property <bool> is-local-mode: true;
+    in property <bool> metrics-available: true;
+    in property <bool> lang-en: false;
     in property <string> resource-title: @tr("Local resources");
     in property <float> cpu-percent;
     in property <float> mem-percent;
@@ -460,40 +32,28 @@ export component Sidebar inherits Rectangle {
     in property <string> net-selected;
     in property <bool> net-show-selector;
     in property <[DiskInfo]> disks;
-    in property <bool> proc-available;   // a live remote session → show the process button (#23)
-    // App version string, injected from Rust (env!("CARGO_PKG_VERSION")) so it
-    // always matches Cargo.toml without hand-editing this file.
+    in property <bool> proc-available;
     in property <string> app-version;
     callback select-net-iface(string);
-    callback show-system-info();         // open the system-information window
-    callback show-processes();           // open the process monitor popup (#23)
-    callback copy-host(string);          // copy the connection IP/host to clipboard (#192)
-    // Drag-to-dock: the header strip is a grab handle; coordinates are reported
-    // in window space so the AppWindow can compute the target edge (#dock).
+    callback show-system-info();
+    callback show-processes();
+    callback copy-host(string);
+    callback switch-to-sessions();
     callback dock-drag-move(length /* abs-x */, length /* abs-y */);
     callback dock-drag-end();
     callback toggle-collapse();
-    // When docked top/bottom the panel is short and wide, so the blocks lay out
-    // in a row; left/right keeps the classic vertical stack (#dock).
     in property <bool> lay-horizontal;
-    // Which edge the panel is docked to — drives the collapse chevron direction.
     in property <string> dock-edge;
     property <string> collapse-icon:
-        root.dock-edge == "right"  ? "\u{E5CC}"   // chevron_right
-      : root.dock-edge == "top"    ? "\u{E5CE}"   // expand_less
-      : root.dock-edge == "bottom" ? "\u{E5CF}"   // expand_more
-      : "\u{E5CB}";                               // chevron_left (left, default)
+        root.dock-edge == "right"  ? "chevron-right"
+      : root.dock-edge == "top"    ? "chevron-up"
+      : root.dock-edge == "bottom" ? "chevron-down"
+      : "chevron-left";
 
-    width: 220px;
+    width: 280px;
     background: Theme.bg-panel;
     border-width: 0;
 
-    // Drag from any empty area of the panel to re-dock it (the status header is
-    // a small target). Sits behind the content; interactive widgets (stat bars,
-    // net selector, disk rows) are in front and capture their own events, so
-    // this only fires on the panel's empty space (#dock). The move cursor shows
-    // only while dragging: hovering empty space keeps the normal arrow, like the
-    // other panels, and the header keeps the move cursor as the visible handle (#360).
     dock-bg := TouchArea {
         mouse-cursor: self.pressed ? move : default;
         moved => {
@@ -503,116 +63,150 @@ export component Sidebar inherits Rectangle {
             }
         }
         pointer-event(ev) => {
-            if (ev.kind == PointerEventKind.up) { root.dock-drag-end(); }
-            // Grab taken away (popup, deactivation): end the gesture
-            // anyway so no dock preview is stranded.
-            else if (ev.kind == PointerEventKind.cancel) { root.dock-drag-end(); }
+            if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+                root.dock-drag-end();
+            }
         }
     }
 
-    // --- Vertical stack (docked left/right) --------------------------------
+    // --- Vertical stack (docked left/right) — card-based dashboard ---------
     if !root.lay-horizontal : Rectangle {
-        x: 10px;
-        y: 10px;
-        width: parent.width - 20px;
-        height: parent.height - 20px;
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
         background: Theme.bg-panel;
-        border-radius: Theme.radius-md;
-        border-width: 1px;
-        border-color: Theme.border-subtle;
         clip: true;
 
         VerticalLayout {
-            padding: 10px;
-            spacing: 10px;
+            padding: 10px * Theme.ui-scale;
+            spacing: 10px * Theme.ui-scale;
+
             StatusBlock {
                 conn-state: root.conn-state;
+                status-heading: root.status-heading;
                 connection-state: root.connection-state;
                 conn-host: root.conn-host;
+                is-local-mode: root.is-local-mode;
+                lang-en: root.lang-en;
+                system-info-available: root.system-info-available;
+                proc-available: root.proc-available;
                 collapse-icon: root.collapse-icon;
                 dock-drag-move(x, y) => { root.dock-drag-move(x, y); }
                 dock-drag-end() => { root.dock-drag-end(); }
                 collapse() => { root.toggle-collapse(); }
+                switch-to-sessions() => { root.switch-to-sessions(); }
+                show-system-info() => { root.show-system-info(); }
+                show-processes() => { root.show-processes(); }
                 copy-host(h) => { root.copy-host(h); }
             }
-            Rectangle { height: 1px; background: Theme.border-subtle; }
+
             StatsBlock {
                 resource-title: root.resource-title;
                 system-info-available: root.system-info-available;
                 proc-available: root.proc-available;
-                cpu-percent: root.cpu-percent; mem-percent: root.mem-percent; swap-percent: root.swap-percent;
-                mem-detail: root.mem-detail; swap-detail: root.swap-detail;
+                metrics-available: root.metrics-available;
+                lang-en: root.lang-en;
+                cpu-percent: root.cpu-percent;
+                mem-percent: root.mem-percent;
+                swap-percent: root.swap-percent;
+                mem-detail: root.mem-detail;
+                swap-detail: root.swap-detail;
                 show-system-info() => { root.show-system-info(); }
                 show-processes() => { root.show-processes(); }
             }
-            Rectangle { height: 1px; background: Theme.border-subtle; }
+
             NetBlock {
-                net-top-up: root.net-top-up; net-top-down: root.net-top-down; net-top-history: root.net-top-history;
-                net-show-selector: root.net-show-selector; net-ifaces: root.net-ifaces; net-selected: root.net-selected;
-                net-bot-up: root.net-bot-up; net-bot-down: root.net-bot-down; net-bot-history: root.net-bot-history;
+                is-local-mode: root.is-local-mode;
+                lang-en: root.lang-en;
+                net-top-up: root.net-top-up;
+                net-top-down: root.net-top-down;
+                net-top-history: root.net-top-history;
+                net-show-selector: root.net-show-selector;
+                net-ifaces: root.net-ifaces;
+                net-selected: root.net-selected;
+                net-bot-up: root.net-bot-up;
+                net-bot-down: root.net-bot-down;
+                net-bot-history: root.net-bot-history;
                 select-net-iface(i) => { root.select-net-iface(i); }
             }
-            Rectangle { height: 1px; background: Theme.border-subtle; }
-            DiskBlock { vertical-stretch: 1; disks: root.disks; }
-            Text {
-                text: "meatshell v" + root.app-version;
-                color: Theme.text-muted; font-size: Theme.fs-xs; horizontal-alignment: center;
+
+            DiskBlock {
+                vertical-stretch: 1;
+                disks: root.disks;
+                lang-en: root.lang-en;
             }
         }
     }
 
     // --- Horizontal row (docked top/bottom) --------------------------------
     if root.lay-horizontal : Rectangle {
-        x: 10px;
-        y: 10px;
-        width: parent.width - 20px;
-        height: parent.height - 20px;
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
         background: Theme.bg-panel;
-        border-radius: Theme.radius-md;
-        border-width: 1px;
-        border-color: Theme.border-subtle;
         clip: true;
 
         HorizontalLayout {
             padding: 10px;
             spacing: 10px;
-            // Status + server-resources share one container, stacked vertically:
-            // the status sits as a compact two-row header *above* the CPU/Mem/Swap,
-            // both left-aligned. `alignment: start` keeps them at the top instead of
-            // stretching to fill the panel height.
             VerticalLayout {
                 alignment: start;
                 spacing: 8px;
-                min-width: 200px;
+                min-width: 220px;
                 StatusBlock {
                     conn-state: root.conn-state;
+                    status-heading: root.status-heading;
                     connection-state: root.connection-state;
+                    conn-host: root.conn-host;
+                    is-local-mode: root.is-local-mode;
+                    lang-en: root.lang-en;
+                    system-info-available: root.system-info-available;
+                    proc-available: root.proc-available;
                     collapse-icon: root.collapse-icon;
                     dock-drag-move(x, y) => { root.dock-drag-move(x, y); }
                     dock-drag-end() => { root.dock-drag-end(); }
                     collapse() => { root.toggle-collapse(); }
+                    switch-to-sessions() => { root.switch-to-sessions(); }
+                    show-system-info() => { root.show-system-info(); }
+                    show-processes() => { root.show-processes(); }
                 }
                 StatsBlock {
                     resource-title: root.resource-title;
                     system-info-available: root.system-info-available;
                     proc-available: root.proc-available;
-                    cpu-percent: root.cpu-percent; mem-percent: root.mem-percent; swap-percent: root.swap-percent;
-                    mem-detail: root.mem-detail; swap-detail: root.swap-detail;
+                    metrics-available: root.metrics-available;
+                    lang-en: root.lang-en;
+                    cpu-percent: root.cpu-percent;
+                    mem-percent: root.mem-percent;
+                    swap-percent: root.swap-percent;
+                    mem-detail: root.mem-detail;
+                    swap-detail: root.swap-detail;
                     show-system-info() => { root.show-system-info(); }
                     show-processes() => { root.show-processes(); }
                 }
             }
-            Rectangle { width: 1px; background: Theme.border-subtle; }
             NetBlock {
                 min-width: 220px;
-                net-top-up: root.net-top-up; net-top-down: root.net-top-down; net-top-history: root.net-top-history;
-                net-show-selector: root.net-show-selector; net-ifaces: root.net-ifaces; net-selected: root.net-selected;
-                net-bot-up: root.net-bot-up; net-bot-down: root.net-bot-down; net-bot-history: root.net-bot-history;
+                is-local-mode: root.is-local-mode;
+                lang-en: root.lang-en;
+                net-top-up: root.net-top-up;
+                net-top-down: root.net-top-down;
+                net-top-history: root.net-top-history;
+                net-show-selector: root.net-show-selector;
+                net-ifaces: root.net-ifaces;
+                net-selected: root.net-selected;
+                net-bot-up: root.net-bot-up;
+                net-bot-down: root.net-bot-down;
+                net-bot-history: root.net-bot-history;
                 select-net-iface(i) => { root.select-net-iface(i); }
             }
-            Rectangle { width: 1px; background: Theme.border-subtle; }
-            DiskBlock { horizontal-stretch: 1; disks: root.disks; }
+            DiskBlock {
+                horizontal-stretch: 1;
+                disks: root.disks;
+                lang-en: root.lang-en;
+            }
         }
     }
-
 }

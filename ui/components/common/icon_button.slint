@@ -1,0 +1,90 @@
+import { Theme, TooltipState } from "../../theme.slint";
+import { OutlineIcon } from "outline_icon.slint";
+
+// --- IconButton ------------------------------------------------------------
+// A small square action button that renders a ChatGPT-style outlined vector
+// icon (when recognized by OutlineIcon) or text glyph, plus a floating
+// ChatGPT-style dark pill tooltip on hover.
+export component IconButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> tooltip;
+    in property <bool> tooltip-right: false;
+    in property <bool> tooltip-left: false;
+    in property <bool> tooltip-top: false;
+    // Empty = default UI font (text glyphs like "+" / "×"); set to
+    // "Material Icons" to render Material codepoints (#multi-window).
+    in property <string> font-family;
+    in property <length> size: 28px;
+    in property <length> icon-size: root.font-family == "Material Icons" ? 17px * Theme.ui-scale : Theme.fs-lg;
+    in property <brush> fg: Theme.text-secondary;
+    in property <brush> fg-hover: Theme.text-primary;
+    callback clicked();
+
+    width: size;
+    height: size;
+    border-radius: 7px;
+    background: touch.has-hover ? Theme.bg-hover : transparent;
+    animate background { duration: 120ms; }
+
+    if root.font-family == "Material Icons" || root.glyph == "+" || root.glyph == "×" : OutlineIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: root.glyph;
+        icon-size: 16px * Theme.ui-scale;
+        color: touch.has-hover ? root.fg-hover : root.fg;
+    }
+
+    if root.font-family != "Material Icons" && root.glyph != "+" && root.glyph != "×" : Text {
+        text: glyph;
+        font-family: root.font-family;
+        color: touch.has-hover ? fg-hover : fg;
+        font-size: root.icon-size;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tooltip);
+            root.clicked();
+        }
+        changed has-hover => {
+            if (self.has-hover && root.tooltip != "") {
+                TooltipState.show(root.tooltip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tooltip);
+            }
+        }
+    }
+
+    // ChatGPT-style floating tooltip pill (local fallback when TooltipState is not active)
+    if touch.has-hover && root.tooltip != "" && TooltipState.text == "" : Rectangle {
+        z: 300;
+        y: root.tooltip-right || root.tooltip-left
+            ? (parent.height - self.height) / 2
+            : (root.tooltip-top ? -self.height - 5px : parent.height + 5px);
+        x: root.tooltip-right
+            ? parent.width + 8px
+            : (root.tooltip-left
+                ? -self.width - 6px
+                : (root.x > 160px ? parent.width - self.width
+                   : (root.x < 36px ? 0px : (parent.width - self.width) / 2)));
+        width: tip-lbl.preferred-width + 14px;
+        height: 24px;
+        border-radius: 6px;
+        background: Theme.dark ? #2f2f2f : #171717;
+        border-width: Theme.dark ? 1px : 0px;
+        border-color: #444444;
+        tip-lbl := Text {
+            text: root.tooltip;
+            color: #ffffff;
+            font-size: 11.5px * Theme.ui-scale;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+}

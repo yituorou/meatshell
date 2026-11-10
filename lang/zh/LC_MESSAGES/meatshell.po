@@ -855,3 +855,363 @@ msgstr "停止记录会话日志"
 
 msgid "Start session log..."
 msgstr "开始记录会话日志..."
+
+msgid "Files"
+msgstr "文件"
+
+msgid "Tunnels"
+msgstr "端口转发"
+
+msgid "Local overview"
+msgstr "本机概览"
+
+msgid "Connection closed"
+msgstr "连接已关闭"
+
+msgid "Local terminals"
+msgstr "本机终端"
+
+msgid "Default group"
+msgstr "默认分组"
+
+msgid "Start"
+msgstr "启动"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "No tunnels"
+msgstr "暂无端口转发规则"
+
+msgid "Save to this SSH session"
+msgstr "保存到此 SSH 会话"
+
+msgid "Start automatically when connecting"
+msgstr "连接时自动启动"
+
+msgid "Local listen address"
+msgstr "本地监听地址"
+
+msgid "Server listen address"
+msgstr "远端监听地址"
+
+msgid "Local target host"
+msgstr "本地目标主机"
+
+msgid "Server target host"
+msgstr "远端目标主机"
+
+msgid "Merge panes"
+msgstr "合并分屏"
+
+msgid "No match"
+msgstr "无匹配项"
+
+msgid "Paste and go"
+msgstr "粘贴并跳转"
+
+msgid "Replace"
+msgstr "替换"
+
+msgid "Replace all"
+msgstr "全部替换"
+
+msgid "SFTP not available"
+msgstr "当前会话不支持 SFTP"
+
+msgid "System info"
+msgstr "系统信息"
+
+msgid "Listening Ports"
+msgstr "监听端口"
+
+msgid "No listening ports reported"
+msgstr "暂无监听端口信息"
+
+msgid "Proto"
+msgstr "协议"
+
+msgid "Local Address"
+msgstr "本地地址"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Process"
+msgstr "进程"
+
+msgid "Top CPU Processes"
+msgstr "高 CPU 占用进程"
+
+msgid "Top Memory Processes"
+msgstr "高内存占用进程"
+
+msgid "Disk Usage"
+msgstr "磁盘占用"
+
+msgid "No disk data"
+msgstr "暂无磁盘数据"
+
+msgid "Network Interfaces"
+msgstr "网络接口"
+
+msgid "Interface"
+msgstr "网卡"
+
+msgid "Total ↓"
+msgstr "总下行 ↓"
+
+msgid "Total ↑"
+msgstr "总上行 ↑"
+
+msgid "↓ Rate"
+msgstr "下行速率 ↓"
+
+msgid "↑ Rate"
+msgstr "上行速率 ↑"
+
+msgid "No process data"
+msgstr "暂无进程数据"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Paused"
+msgstr "已暂停"
+
+msgid "1s"
+msgstr "1秒"
+
+msgid "2s"
+msgstr "2秒"
+
+msgid "5s"
+msgstr "5秒"
+
+msgid "General & Appearance"
+msgstr "通用与外观"
+
+msgid "Files & SFTP"
+msgstr "文件与传输"
+
+msgid "Connection & Data"
+msgstr "连接与数据"
+
+msgid "AI & Agents"
+msgstr "AI 与智能体"
+
+msgid "Software Update"
+msgstr "软件更新"
+
+msgid "Theme Mode"
+msgstr "外观模式"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "Language"
+msgstr "界面语言"
+
+msgid "Download Directory"
+msgstr "默认下载保存目录"
+
+msgid "Data Import & Export"
+msgstr "连接导入与导出"
+
+msgid "Enter folder name..."
+msgstr "输入新建文件夹名称..."
+
+msgid "Enter file name..."
+msgstr "输入新建文件名称..."
+
+msgid "Enter group name..."
+msgstr "输入新分组名称..."
+
+msgid "Bookmark current folder"
+msgstr "收藏当前目录"
+
+msgid "Bookmarked current folder (click to remove)"
+msgstr "已收藏当前目录（点击取消）"
+
+msgid "Bookmarks & recent folders"
+msgstr "收藏夹与常用目录"
+
+msgid "Cancel transfer"
+msgstr "取消传输"
+
+msgid "Change..."
+msgstr "更改..."
+
+msgid "Clear completed"
+msgstr "清理已完成"
+
+msgid "Collapse panel"
+msgstr "收起面板"
+
+msgid "Details"
+msgstr "查看详情"
+
+msgid "Dismiss"
+msgstr "关闭提示"
+
+msgid "Download checked items"
+msgstr "下载选中项"
+
+msgid "Download save directory:"
+msgstr "默认下载保存目录："
+
+msgid "Downloading:"
+msgstr "正在下载："
+
+msgid "Expand panel"
+msgstr "展开面板"
+
+msgid "Filter files..."
+msgstr "按名称或类型过滤..."
+
+msgid "Filter..."
+msgstr "过滤名称/类型..."
+
+msgid "Local bookmarks & common folders"
+msgstr "本机收藏夹与常用目录"
+
+msgid "No bookmarked folders yet"
+msgstr "暂无收藏目录，可点击上方按钮收藏当前路径"
+
+msgid "No transfer tasks"
+msgstr "暂无传输任务"
+
+msgid "Open download folder in system file manager"
+msgstr "在系统文件管理器中打开下载目录"
+
+msgid "Parent directory"
+msgstr "返回上级目录"
+
+msgid "Parent directory (..)"
+msgstr "返回上级目录 (..)"
+
+msgid "Paste path and go"
+msgstr "粘贴路径并跳转"
+
+msgid "Refresh local folder"
+msgstr "刷新本机目录"
+
+msgid "Remote"
+msgstr "远程"
+
+msgid "Remove bookmark"
+msgstr "取消收藏"
+
+msgid "Remove finished transfer records"
+msgstr "清理已完成的传输记录"
+
+msgid "Select default download folder"
+msgstr "选择默认下载保存目录"
+
+msgid "Toggle directory tree"
+msgstr "显示/隐藏目录树"
+
+msgid "Toggle local/remote split view"
+msgstr "切换本机/远程双栏视图"
+
+msgid "Total tasks:"
+msgstr "总任务："
+
+msgid "Upload files to current directory"
+msgstr "上传文件到当前目录"
+
+msgid "Upload folder to current directory"
+msgstr "上传文件夹到当前目录"
+
+msgid "Upload selected local files to remote directory"
+msgstr "上传选中的本机文件到远程目录"
+
+msgid "Uploading:"
+msgstr "正在上传："
+
+msgid "Quick subfolder autocomplete"
+msgstr "当前目录子文件夹快捷补全"
+
+msgid "Current directory subfolders (click to complete)"
+msgstr "当前目录子文件夹（点击快速补全进入）"
+
+msgid "Refresh remote folder"
+msgstr "刷新远程目录"
+
+msgid "Show hidden files (.*)"
+msgstr "显示隐藏文件夹与文件 (.*)"
+
+msgid "Hide hidden files (.*)"
+msgstr "隐藏以 . 开头的隐藏文件夹与文件"
+
+msgid "Sort by name (asc/desc)"
+msgstr "按名称排序（正序/倒序切换）"
+
+msgid "Sort by size (asc/desc)"
+msgstr "按大小排序（正序/倒序切换）"
+
+msgid "Sort by type (asc/desc)"
+msgstr "按类型排序（正序/倒序切换）"
+
+msgid "Sort by modified time (asc/desc)"
+msgstr "按修改时间排序（正序/倒序切换）"
+
+msgid "Sort by permissions (asc/desc)"
+msgstr "按权限排序（正序/倒序切换）"
+
+msgid "Sort by owner (asc/desc)"
+msgstr "按用户排序（正序/倒序切换）"
+
+msgid "Sort by group (asc/desc)"
+msgstr "按用户组排序（正序/倒序切换）"
+
+msgid "SFTP file browser"
+msgstr "SFTP 文件管理"
+
+msgid "SSH port forwarding (-L / -R / -D)"
+msgstr "SSH 端口转发 (-L / -R / -D)"
+
+msgid "View file upload & download tasks"
+msgstr "查看文件上传与下载记录"
+
+msgid "Dock SFTP panel to bottom"
+msgstr "切换 SFTP 面板到底部"
+
+msgid "Dock SFTP panel to top"
+msgstr "切换 SFTP 面板到顶部"
+
+msgid "Dock SFTP panel to left"
+msgstr "切换 SFTP 面板到左侧"
+
+msgid "Dock SFTP panel to right"
+msgstr "切换 SFTP 面板到右侧"
+
+msgid "Fullscreen SFTP panel"
+msgstr "全屏展开 SFTP 文件面板"
+
+msgid "Restore SFTP panel size"
+msgstr "退出 SFTP 全屏并恢复尺寸"
+
+msgid "Click to copy host IP"
+msgstr "点击复制服务器 IP 地址"
+
+msgid "Find in terminal"
+msgstr "在终端输出中查找"
+
+msgid "Toggle resource monitor sidebar"
+msgstr "展开/收起服务器资源监控"
+
+msgid "View running processes"
+msgstr "查看服务器运行进程"
+
+msgid "View server hardware & OS details"
+msgstr "查看服务器硬件与系统详情"
+
+msgid "Toggle SFTP file manager panel"
+msgstr "展开/收起 SFTP 文件管理面板"
+
+msgid "Switch monitored network interface"
+msgstr "切换监控网卡接口"

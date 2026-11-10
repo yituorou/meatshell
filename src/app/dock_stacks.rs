@@ -31,8 +31,8 @@ pub const MIN_THICK: f32 = 120.0;
 /// the terminal never fully disappears even with opposite edges both maxed.
 const MAX_THICK_FRAC: f32 = 0.38;
 /// Outer band an edge reserves for the collapsed-panel ToolStrip (a folded
-/// panel still shows its 36px icon strip; stacked panels live inside it).
-pub const STRIP: f32 = 36.0;
+/// panel still shows its 44px icon strip; stacked panels live inside it).
+pub const STRIP: f32 = 44.0;
 
 /// Absolute rectangle in dock-area logical px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -729,16 +729,16 @@ mod tests {
         s.dock_to("left", "sidebar");
         s.dock_to("left", "quick");
         // Left edge stacks behind its band; the right edge is strip-only
-        // (folded panels, nothing expanded) yet still takes its 36px.
+        // (folded panels, nothing expanded) yet still takes its 44px.
         let strip = |e: &str| e == "left" || e == "right";
         let g = s.compute_geom(&extent_220, &strip, 800.0, 600.0);
         assert_eq!(g.panels.len(), 2);
-        assert_eq!(g.panels[0].rect.x, 36.0);
+        assert_eq!(g.panels[0].rect.x, 44.0);
         // The band runs ALONG the edge: split axis and ratios untouched.
         assert_eq!(g.panels[0].rect.h, 300.0);
         assert_eq!(g.panels[1].rect.y, 300.0);
-        assert_eq!(g.central.x, 256.0);
-        assert_eq!(g.central.w, 800.0 - 256.0 - 36.0);
+        assert_eq!(g.central.x, 264.0);
+        assert_eq!(g.central.w, 800.0 - 264.0 - 44.0);
     }
 
     fn expanded_left_sidebar_welcome(k: &str) -> Option<&'static str> {

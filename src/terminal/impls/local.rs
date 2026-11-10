@@ -218,6 +218,8 @@ async fn run_local(
         }
     }
     cmd.env("TERM", session.effective_term_type());
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("CLICOLOR", "1");
 
     let child = pair
         .slave

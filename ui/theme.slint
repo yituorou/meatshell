@@ -39,22 +39,22 @@ export global Theme {
 
     // --- Colour theme presets (Settings › Wallpaper & theme) --------------
     in-out property <ThemePalette> palette-dark: {
-        bg-root: #1b1d23, bg-panel: #23262d, bg-panel-alt: #2a2d35,
-        bg-elevated: #30333c, bg-hover: #373a44, bg-active: #3f4350,
-        tab-active-bg: #171a20, tab-active-border: #06070a,
-        border-subtle: #3a3d46, border-strong: #4a4e59,
-        text-primary: #e6e8ee, text-secondary: #b4b9c4, text-muted: #9196a3,
-        accent: #4a90e2, accent-hover: #5aa0f2, accent-pressed: #3a80d2,
-        term-bg: #0e0f13,
+        bg-root: #212121, bg-panel: #171717, bg-panel-alt: #1d1d1d,
+        bg-elevated: #242424, bg-hover: #2b2b2b, bg-active: #333333,
+        tab-active-bg: #212121, tab-active-border: #3b82f6,
+        border-subtle: #2e2e2e, border-strong: #3e3e3e,
+        text-primary: #ececec, text-secondary: #b4b4b4, text-muted: #8e8e8e,
+        accent: #3b82f6, accent-hover: #60a5fa, accent-pressed: #2563eb,
+        term-bg: #212121,
     };
     in-out property <ThemePalette> palette-light: {
-        bg-root: #f5f5f7, bg-panel: #ffffff, bg-panel-alt: #f2f2f7,
-        bg-elevated: #e8e8ed, bg-hover: #e0e0e6, bg-active: #d8d8de,
-        tab-active-bg: #ffffff, tab-active-border: #c7c7cc,
-        border-subtle: #e2e2e8, border-strong: #c7c7cc,
-        text-primary: #1d1d1f, text-secondary: #45454a, text-muted: #606066,
-        accent: #0071e3, accent-hover: #0077ed, accent-pressed: #006adb,
-        term-bg: #fafafa,
+        bg-root: #ffffff, bg-panel: #f9f9f9, bg-panel-alt: #f3f3f3,
+        bg-elevated: #efefef, bg-hover: #e8e8e8, bg-active: #e0e0e0,
+        tab-active-bg: #ffffff, tab-active-border: #2563eb,
+        border-subtle: #e8e8e8, border-strong: #d4d4d4,
+        text-primary: #0d0d0d, text-secondary: #4e4e4e, text-muted: #6b6b6b,
+        accent: #2563eb, accent-hover: #1d4ed8, accent-pressed: #1e40af,
+        term-bg: #ffffff,
     };
     property <ThemePalette> p: root.dark ? root.palette-dark : root.palette-light;
     // Immersive colours: with a wallpaper, take accent + surface tint from the
@@ -138,16 +138,78 @@ export global Theme {
     out property <brush> accent-hover:   root.immersive-active ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
     out property <brush> accent-pressed: root.immersive-active ? root.wp-accent.darker(0.12)   : root.p.accent-pressed;
 
-    out property <brush> success: dark ? #4ec9b0 : #34c759;
-    out property <brush> warning: dark ? #e2a84a : #ff9f0a;
-    out property <brush> danger:  dark ? #e25c5c : #ff3b30;
+    out property <brush> success: dark ? #3fb950 : #16a34a;
+    out property <brush> warning: dark ? #d29922 : #d97706;
+    out property <brush> danger:  dark ? #f85149 : #dc2626;
 
     // Terminal uses its own background so it stays readable regardless of
     // what the shell / remote app outputs via ANSI colour codes. With a
     // wallpaper it frosts (kept neutral, not tinted) so text stays legible.
-    property <color> base-term-bg: root.p.term-bg;
-    out property <brush> term-bg: root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg;
-    out property <brush> term-fg: dark ? #d4d4d4 : #2d2d2f;
+    // When an explicit iTerm2 / custom terminal color scheme is active, its
+    // background, foreground, cursor, and selection colors take precedence.
+    in-out property <bool> term-scheme-active: false;
+    in-out property <bool> term-scheme-is-dark: true;
+    in-out property <color> term-scheme-bg: #212121;
+    in-out property <color> term-scheme-fg: #d4d4d4;
+    in-out property <color> term-scheme-cursor: #d4d4d4;
+    in-out property <color> term-scheme-cursor-text: #212121;
+    in-out property <color> term-scheme-selection: #3b82f6;
+    in-out property <color> term-scheme-selection-text: #ffffff;
+    in-out property <color> term-scheme-accent: #3b82f6;
+
+    out property <brush> term-bg: root.term-scheme-active
+        ? root.term-scheme-bg
+        : (root.wallpaper-active ? root.p.term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : root.p.term-bg);
+    out property <color> term-fg: root.term-scheme-active ? root.term-scheme-fg : (dark ? #d4d4d4 : #2d2d2f);
+    out property <color> term-cursor: root.term-scheme-active ? root.term-scheme-cursor : root.term-fg;
+    out property <color> term-cursor-text: root.term-scheme-active
+        ? root.term-scheme-cursor-text
+        : (dark ? #212121 : #fafafa);
+    out property <color> term-selection: root.term-scheme-active
+        ? root.term-scheme-selection.with-alpha(0.45)
+        : (root.immersive-active ? root.wp-accent.with-alpha(0.40) : root.p.accent.with-alpha(0.40));
+    out property <color> term-selection-text: root.term-scheme-active
+        ? root.term-scheme-selection-text
+        : root.term-fg;
+
+    // Terminal-scoped chrome (status strip, command bar, find bar, scrollbar)
+    // adapts to the active iTerm2 color scheme when one is selected.
+    out property <brush> term-bar-bg: root.term-scheme-active
+        ? (root.term-scheme-is-dark ? root.term-scheme-bg.darker(0.12) : root.term-scheme-bg.darker(0.04))
+        : root.bg-panel-alt;
+    out property <brush> term-bar-elevated: root.term-scheme-active
+        ? (root.term-scheme-is-dark ? root.term-scheme-bg.brighter(0.10) : root.term-scheme-bg.darker(0.08))
+        : root.bg-elevated;
+    out property <brush> term-bar-hover: root.term-scheme-active
+        ? (root.term-scheme-is-dark ? root.term-scheme-bg.brighter(0.18) : root.term-scheme-bg.darker(0.13))
+        : root.bg-hover;
+    out property <brush> term-bar-active: root.term-scheme-active
+        ? (root.term-scheme-is-dark ? root.term-scheme-bg.brighter(0.24) : root.term-scheme-bg.darker(0.18))
+        : root.bg-active;
+    out property <brush> term-input-bg: root.term-scheme-active
+        ? (root.term-scheme-is-dark ? root.term-scheme-bg.darker(0.20) : root.term-scheme-bg.brighter(0.06))
+        : root.bg-root;
+    out property <brush> term-border-subtle: root.term-scheme-active
+        ? root.term-scheme-fg.with-alpha(0.14)
+        : root.border-subtle;
+    out property <brush> term-border-strong: root.term-scheme-active
+        ? root.term-scheme-fg.with-alpha(0.28)
+        : root.border-strong;
+    out property <brush> term-text-primary: root.term-scheme-active
+        ? root.term-scheme-fg
+        : root.text-primary;
+    out property <brush> term-text-secondary: root.term-scheme-active
+        ? root.term-scheme-fg.with-alpha(0.75)
+        : root.text-secondary;
+    out property <brush> term-text-muted: root.term-scheme-active
+        ? root.term-scheme-fg.with-alpha(0.50)
+        : root.text-muted;
+    out property <brush> term-accent: root.term-scheme-active
+        ? root.term-scheme-accent
+        : root.accent;
+    out property <brush> term-accent-hover: root.term-scheme-active
+        ? root.term-scheme-accent.brighter(0.12)
+        : root.accent-hover;
 
     // True on macOS (set by Rust). App shortcuts use Cmd (⌘) here instead of
     // Ctrl, so the physical Ctrl key stays free for the shell (^C/^X…) (#158).
@@ -167,11 +229,11 @@ export global Theme {
     in-out property <float> panel-font: 1.0;
 
     // --- Typography --------------------------------------------------------
-    out property <length> fs-xs: 11px * root.ui-scale;
-    out property <length> fs-sm: 12px * root.ui-scale;
-    out property <length> fs-md: 13px * root.ui-scale;
-    out property <length> fs-lg: 15px * root.ui-scale;
-    out property <length> fs-xl: 18px * root.ui-scale;
+    out property <length> fs-xs: 12px * root.ui-scale;
+    out property <length> fs-sm: 13px * root.ui-scale;
+    out property <length> fs-md: 14px * root.ui-scale;
+    out property <length> fs-lg: 16px * root.ui-scale;
+    out property <length> fs-xl: 22px * root.ui-scale;
 
     // Embedded glyph-complete monospace (Cascadia Mono under a unique name, #114).
     out property <string> font-mono: "Meatshell Mono";
@@ -179,8 +241,8 @@ export global Theme {
     // UI (sans) font for editable inputs. The embedded mono font has no CJK
     // glyphs and native TextInput doesn't glyph-fallback like Text does, so
     // typing Chinese into a bare TextInput renders tofu. Rust sets this to a
-    // CJK-capable system font on startup (empty = platform default).
-    in-out property <string> ui-font-family: "";
+    // CJK-capable system font on startup (PingFang SC on macOS, Microsoft YaHei on Windows).
+    in-out property <string> ui-font-family: "PingFang SC, Microsoft YaHei";
 
     // Terminal font — user-configurable via Interface settings, set by Rust
     // from the config on startup. cell size in terminal_view derives from these.
@@ -189,12 +251,37 @@ export global Theme {
     in-out property <bool> term-font-bold: false;
 
     // --- Geometry ----------------------------------------------------------
-    out property <length> radius-sm: 4px * root.ui-scale;
-    out property <length> radius-md: 6px * root.ui-scale;
-    out property <length> radius-lg: 10px * root.ui-scale;
+    out property <length> radius-sm: 6px * root.ui-scale;
+    out property <length> radius-md: 8px * root.ui-scale;
+    out property <length> radius-lg: 12px * root.ui-scale;
 
     out property <length> gap-xs: 4px * root.ui-scale;
     out property <length> gap-sm: 8px * root.ui-scale;
     out property <length> gap-md: 12px * root.ui-scale;
     out property <length> gap-lg: 16px * root.ui-scale;
+}
+
+// Root-level floating tooltip state so tooltips inside toolbars, headers, or
+// clipped containers are rendered on top of the entire window and never
+// occluded by sibling rows or panes below them.
+export global TooltipState {
+    in-out property <string> text: "";
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    in-out property <length> anchor-w: 0px;
+    in-out property <length> anchor-h: 0px;
+
+    public function show(t: string, ax: length, ay: length, aw: length, ah: length) {
+        self.text = t;
+        self.anchor-x = ax;
+        self.anchor-y = ay;
+        self.anchor-w = aw;
+        self.anchor-h = ah;
+    }
+
+    public function hide(t: string) {
+        if (self.text == t) {
+            self.text = "";
+        }
+    }
 }

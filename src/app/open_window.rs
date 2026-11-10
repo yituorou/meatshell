@@ -186,6 +186,7 @@ pub(super) fn open_window(
     let sessions_model: Rc<VecModel<SessionInfo>> = Rc::new(VecModel::default());
     window.set_sessions(ModelRc::from(sessions_model.clone()));
     sync_sessions_to_model(&store.borrow(), &sessions_model);
+    window.set_recent_sessions(recent_sessions_model(&store.borrow()));
     window.set_wsl_profiles(wsl_profile_model(&store.borrow()));
     window.set_launch_shells(launch_shell_model(&store.borrow()));
     super::agents::wire_agent_launchers(&ctx, &sessions_model);
@@ -238,11 +239,14 @@ pub(super) fn open_window(
         }
         for e in &saved {
             for s in &e.slots {
-                let edge: slint::SharedString = e.edge.clone().into();
+                let edge: slint::SharedString = if e.edge == "right" && s.kind == "sidebar" {
+                    "left".into()
+                } else {
+                    e.edge.clone().into()
+                };
                 match s.kind.as_str() {
                     "sidebar" => {
                         window.set_sidebar_dock(edge.clone());
-                        window.set_sidebar_collapsed(false);
                     }
                     "welcome" => {
                         window.set_welcome_sidebar_dock(edge.clone());
@@ -250,7 +254,6 @@ pub(super) fn open_window(
                     }
                     "quick" => {
                         window.set_quick_panel_dock(edge.clone());
-                        window.set_quick_panel_collapsed(false);
                     }
                     _ => {}
                 }
@@ -769,6 +772,11 @@ pub(super) fn open_window(
 
     // --- System sampler (1 Hz) ------------------------------------------
     let sampler = Rc::new(Mutex::new(SystemSampler::new()));
+    {
+        let snap = sampler.lock().expect("sampler poisoned").sample();
+        push_ring(&mut local_net_hist.lock().unwrap(), snap.net_bytes_per_sec as f32);
+        *local_snap.lock().unwrap() = snap;
+    }
     let weak = window.as_weak();
     let tick_sampler = sampler.clone();
     let tick_statuses = tab_statuses.clone();
@@ -782,7 +790,9 @@ pub(super) fn open_window(
         SystemSampler::recommended_interval(),
         move || {
             let Some(window) = weak.upgrade() else { return };
-            if window.get_sidebar_collapsed() || window.get_zen_mode() {
+            if (window.get_effective_sidebar_collapsed() && window.get_terminals().row_count() == 0)
+                || window.get_zen_mode()
+            {
                 return;
             }
             // Skip the (non-trivial) sysinfo refresh + sidebar repaint when no one

@@ -1,0 +1,283 @@
+// Connection & Data settings page and Files & SFTP settings page.
+
+import { Theme } from "../../theme.slint";
+import { LabeledInput, PrimaryButton, GhostButton } from "../../widgets.slint";
+import { SectionHeader, SettingRow, Switch, Stepper } from "../../components/common/settings_controls.slint";
+
+export component ConnectionSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in-out property <bool> ssh-keepalive-enabled: true;
+    in-out property <int> ssh-keepalive-interval: 30;
+    in-out property <int> ssh-keepalive-max: 3;
+    in-out property <bool> webdav-enabled;
+    in-out property <string> webdav-url;
+    in-out property <string> webdav-username;
+    in-out property <string> webdav-password;
+    in-out property <string> webdav-remote-path;
+    in-out property <bool> webdav-accept-invalid-certs;
+    in-out property <string> webdav-status;
+
+    callback set-ssh-keepalive(bool, int, int);
+    callback import-ssh-config();
+    callback open-batch-import();
+    callback import-connections();
+    callback export-connections();
+    callback save-webdav-settings(bool, string, string, string, string, bool);
+    callback webdav-download();
+    callback webdav-upload();
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 20px;
+    padding-bottom: 28px;
+    spacing: 0;
+    alignment: start;
+
+    SectionHeader { text: root.lang-en ? "SSH KEEPALIVE" : "SSH 连接保活"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Send keepalives" : "发送保活心跳包";
+        desc: root.lang-en
+            ? "Prevents NAT, firewalls and gateways from dropping idle SSH / SFTP connections. Applies to new connections."
+            : "防止空闲的 SSH / SFTP 连接被 NAT、防火墙或网关断开，并对死连接及时告警。对新建连接生效。";
+        show-divider: root.ssh-keepalive-enabled;
+        Switch {
+            on: root.ssh-keepalive-enabled;
+            toggled(v) => {
+                root.ssh-keepalive-enabled = v;
+                root.set-ssh-keepalive(v, root.ssh-keepalive-interval, root.ssh-keepalive-max);
+            }
+        }
+    }
+    if root.ssh-keepalive-enabled : SettingRow {
+        label: root.lang-en ? "Interval" : "发送间隔";
+        desc: root.lang-en ? "Send a keepalive after the server has been silent this long."
+                           : "服务器持续无数据多久后发送一次保活包。";
+        Stepper {
+            value: root.ssh-keepalive-interval; minimum: 5; maximum: 300; step: 5; unit: "s";
+            changed(v) => {
+                root.ssh-keepalive-interval = v;
+                root.set-ssh-keepalive(true, v, root.ssh-keepalive-max);
+            }
+        }
+    }
+    if root.ssh-keepalive-enabled : SettingRow {
+        label: root.lang-en ? "Unanswered keepalives" : "最大无响应次数";
+        desc: root.lang-en
+            ? "Disconnect after this many keepalives in a row get no reply (about " + (root.ssh-keepalive-max + 1) * root.ssh-keepalive-interval + " s)."
+            : "连续无响应达到该次数后判定断开（约 " + (root.ssh-keepalive-max + 1) * root.ssh-keepalive-interval + " 秒）。";
+        show-divider: false;
+        Stepper {
+            value: root.ssh-keepalive-max; minimum: 2; maximum: 10; step: 1;
+            changed(v) => {
+                root.ssh-keepalive-max = v;
+                root.set-ssh-keepalive(true, root.ssh-keepalive-interval, v);
+            }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "SESSION IMPORT & EXPORT" : "会话导入与导出"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Import from ~/.ssh/config" : "从 ~/.ssh/config 导入";
+        desc: root.lang-en ? "Scan your local OpenSSH config file and add discovered hosts."
+                           : "解析本机 OpenSSH 配置文件并导入主机条目。";
+        GhostButton {
+            text: root.lang-en ? "Import SSH config" : "导入 SSH 配置";
+            clicked => { root.import-ssh-config(); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Batch text import" : "批量文本导入";
+        desc: root.lang-en ? "Paste multiple host lines to create sessions in bulk."
+                           : "通过多行文本格式一次性批量创建多个主机连接。";
+        GhostButton {
+            text: root.lang-en ? "Batch import…" : "批量导入…";
+            clicked => { root.open-batch-import(); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Backup & restore connections" : "备份与恢复会话文件";
+        desc: root.lang-en ? "Import or export saved connections as a JSON backup file."
+                           : "将已保存的会话连接导出为备份文件，或从备份文件导入。";
+        show-divider: false;
+        HorizontalLayout {
+            spacing: 8px;
+            GhostButton {
+                text: root.lang-en ? "Import file…" : "导入文件…";
+                clicked => { root.import-connections(); }
+            }
+            GhostButton {
+                text: root.lang-en ? "Export file…" : "导出备份…";
+                clicked => { root.export-connections(); }
+            }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "WEBDAV CLOUD SYNC" : "WebDAV 云同步"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Enable WebDAV sync" : "启用 WebDAV 同步";
+        desc: root.lang-en
+            ? "Manual upload/download of saved connections; will not connect automatically on startup."
+            : "手动上传或下载会话配置；启动时不会自动连接远端。";
+        show-divider: false;
+        Switch {
+            on: root.webdav-enabled;
+            toggled(v) => { root.webdav-enabled = v; }
+        }
+    }
+    Rectangle { height: 8px; }
+    VerticalLayout {
+        spacing: 10px;
+        LabeledInput {
+            label: root.lang-en ? "Endpoint URL" : "WebDAV 地址";
+            placeholder: "https://nas:5006/all/ or https://nas:5006/all/meatshell-connections.json";
+            value <=> root.webdav-url;
+        }
+        LabeledInput {
+            label: root.lang-en ? "Username" : "用户名";
+            placeholder: root.lang-en ? "Optional" : "可选";
+            value <=> root.webdav-username;
+        }
+        LabeledInput {
+            label: root.lang-en ? "Password / app token" : "密码 / 应用令牌";
+            placeholder: root.lang-en ? "Optional" : "可选";
+            password: true;
+            value <=> root.webdav-password;
+        }
+        LabeledInput {
+            label: root.lang-en ? "Remote file" : "远端文件名";
+            placeholder: "meatshell-connections.json";
+            value <=> root.webdav-remote-path;
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Trust self-signed / intranet certs" : "信任自签名 / 内网证书";
+        desc: root.lang-en
+            ? "Use only for trusted NAS or LAN WebDAV over HTTPS."
+            : "仅用于可信 NAS 或局域网 HTTPS WebDAV。";
+        show-divider: false;
+        Switch {
+            on: root.webdav-accept-invalid-certs;
+            toggled(v) => { root.webdav-accept-invalid-certs = v; }
+        }
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: end;
+        GhostButton {
+            text: root.lang-en ? "Save" : "保存配置";
+            clicked => {
+                root.save-webdav-settings(
+                    root.webdav-enabled, root.webdav-url, root.webdav-username,
+                    root.webdav-password, root.webdav-remote-path,
+                    root.webdav-accept-invalid-certs);
+            }
+        }
+        GhostButton {
+            text: root.lang-en ? "Download" : "从云端下载";
+            clicked => { root.webdav-download(); }
+        }
+        PrimaryButton {
+            text: root.lang-en ? "Upload" : "上传到云端";
+            clicked => { root.webdav-upload(); }
+        }
+    }
+    if root.webdav-status != "" : Text {
+        text: root.webdav-status;
+        color: Theme.text-muted;
+        font-size: 12px * Theme.panel-font;
+        wrap: word-wrap;
+    }
+}
+
+export component SftpSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in-out property <bool> sftp-follow-cd;
+    in-out property <bool> editor-embedded;
+    in property <string> download-dir;
+    in-out property <bool> download-always-ask;
+    in-out property <bool> sync-upload-enabled;
+
+    callback set-sftp-follow-cd(bool);
+    callback set-editor-embedded(bool);
+    callback pick-download-dir();
+    callback open-download-dir();
+    callback set-download-always-ask(bool);
+    callback set-sync-upload-enabled(bool);
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 20px;
+    padding-bottom: 28px;
+    spacing: 0;
+    alignment: start;
+
+    SectionHeader { text: root.lang-en ? "SFTP FILE BROWSER" : "SFTP 文件管理"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "SFTP follows terminal cd" : "SFTP 跟随终端 cd 目录";
+        desc: root.lang-en
+            ? "A cd in the terminal switches the SFTP panel to the same directory."
+            : "在终端内执行 cd 切换目录时，底部 SFTP 面板自动跳转到相同目录。";
+        Switch {
+            on: root.sftp-follow-cd;
+            toggled(v) => { root.sftp-follow-cd = v; root.set-sftp-follow-cd(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Open text files in a tab" : "在主窗口标签页中编辑文本文件";
+        desc: root.lang-en
+            ? "On: text files open as editor tabs in the main window. Off: open in a separate editor window."
+            : "开启：文本文件以内置编辑器标签页在主窗口中打开；关闭：在独立窗口中打开。";
+        show-divider: false;
+        Switch {
+            on: root.editor-embedded;
+            toggled(v) => { root.editor-embedded = v; root.set-editor-embedded(v); }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "DOWNLOADS" : "下载与保存目录"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Default download folder" : "默认下载保存目录";
+        desc: root.download-dir == ""
+            ? (root.lang-en ? "System Downloads folder" : "系统默认「下载」目录")
+            : root.download-dir;
+        HorizontalLayout {
+            spacing: 8px;
+            GhostButton {
+                text: root.lang-en ? "Change…" : "更改目录…";
+                clicked => { root.pick-download-dir(); }
+            }
+            GhostButton {
+                text: root.lang-en ? "Open" : "打开目录";
+                clicked => { root.open-download-dir(); }
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Always ask where to save" : "每次下载都询问保存位置";
+        desc: root.lang-en
+            ? "Every download prompts for a location instead of using the default folder."
+            : "每次下载文件时弹出保存位置选择框，而不是直接存入默认下载目录。";
+        show-divider: false;
+        Switch {
+            on: root.download-always-ask;
+            toggled(v) => { root.download-always-ask = v; root.set-download-always-ask(v); }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "SESSION UPLOAD SYNC" : "多会话上传同步"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Sync file uploads across sessions" : "开启多会话文件上传同步";
+        desc: root.lang-en
+            ? "While session sync is active, uploading a file sends it to all synced sessions."
+            : "当顶部工具栏开启会话同步时，上传文件会同步分发到所有受控会话。";
+        show-divider: false;
+        Switch {
+            on: root.sync-upload-enabled;
+            toggled(v) => { root.sync-upload-enabled = v; root.set-sync-upload-enabled(v); }
+        }
+    }
+}

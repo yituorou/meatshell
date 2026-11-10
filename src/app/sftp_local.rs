@@ -172,6 +172,7 @@ pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|delta| delta.as_secs().min(u32::MAX as u64) as u32)
             .unwrap_or(0);
+        let file_type = local_type_label(&name, is_dir, is_link);
         entries.push(SftpEntry {
             name: name.into(),
             full_path: display_path(&full).into(),
@@ -187,7 +188,7 @@ pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
             // Local files carry no POSIX metadata worth showing, so the pane
             // hides the permissions/owner/group columns entirely.
             mode: 0,
-            file_type: local_type_label(is_dir, is_link),
+            file_type,
             permissions: "".into(),
             permissions_mode: 0,
             owner: "".into(),
@@ -203,15 +204,12 @@ pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
     })
 }
 
-fn local_type_label(is_dir: bool, is_link: bool) -> SharedString {
-    let label = if is_link {
-        t("符号链接", "Symbolic link")
-    } else if is_dir {
-        t("文件夹", "Folder")
+fn local_type_label(name: &str, is_dir: bool, is_link: bool) -> SharedString {
+    if is_link {
+        t("符号链接", "Symbolic link").into()
     } else {
-        t("文件", "File")
-    };
-    label.into()
+        friendly_file_type(name, is_dir, if is_dir { "directory" } else { "file" })
+    }
 }
 
 /// Publish a listing into a tab's local-pane fields.

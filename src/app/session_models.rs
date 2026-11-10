@@ -379,6 +379,40 @@ pub(super) fn sync_sessions_to_model(store: &ConfigStore, model: &VecModel<Sessi
     sync_sessions_to_model_with_filter(store, model, "");
 }
 
+/// Up to 4 saved sessions for the central startup card, ordered by most recent
+/// `last_used` timestamp first, then by stored session order.
+pub(super) fn recent_sessions_model(store: &ConfigStore) -> ModelRc<SessionInfo> {
+    let mut indexed: Vec<(usize, &Session)> = store.sessions().iter().enumerate().collect();
+    indexed.sort_by(|(ia, a), (ib, b)| {
+        let la = a.last_used.as_deref().unwrap_or("");
+        let lb = b.last_used.as_deref().unwrap_or("");
+        lb.cmp(la).then_with(|| ia.cmp(ib))
+    });
+    let rows: Vec<SessionInfo> = indexed
+        .into_iter()
+        .take(4)
+        .map(|(_, s)| SessionInfo {
+            id: s.id.clone().into(),
+            name: s.name.clone().into(),
+            host: s.host.clone().into(),
+            serial_detail: serial_session_detail(s).into(),
+            port: s.port as i32,
+            user: s.user.clone().into(),
+            auth: s.auth.as_str().into(),
+            last_used: s
+                .last_used
+                .clone()
+                .unwrap_or_else(|| "never".to_string())
+                .into(),
+            group: s.group.clone().into(),
+            group_header: "".into(),
+            collapsed: false,
+            builtin: false,
+        })
+        .collect();
+    ModelRc::from(Rc::new(VecModel::from(rows)))
+}
+
 /// Generated rows at the top of Quick connect: the "system" shells, then the
 /// "agents" group of detected and custom agent CLIs (#427).
 fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {

@@ -5,6 +5,12 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **终端支持 `iTerm2-Color-Schemes` 配色方案。** “设置 → 外观与布局”新增终端配色方案选择器，内置 915 套 `iTerm2-Color-Schemes` 主题，支持按全部 / 深色 / 浅色 / 收藏 / 自定义筛选、按名称或作者搜索、收藏置顶，以及导入/导出 `.itermcolors` 与 `.json` 主题文件。切换方案后实时作用于所有终端会话的背景、前景、光标、光标反色文字、选区高亮、粗体文字、16 色 ANSI 调色板与底部状态栏，无需再单独设置光标颜色。
+- **`iTerm2-Color-Schemes` support for the terminal.** Settings → Appearance & Layout gains a terminal color scheme picker with 915 built-in `iTerm2-Color-Schemes` themes, category tabs (All / Dark / Light / Favorites / Custom), search by name or author, favorites, and `.itermcolors` / `.json` import and export. Selecting a scheme immediately updates the background, foreground, cursor, cursor text, selection highlight, bold text, 16-color ANSI palette and bottom status strip across all active terminal sessions, replacing the standalone cursor color setting.
+
+- **界面组件化重构与交互布局优化。** 将 Slint 界面拆分为 `ui/components/` 与 `ui/pages/` 模块化组件体系，统一设置页、会话编辑弹窗、SFTP 面板、侧边栏、欢迎页和独立窗口的视觉层级与间距规范；移除 SFTP 收起状态下的冗余底部工具条；修复底部命令栏与搜索框在输入法预编辑或聚焦时占位提示文字残留的问题；优化快捷命令弹窗、停靠面板与命令历史弹窗的卡片布局和点击即发 / 填入命令栏交互；并对启动字体扫描、终端主题列表按需加载以及收起态侧边栏/SFTP 双栏延迟加载进行了内存优化。
+- **Componentized UI architecture and layout/interaction refinements.** Refactored the Slint UI into modular `ui/components/` and `ui/pages/` layers with unified visual hierarchy and spacing across Settings, Session Dialog, SFTP Panel, Sidebar, Welcome, and detached windows; removed the redundant collapsed SFTP bottom strip; fixed input placeholders lingering during IME preedit composition; refined the Quick Commands popup, dock panel, and command history interactions (click to run vs. insert into command bar); and reduced startup/idle memory via single-pass font discovery, lazy scheme gallery loading, and deferred SFTP local-pane listing while collapsed.
+
 ## [0.8.2] - 2026-11-08
 
 - **标签页菜单可记录会话日志，查找显示数量并支持跳转（#535）。** SSH、Telnet、串口和本地终端标签页的右键菜单新增“开始记录会话日志...”：选择保存位置（默认为会话日志目录下的 `<名称>_<时间戳>.log`），先写入当前屏幕内容，记录期间该项变为“停止记录会话日志”。查找栏现在同时搜索回滚历史和当前屏幕，显示“当前/总数”（无匹配时显示“无结果”），可用 Enter / Shift+Enter 或上下按钮跳转，两端循环并自动滚动到匹配处，当前匹配项高亮更明显。

@@ -1,0 +1,301 @@
+import { Theme } from "../../theme.slint";
+import { GhostButton } from "../../widgets.slint";
+import { ModalLayer, ModalKind } from "../../modal.slint";
+import { ShortcutBinding } from "../../interface_panel.slint";
+import { ShortcutRow, EditableShortcutRow } from "../../components/business/app_chrome_helpers.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component ShortcutsDialog inherits ModalLayer {
+    in-out property <bool> shortcuts-open: false;
+    in property <ModalKind> active-modal: ModalKind.shortcuts;
+    in property <bool> lang-en: false;
+    in property <[ShortcutBinding]> shortcut-bindings: [];
+    in-out property <string> shortcut-recording: "";
+    in-out property <string> shortcut-status: "";
+    in property <bool> shortcut-status-error: false;
+
+    callback shortcut-record(string, string, bool, bool, bool, bool);
+    callback shortcut-reset(string);
+    callback shortcut-reset-all();
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.shortcuts;
+    // While recording, Tab / Shift+Tab are part of the chord being
+    // captured, and Esc cancels the recording instead of the dialog.
+    raw-keys: root.shortcut-recording != "";
+    cancel-requested => {
+        if (root.shortcut-recording != "") {
+            root.shortcut-recording = "";
+        } else {
+            root.shortcuts-open = false;
+        }
+    }
+    background: #00000080;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(480px, parent.width - 32px);
+        height: min(560px, parent.height - 32px);
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 5px;
+
+            HorizontalLayout {
+                Text {
+                    text: root.lang-en ? "Keyboard shortcuts" : "快捷键";
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-lg;
+                    font-weight: 700;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 22px; height: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: sc-close.has-hover ? Theme.bg-hover : transparent;
+                    sc-close := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.shortcuts-open = false; }
+                    }
+                    Text { text: "\u{E5CD}"; font-family: "Material Icons";
+                           color: Theme.text-secondary; font-size: Theme.fs-sm;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+
+            // Scrollable so the list never overflows the fixed-height card (#140).
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 5px;
+
+                    // Rebindable actions, grouped by section (rows from Rust).
+                    for b[bi] in root.shortcut-bindings : VerticalLayout {
+                        spacing: 5px;
+                        if b.header != "" && bi > 0 : Rectangle { height: 6px; }
+                        if b.header != "" : Text {
+                            text: b.header;
+                            color: Theme.text-muted; font-size: Theme.fs-xs;
+                        }
+                        EditableShortcutRow {
+                            keys: b.keys;
+                            desc: b.desc;
+                            is-default: b.is-default;
+                            recording: root.shortcut-recording == b.id;
+                            lang-en: root.lang-en;
+                            start-record => {
+                                root.shortcut-status = "";
+                                root.shortcut-recording = b.id;
+                                sc-recorder.focus();
+                            }
+                            reset => { root.shortcut-reset(b.id); }
+                        }
+                    }
+
+                    Rectangle { height: 6px; }
+                    Text { text: root.lang-en ? "Mouse" : "鼠标";
+                           color: Theme.text-muted; font-size: Theme.fs-xs; }
+                    ShortcutRow { keys: root.lang-en ? "Drag" : "鼠标拖动"; desc: root.lang-en ? "Select text" : "选择文本"; }
+                    ShortcutRow { keys: root.lang-en ? "Wheel / Scrollbar" : "滚轮 / 滚动条"; desc: root.lang-en ? "Scroll history" : "滚动历史"; }
+
+                    Rectangle { height: 6px; }
+                    Text { text: root.lang-en ? "Command box" : "命令输入框";
+                           color: Theme.text-muted; font-size: Theme.fs-xs; }
+                    ShortcutRow { keys: "Enter"; desc: root.lang-en ? "Send command" : "发送命令"; }
+                    ShortcutRow { keys: "↑ / ↓"; desc: root.lang-en ? "Previous / next in history" : "上一条 / 下一条历史"; }
+                    ShortcutRow { keys: root.is-mac ? "⌃R" : "Ctrl+R"; desc: root.lang-en ? "Search history (↑↓ select, Enter run, Esc close)" : "搜索命令历史(↑↓ 选择,回车执行,Esc 关闭)"; }
+                    ShortcutRow { keys: "Esc"; desc: root.lang-en ? "Close history / focus terminal" : "关闭历史 / 聚焦终端"; }
+                    ShortcutRow { keys: root.is-mac ? "⌃A" : "Ctrl+A"; desc: root.lang-en ? "Move to start of line" : "移到行首"; }
+                    ShortcutRow { keys: root.is-mac ? "⌃E" : "Ctrl+E"; desc: root.lang-en ? "Move to end of line" : "移到行尾"; }
+                    ShortcutRow { keys: root.is-mac ? "⌃K" : "Ctrl+K"; desc: root.lang-en ? "Delete to end of line" : "删除到行尾"; }
+                    ShortcutRow { keys: root.is-mac ? "⌃U" : "Ctrl+U"; desc: root.lang-en ? "Delete to start of line" : "删除到行首"; }
+                    Rectangle { height: 2px; }
+                }
+            }
+
+            if root.shortcut-status != "" : Text {
+                text: root.shortcut-status;
+                color: root.shortcut-status-error ? Theme.danger : Theme.warning;
+                font-size: Theme.fs-xs;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                padding-top: 6px;
+                Text {
+                    text: root.shortcut-recording != ""
+                        ? (root.lang-en ? "Press the new shortcut, or Esc to cancel."
+                                        : "按下新的快捷键，或按 Esc 取消。")
+                        : (root.lang-en ? "Click a shortcut to change it. Changes are saved automatically."
+                                        : "点击快捷键即可修改，更改会自动保存。");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+                GhostButton {
+                    text: root.lang-en ? "Reset all" : "全部恢复默认";
+                    clicked => {
+                        root.shortcut-recording = "";
+                        root.shortcut-reset-all();
+                    }
+                }
+            }
+        }
+
+        sc-recorder := FocusScope {
+            width: 0px; height: 0px;
+            enabled: true;
+            focus-on-click: false;
+            key-pressed(e) => {
+                if (root.shortcut-recording == "") {
+                    reject
+                } else {
+                    root.shortcut-record(root.shortcut-recording, e.text,
+                        e.modifiers.control, e.modifiers.meta,
+                        e.modifiers.alt, e.modifiers.shift);
+                    accept
+                }
+            }
+        }
+    }
+}
+
+export component AboutModalDialog inherits ModalLayer {
+    in-out property <bool> about-open: false;
+    in property <ModalKind> active-modal: ModalKind.about;
+    in property <string> app-version: "0.0.0";
+
+    callback open-repo();
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.about;
+    cancel-requested => { root.about-open = false; }
+    background: #00000080;            // dim backdrop
+    dismiss-on-backdrop: true;
+
+    // Landscape card: logo on the left, a short intro + repo link on the right.
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 520px;
+        height: 188px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+
+        // Swallow clicks so the backdrop doesn't close when clicking inside.
+        TouchArea {}
+
+        // Close (×) in the top-right corner.
+        Rectangle {
+            x: parent.width - 30px;
+            y: 8px;
+            width: 22px; height: 22px;
+            border-radius: Theme.radius-sm;
+            background: ab-close-ta.has-hover ? Theme.bg-hover : transparent;
+            ab-close-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.about-open = false; }
+            }
+            Text { text: "\u{E5CD}"; font-family: "Material Icons";
+                   color: Theme.text-secondary; font-size: Theme.fs-sm;
+                   horizontal-alignment: center; vertical-alignment: center; }
+        }
+
+        HorizontalLayout {
+            padding: 24px;
+            spacing: 20px;
+
+            VerticalLayout {
+                alignment: center;
+                Image {
+                    source: @image-url("../../../assets/icon.png");
+                    width: 76px;
+                    height: 76px;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 7px;
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    Text {
+                        text: "meatshell";
+                        color: Theme.text-primary;
+                        font-size: 22px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "v" + root.app-version;
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: @tr("meatshell — a lightweight Rust + Slint SSH client by 'lil meatball'");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                    wrap: word-wrap;
+                }
+
+                // Clickable open-source link → opens the GitHub page.
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 6px;
+                    Text {
+                        text: @tr("Open source");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        border-radius: Theme.radius-sm;
+                        background: repo-ta.has-hover ? Theme.bg-hover : transparent;
+                        HorizontalLayout {
+                            padding-left: 4px; padding-right: 4px;
+                            Text {
+                                text: "github.com/yituorou/meatshell";
+                                color: Theme.accent;
+                                font-size: Theme.fs-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                        repo-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-repo(); }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "MIT / Apache-2.0";
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                }
+            }
+        }
+    }
+}

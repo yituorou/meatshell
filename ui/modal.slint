@@ -36,8 +36,9 @@ export component ModalScope inherits FocusScope {
     // PopupWindow traversal stops at the popup: its own Escape goes first.
     capture-key-pressed(event) => {
         if root.active && (event.text == Key.Escape
-            || (root.is-mac && event.text == "." && event.modifiers.control
-                && !event.modifiers.alt && !event.modifiers.shift && !event.modifiers.meta)) {
+            || (root.is-mac && event.text == "."
+                && (event.modifiers.control != event.modifiers.meta)
+                && !event.modifiers.alt && !event.modifiers.shift)) {
             root.cancel-requested();
             accept
         } else if root.active && root.has-focus && !root.raw-keys

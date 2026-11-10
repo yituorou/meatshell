@@ -1,7 +1,7 @@
 use crate::terminal::{
     build_row, cell_prefix, char_after_cell_end, char_at_cell_start, detect_scroll,
-    highlight_plain_output, render_term_span, BuiltScreen, CsiState, HistLine, Line, TermBuffer,
-    MAX_HISTORY, RAW_CAP,
+    highlight_plain_output, render_term_span, render_term_span_with_palette, BuiltScreen, CsiState,
+    HistLine, Line, TermBuffer, MAX_HISTORY, RAW_CAP,
 };
 use crate::ui::TermMatch;
 
@@ -941,7 +941,15 @@ impl TermBuffer {
                     last_content = r as i32;
                 }
                 for hs in runs {
-                    spans.extend(render_term_span(&hs, r as i32, self.is_dark));
+                    if self.term_palette.explicit_scheme {
+                        spans.extend(render_term_span_with_palette(
+                            &hs,
+                            r as i32,
+                            &self.term_palette,
+                        ));
+                    } else {
+                        spans.extend(render_term_span(&hs, r as i32, self.is_dark));
+                    }
                 }
                 displayed.push(plain.trim_end().to_string());
             }
@@ -993,7 +1001,15 @@ impl TermBuffer {
             let runs =
                 highlight_plain_output(runs, self.output_highlight, &self.custom_highlight_rules);
             for hs in &runs {
-                spans.extend(render_term_span(hs, d as i32, self.is_dark));
+                if self.term_palette.explicit_scheme {
+                    spans.extend(render_term_span_with_palette(
+                        hs,
+                        d as i32,
+                        &self.term_palette,
+                    ));
+                } else {
+                    spans.extend(render_term_span(hs, d as i32, self.is_dark));
+                }
             }
             displayed.push(plain.trim_end().to_string());
         }

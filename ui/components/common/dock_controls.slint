@@ -1,0 +1,166 @@
+import { Theme } from "../../theme.slint";
+import { OutlineIcon } from "outline_icon.slint";
+
+// --- Sparkline -------------------------------------------------------------
+// Compact horizontal bar chart used in the stats sidebar.
+export component Sparkline inherits Rectangle {
+    in property <[float]> values;
+    in property <brush> line-color: Theme.accent;
+
+    background: Theme.dark ? #141414 : #f4f5f7;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+
+    // Subtle horizontal reference lines
+    Rectangle {
+        x: 0; y: parent.height * 0.33;
+        width: parent.width; height: 1px;
+        background: Theme.border-subtle.with-alpha(0.45);
+    }
+    Rectangle {
+        x: 0; y: parent.height * 0.66;
+        width: parent.width; height: 1px;
+        background: Theme.border-subtle.with-alpha(0.45);
+    }
+
+    for v[i] in values : Rectangle {
+        property <length> inner-w: parent.width - 8px;
+        property <length> slot-w: self.inner-w / max(1, values.length);
+        property <length> bar-h: max(2px, (parent.height - 6px) * clamp(v, 0.0, 1.0));
+        x: 4px + i * self.slot-w;
+        y: parent.height - 3px - self.bar-h;
+        width: max(2px, self.slot-w - 2px);
+        height: self.bar-h;
+        background: v > 0.02 ? line-color.with-alpha(0.82) : Theme.border-strong.with-alpha(0.35);
+        border-radius: 1.5px;
+    }
+}
+
+// --- ToolStrip -------------------------------------------------------------
+// IDEA-style collapsed tool strip (#v0.5 M5): when a dockable panel is collapsed
+// the host renders this thin bar along the panel's docked edge instead of the
+// panel. It shows the panel's tool icon; clicking re-expands.
+export component ToolStrip inherits Rectangle {
+    in property <string> dock-edge;   // left | right | top | bottom
+    in property <string> glyph;       // the panel's tool icon (Material Icons)
+    in property <bool> show-second: false;
+    in property <string> second-glyph;
+    in property <bool> show-third: false;
+    in property <string> third-glyph;
+    in property <string> tooltip;
+    in property <bool> enabled: true;
+    callback expand();
+    callback expand-second();
+    callback expand-third();
+    property <bool> horizontal: root.dock-edge == "top" || root.dock-edge == "bottom";
+
+    background: Theme.bg-panel;
+    // Hairline on the inner edge (facing the central content).
+    Rectangle {
+        x: root.dock-edge == "left" ? parent.width - self.width : 0px;
+        y: root.dock-edge == "top" ? parent.height - self.height : 0px;
+        width: root.horizontal ? parent.width : 1px;
+        height: root.horizontal ? 1px : parent.height;
+        background: Theme.border-subtle;
+    }
+    // Tool icon, hugging the strip's near corner.
+    Rectangle {
+        width: 32px;
+        height: 32px;
+        x: root.horizontal ? 4px : (parent.width - self.width) / 2;
+        y: root.horizontal ? (parent.height - self.height) / 2 : 4px;
+        border-radius: 8px;
+        background: root.enabled && ta.has-hover ? Theme.bg-hover : transparent;
+        OutlineIcon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            name: root.glyph;
+            icon-size: 17px;
+            color: !root.enabled ? Theme.text-muted.with-alpha(0.45)
+                : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        ta := TouchArea {
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => {
+                if (root.enabled) {
+                    root.expand();
+                }
+            }
+        }
+    }
+    if root.show-second : Rectangle {
+        width: 32px;
+        height: 32px;
+        x: root.horizontal ? 40px : (parent.width - self.width) / 2;
+        y: root.horizontal ? (parent.height - self.height) / 2 : 40px;
+        border-radius: 8px;
+        background: ta2.has-hover ? Theme.bg-hover : transparent;
+        OutlineIcon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            name: root.second-glyph;
+            icon-size: 17px;
+            color: ta2.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        ta2 := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.expand-second(); }
+        }
+    }
+    if root.show-third : Rectangle {
+        width: 32px;
+        height: 32px;
+        x: root.horizontal ? 76px : (parent.width - self.width) / 2;
+        y: root.horizontal ? (parent.height - self.height) / 2 : 76px;
+        border-radius: 8px;
+        background: ta3.has-hover ? Theme.bg-hover : transparent;
+        OutlineIcon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            name: root.third-glyph;
+            icon-size: 17px;
+            color: ta3.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        ta3 := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.expand-third(); }
+        }
+    }
+}
+
+// --- DockExpandButton ------------------------------------------------------
+export component DockExpandButton inherits Rectangle {
+    in property <string> dock-edge;   // left | right | top | bottom
+    in property <bool> hug-right: false;
+    callback expand();
+    background: transparent;
+    btn := Rectangle {
+        width: 24px;
+        height: 22px;
+        x: root.dock-edge == "right" ? parent.width - self.width - 2px
+         : (root.dock-edge == "top" || root.dock-edge == "bottom")
+           ? (root.hug-right ? parent.width - self.width - 6px : 6px)
+         : 2px;
+        y: root.dock-edge == "bottom" ? parent.height - self.height - 1px : 8px;
+        border-radius: Theme.radius-sm;
+        background: ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.expand(); }
+        }
+        OutlineIcon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            name: root.dock-edge == "right"  ? "chevron-left"
+                : root.dock-edge == "top"    ? "chevron-down"
+                : root.dock-edge == "bottom" ? "chevron-up"
+                : "chevron-right";
+            icon-size: 14px;
+            color: Theme.text-secondary;
+        }
+    }
+}

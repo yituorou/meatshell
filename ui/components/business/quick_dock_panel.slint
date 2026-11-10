@@ -1,0 +1,636 @@
+import { Theme, TooltipState } from "../../theme.slint";
+import { OutlineIcon, IconButton } from "../../widgets.slint";
+
+// One saved quick command (#55): a name shown on the chip + the text to send.
+// Grouped like the welcome session list: group-header is non-empty on the first
+// row of each group; collapsed hides the group's rows in the popup; orig-index
+// points back to the entry's position in the stored list (delete target).
+export struct QuickCmd {
+    name: string,
+    command: string,
+    group: string,
+    group-header: string,
+    collapsed: bool,
+    orig-index: int,
+    // false → clicking only fills the input box (no trailing Return), so the
+    // command can be tweaked before sending; true → send + execute (B站 suggestion).
+    send-enter: bool,
+    // `command` flattened to one line for display (#419); multi-line commands
+    // used to overflow their fixed-height rows.
+    command-preview: string,
+}
+
+// --- MenuItem --------------------------------------------------------------
+// One row of the terminal right-click context menu (MDL2 icon + label).
+export component MenuItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    callback clicked();
+
+    height: 28px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? Theme.bg-hover : transparent;
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        Text {
+            text: root.icon;
+            font-family: "Material Icons";
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            color: Theme.text-primary;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// Persistent, resizable quick-command panel (#215). It deliberately shares the
+// same model/actions as the command-bar popup; docking only adds another view.
+export component QuickDockPanel inherits Rectangle {
+    in property <[QuickCmd]> commands;
+    in property <string> dock-edge: "right";
+    in property <bool> lang-en: false;
+    pure callback entry-matches(string, string, string) -> bool;
+    callback activate(string, bool /* send-enter */);
+    callback edit(int /* orig-index */);
+    callback toggle-group(string);
+    callback manage();
+    callback close();
+    callback dock-drag-move(length, length);
+    callback dock-drag-end();
+
+    property <string> filter-query: "";
+
+    background: Theme.bg-panel;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    clip: true;
+
+    VerticalLayout {
+        padding: 10px * Theme.ui-scale;
+        spacing: 8px * Theme.ui-scale;
+
+        // 1. Modern Panel Header (matching WelcomePanel & Sidebar)
+        Rectangle {
+            height: 32px * Theme.ui-scale;
+            background: transparent;
+
+            drag-area := TouchArea {
+                mouse-cursor: grab;
+                moved => {
+                    if (self.pressed) {
+                        root.dock-drag-move(self.absolute-position.x + self.mouse-x,
+                                            self.absolute-position.y + self.mouse-y);
+                    }
+                }
+                pointer-event(ev) => {
+                    if (ev.kind == PointerEventKind.up) { root.dock-drag-end(); }
+                    else if (ev.kind == PointerEventKind.cancel) { root.dock-drag-end(); }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 2px;
+                padding-right: 2px;
+                spacing: 7px;
+
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 24px * Theme.ui-scale;
+                        height: 24px * Theme.ui-scale;
+                        border-radius: 6px;
+                        background: Theme.accent.with-alpha(0.14);
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "bolt";
+                            icon-size: 13px * Theme.ui-scale;
+                            color: Theme.accent;
+                        }
+                    }
+                }
+
+                Text {
+                    text: @tr("Quick commands");
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-lg;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                // Quick "+ Add" pill button in header
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 26px * Theme.ui-scale;
+                        width: add-hdr-row.preferred-width + 14px;
+                        border-radius: 6px;
+                        background: add-hdr-ta.pressed ? Theme.accent.darker(0.15)
+                                  : add-hdr-ta.has-hover ? Theme.accent.darker(0.06)
+                                  : Theme.accent;
+                        add-hdr-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                TooltipState.hide(root.lang-en ? "Add or manage quick commands" : "添加或管理快捷命令");
+                                root.manage();
+                            }
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    TooltipState.show(root.lang-en ? "Add or manage quick commands" : "添加或管理快捷命令", parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                } else {
+                                    TooltipState.hide(root.lang-en ? "Add or manage quick commands" : "添加或管理快捷命令");
+                                }
+                            }
+                        }
+                        add-hdr-row := HorizontalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            VerticalLayout {
+                                alignment: center;
+                                OutlineIcon {
+                                    name: "plus";
+                                    icon-size: 12px * Theme.ui-scale;
+                                    color: white;
+                                    stroke-w: 2.0px;
+                                }
+                            }
+                            Text {
+                                text: root.lang-en ? "Add" : "添加";
+                                color: white;
+                                font-size: 11.5px * Theme.ui-scale;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // Collapse panel button
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        size: 28px * Theme.ui-scale;
+                        glyph: root.dock-edge == "right" ? "chevron-right"
+                             : root.dock-edge == "top" ? "chevron-up"
+                             : root.dock-edge == "bottom" ? "chevron-down"
+                             : "chevron-left";
+                        font-family: "Material Icons";
+                        tooltip: root.lang-en ? "Collapse quick commands" : "收起快捷命令面板";
+                        tooltip-left: true;
+                        clicked => { root.close(); }
+                    }
+                }
+            }
+        }
+
+        // 2. Quick Search / Filter + Usage Hint Strip
+        Rectangle {
+            height: 28px * Theme.ui-scale;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: dock-filter-in.has-focus ? Theme.accent : Theme.border-subtle;
+            background: Theme.dark ? #1c1d21 : #f2f4f8;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 6px;
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "search";
+                        icon-size: 12px * Theme.ui-scale;
+                        color: dock-filter-in.has-focus ? Theme.accent : Theme.text-muted;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    dock-filter-in := TextInput {
+                        width: 100%;
+                        height: 100%;
+                        text <=> root.filter-query;
+                        color: Theme.text-primary;
+                        font-family: Theme.ui-font-family;
+                        font-size: 11px * Theme.ui-scale;
+                        single-line: true;
+                        vertical-alignment: center;
+                        key-pressed(e) => {
+                            if (e.text == Key.Escape && root.filter-query != "") {
+                                root.filter-query = "";
+                                accept
+                            } else {
+                                reject
+                            }
+                        }
+                    }
+                    if !dock-filter-in.has-focus && root.filter-query == "" : Text {
+                        width: 100%;
+                        height: 100%;
+                        text: root.lang-en
+                            ? "Search commands… · Click to trigger"
+                            : "搜索快捷命令… · 点击直接触发";
+                        color: Theme.text-secondary;
+                        font-size: 11px * Theme.ui-scale;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                if root.filter-query != "" : VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 9px;
+                        background: dock-clr-ta.has-hover ? Theme.bg-hover : transparent;
+                        dock-clr-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.filter-query = "";
+                                dock-filter-in.focus();
+                            }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "close";
+                            icon-size: 11px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Scrollable Grouped Command Cards
+        Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: max(self.height, list.preferred-height);
+
+            if root.commands.length == 0 : Rectangle {
+                width: 100%;
+                height: parent.height;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 10px;
+                    padding: 16px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 44px;
+                            height: 44px;
+                            border-radius: 22px;
+                            background: Theme.accent.with-alpha(0.12);
+                            OutlineIcon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                name: "bolt";
+                                icon-size: 20px;
+                                color: Theme.accent;
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("No quick commands yet");
+                        color: Theme.text-primary;
+                        font-size: Theme.fs-sm;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.lang-en
+                            ? "Save common shell scripts or commands and run them in one click"
+                            : "保存常用运维命令或脚本，点击即可一键发送到当前终端执行或填入命令框";
+                        color: Theme.text-muted;
+                        font-size: 11px * Theme.ui-scale;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            list := VerticalLayout {
+                padding-top: 2px;
+                padding-bottom: 4px;
+                spacing: 6px;
+                alignment: start;
+
+                for q in root.commands : VerticalLayout {
+                    spacing: 5px;
+                    property <bool> card-matches: root.filter-query == ""
+                        ? true
+                        : root.entry-matches(q.name, q.command, root.filter-query);
+
+                    // Group Header Row
+                    if q.group-header != "" && root.filter-query == "" : Rectangle {
+                        height: 26px * Theme.ui-scale;
+                        border-radius: 6px;
+                        background: group-ta.has-hover ? Theme.bg-hover : transparent;
+                        group-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle-group(q.group); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                OutlineIcon {
+                                    name: q.collapsed ? "chevron-right" : "chevron-down";
+                                    icon-size: 11px * Theme.ui-scale;
+                                    color: Theme.text-muted;
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                OutlineIcon {
+                                    name: "folder";
+                                    icon-size: 13px * Theme.ui-scale;
+                                    color: Theme.accent;
+                                }
+                            }
+                            Text {
+                                text: q.group == "default"
+                                    ? (root.lang-en ? "Default Group" : "默认分组")
+                                    : q.group;
+                                color: Theme.text-secondary;
+                                font-size: Theme.fs-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+
+                    // Structured Command Card
+                    if (!q.collapsed || root.filter-query != "") && q.orig-index >= 0 && card-matches : cmd-card := Rectangle {
+                        property <bool> card-hovered:
+                            item-ta.has-hover || run-ta.has-hover || fill-ta.has-hover || dock-edit-ta.has-hover;
+                        height: 62px * Theme.ui-scale;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: self.card-hovered ? Theme.accent.with-alpha(0.55) : Theme.border-subtle;
+                        background: self.card-hovered
+                            ? (Theme.dark ? #22242a : #f5f8ff)
+                            : (Theme.dark ? Theme.bg-elevated : Theme.bg-root);
+
+                        item-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.activate(q.command, q.send-enter); }
+                        }
+
+                        VerticalLayout {
+                            padding-left: 9px;
+                            padding-right: 8px;
+                            padding-top: 7px;
+                            padding-bottom: 7px;
+                            spacing: 5px;
+                            alignment: center;
+
+                            // Row 1: Icon + Command Title + Quick Action Bar
+                            HorizontalLayout {
+                                height: 20px * Theme.ui-scale;
+                                spacing: 5px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 18px * Theme.ui-scale;
+                                        height: 18px * Theme.ui-scale;
+                                        border-radius: 5px;
+                                        background: (q.send-enter ? Theme.accent : Theme.success).with-alpha(0.14);
+                                        OutlineIcon {
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            name: q.send-enter ? "bolt" : "keyboard";
+                                            icon-size: 11px * Theme.ui-scale;
+                                            color: q.send-enter ? Theme.accent : Theme.success;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: q.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.fs-sm;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+
+                                // Default state: show clear execution mode badge
+                                VerticalLayout {
+                                    visible: !cmd-card.card-hovered;
+                                    width: self.visible ? (mode-lbl.preferred-width + 10px) : 0px;
+                                    alignment: center;
+                                    Rectangle {
+                                        height: 18px * Theme.ui-scale;
+                                        width: parent.width;
+                                        border-radius: 4px;
+                                        background: (q.send-enter ? Theme.accent : Theme.success).with-alpha(0.12);
+                                        mode-lbl := Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: q.send-enter
+                                                ? (root.lang-en ? "Run ↵" : "点击执行 ↵")
+                                                : (root.lang-en ? "Fill" : "仅填入");
+                                            color: q.send-enter ? Theme.accent : Theme.success;
+                                            font-size: 10px * Theme.ui-scale;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Hovered state: explicit Run / Fill / Edit micro-buttons
+                                HorizontalLayout {
+                                    visible: cmd-card.card-hovered;
+                                    width: self.visible ? self.preferred-width : 0px;
+                                    spacing: 4px;
+                                    alignment: center;
+
+                                    // 1. Direct Execute pill
+                                    Rectangle {
+                                        height: 20px * Theme.ui-scale;
+                                        width: run-lbl.preferred-width + 10px;
+                                        border-radius: 4px;
+                                        background: run-ta.has-hover ? Theme.accent : Theme.accent.with-alpha(0.16);
+                                        run-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                TooltipState.hide(root.lang-en ? "Send and execute immediately" : "立即发送并回车执行");
+                                                root.activate(q.command, true);
+                                            }
+                                            changed has-hover => {
+                                                if (self.has-hover) {
+                                                    TooltipState.show(root.lang-en ? "Send and execute immediately" : "立即发送并回车执行", parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                                } else {
+                                                    TooltipState.hide(root.lang-en ? "Send and execute immediately" : "立即发送并回车执行");
+                                                }
+                                            }
+                                        }
+                                        run-lbl := Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: root.lang-en ? "Run ↵" : "执行 ↵";
+                                            color: run-ta.has-hover ? white : Theme.accent;
+                                            font-size: 10.5px * Theme.ui-scale;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    // 2. Fill Input Box pill
+                                    Rectangle {
+                                        height: 20px * Theme.ui-scale;
+                                        width: fill-lbl.preferred-width + 10px;
+                                        border-radius: 4px;
+                                        border-width: 1px;
+                                        border-color: fill-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                                        background: fill-ta.has-hover ? Theme.bg-active : (Theme.dark ? #1b1c20 : #ffffff);
+                                        fill-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                TooltipState.hide(root.lang-en ? "Fill terminal input box without running" : "仅填入底部输入框（可修改后再发）");
+                                                root.activate(q.command, false);
+                                            }
+                                            changed has-hover => {
+                                                if (self.has-hover) {
+                                                    TooltipState.show(root.lang-en ? "Fill terminal input box without running" : "仅填入底部输入框（可修改后再发）", parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                                } else {
+                                                    TooltipState.hide(root.lang-en ? "Fill terminal input box without running" : "仅填入底部输入框（可修改后再发）");
+                                                }
+                                            }
+                                        }
+                                        fill-lbl := Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: root.lang-en ? "Fill" : "填入";
+                                            color: Theme.text-secondary;
+                                            font-size: 10.5px * Theme.ui-scale;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    // 3. Edit command icon button
+                                    Rectangle {
+                                        width: 20px * Theme.ui-scale;
+                                        height: 20px * Theme.ui-scale;
+                                        border-radius: 4px;
+                                        background: dock-edit-ta.has-hover ? Theme.bg-active : transparent;
+                                        dock-edit-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                TooltipState.hide(root.lang-en ? "Edit command" : "编辑命令");
+                                                root.edit(q.orig-index);
+                                            }
+                                            changed has-hover => {
+                                                if (self.has-hover) {
+                                                    TooltipState.show(root.lang-en ? "Edit command" : "编辑命令", parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                                } else {
+                                                    TooltipState.hide(root.lang-en ? "Edit command" : "编辑命令");
+                                                }
+                                            }
+                                        }
+                                        OutlineIcon {
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                            name: "edit";
+                                            icon-size: 12px * Theme.ui-scale;
+                                            color: dock-edit-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Row 2: Monospace Shell Snippet Pill (`$ ls -la`)
+                            Rectangle {
+                                height: 22px * Theme.ui-scale;
+                                border-radius: 5px;
+                                background: Theme.dark ? #151619 : #f2f4f7;
+                                HorizontalLayout {
+                                    padding-left: 7px;
+                                    padding-right: 7px;
+                                    spacing: 5px;
+                                    Text {
+                                        text: "$";
+                                        color: Theme.accent;
+                                        font-family: Theme.font-mono;
+                                        font-size: 11px * Theme.ui-scale;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: q.command-preview;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: 11px * Theme.ui-scale;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Bottom Action Button (Manage / Add Quick Commands)
+        Rectangle {
+            height: 32px * Theme.ui-scale;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: manage-ta.has-hover ? Theme.accent.with-alpha(0.5) : Theme.border-subtle;
+            background: manage-ta.pressed ? Theme.bg-active
+                      : manage-ta.has-hover ? Theme.accent.with-alpha(0.10)
+                      : (Theme.dark ? Theme.bg-elevated : Theme.bg-root);
+            manage-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.manage(); }
+            }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "sliders";
+                        icon-size: 13px * Theme.ui-scale;
+                        color: Theme.accent;
+                    }
+                }
+                Text {
+                    text: root.lang-en ? "Manage Quick Commands…" : "管理快捷命令与分组…";
+                    color: Theme.accent;
+                    font-size: Theme.fs-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

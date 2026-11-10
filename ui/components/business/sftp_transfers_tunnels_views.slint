@@ -1,0 +1,487 @@
+// SFTP inline transfer progress strip, Transfers tab view, and Port Forwarding / Tunnels tab view.
+
+import { Theme } from "../../theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { TunnelInfo, TransferInfo, SftpIconBtn, SftpPillBtn } from "sftp_types_and_buttons.slint";
+
+export component SftpInlineTransferStrip inherits Rectangle {
+    in property <[TransferInfo]> transfers: [];
+    in property <bool> has-active-transfers: false;
+    callback open-transfers-tab();
+    callback clear-transfers();
+
+    height: 30px;
+    background: Theme.bg-panel-alt;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+
+        OutlineIcon {
+            y: (parent.height - self.height) / 2;
+            name: root.transfers[0].is-upload ? "upload" : "download";
+            icon-size: 14px;
+            color: root.has-active-transfers ? Theme.accent : Theme.success;
+        }
+
+        Text {
+            text: (root.transfers[0].is-upload ? @tr("Uploading:") + " " : @tr("Downloading:") + " ")
+                + root.transfers[0].name;
+            color: Theme.text-primary;
+            font-size: Theme.fs-xs;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: 240px;
+        }
+
+        // Inline progress bar for the latest transfer
+        Rectangle {
+            width: 120px;
+            height: 6px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            background: Theme.bg-hover;
+            clip: true;
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width * clamp(root.transfers[0].percent, 0.0, 1.0);
+                height: parent.height;
+                border-radius: 3px;
+                background: root.transfers[0].state == 2
+                    ? Theme.danger
+                    : (root.transfers[0].state == 1 ? Theme.success : Theme.accent);
+            }
+        }
+
+        Text {
+            text: root.transfers[0].state == 0
+                ? (root.transfers[0].detail + " · " + Math.round(clamp(root.transfers[0].percent, 0.0, 1.0) * 100) + "%")
+                : root.transfers[0].detail;
+            color: root.transfers[0].state == 2
+                ? Theme.danger
+                : (root.transfers[0].state == 1 ? Theme.success : Theme.text-secondary);
+            font-size: Theme.fs-xs;
+            vertical-alignment: center;
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        if root.transfers.length > 1 : Text {
+            text: @tr("Total tasks:") + " " + root.transfers.length;
+            color: Theme.text-muted;
+            font-size: Theme.fs-xs;
+            vertical-alignment: center;
+        }
+
+        // View all transfers in the Transfers tab
+        Rectangle {
+            height: 22px;
+            width: view-all-txt.preferred-width + 14px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: view-all-ta.has-hover ? Theme.bg-hover : transparent;
+            view-all-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open-transfers-tab(); }
+            }
+            view-all-txt := Text {
+                text: @tr("Details");
+                color: Theme.accent;
+                font-size: Theme.fs-xs;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if !root.has-active-transfers : Rectangle {
+            height: 22px;
+            width: clr-tr-txt.preferred-width + 14px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 5px;
+            background: clr-tr-ta.has-hover ? Theme.bg-hover : transparent;
+            clr-tr-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.clear-transfers(); }
+            }
+            clr-tr-txt := Text {
+                text: @tr("Dismiss");
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component SftpTransfersView inherits Rectangle {
+    in property <string> download-dir: "";
+    in property <[TransferInfo]> transfers: [];
+    callback pick-download-dir();
+    callback open-download-dir();
+    callback clear-transfers();
+    callback cancel-transfer(string);
+
+    clip: true;
+    background: Theme.bg-root;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        // Top bar: Download save directory + Clear completed
+        Rectangle {
+            height: 36px;
+            border-radius: 8px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 10px;
+                spacing: 8px;
+                OutlineIcon {
+                    y: (parent.height - self.height) / 2;
+                    name: "folder";
+                    icon-size: 15px;
+                    color: Theme.text-secondary;
+                }
+                Text {
+                    text: @tr("Download save directory:");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.download-dir;
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-xs;
+                    font-weight: 500;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                SftpPillBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "folder";
+                    label: @tr("Change...");
+                    tooltip: @tr("Select default download folder");
+                    clicked => { root.pick-download-dir(); }
+                }
+                SftpPillBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "upload";
+                    label: @tr("Open folder");
+                    tooltip: @tr("Open download folder in system file manager");
+                    clicked => { root.open-download-dir(); }
+                }
+                if root.transfers.length > 0 : SftpPillBtn {
+                    y: (parent.height - self.height) / 2;
+                    icon: "trash";
+                    label: @tr("Clear completed");
+                    tooltip-left: true;
+                    tooltip: @tr("Remove finished transfer records");
+                    clicked => { root.clear-transfers(); }
+                }
+            }
+        }
+
+        // Transfer list
+        ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            content-height: max(self.visible-height, tr-list.preferred-height);
+
+            tr-list := VerticalLayout {
+                spacing: 6px;
+
+                if root.transfers.length == 0 : Rectangle {
+                    height: 110px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            name: "transfer";
+                            icon-size: 24px;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: @tr("No transfer tasks");
+                            color: Theme.text-muted;
+                            font-size: Theme.fs-sm;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                for item in root.transfers : Rectangle {
+                    height: 54px;
+                    border-radius: 8px;
+                    background: Theme.bg-panel;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 10px;
+
+                        // Direction badge icon
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 8px;
+                            background: item.state == 2
+                                ? Theme.danger.with-alpha(0.14)
+                                : (item.state == 1 ? Theme.success.with-alpha(0.14) : Theme.accent.with-alpha(0.14));
+                            OutlineIcon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                name: item.is-upload ? "upload" : "download";
+                                icon-size: 16px;
+                                color: item.state == 2
+                                    ? Theme.danger
+                                    : (item.state == 1 ? Theme.success : Theme.accent);
+                            }
+                        }
+
+                        // Name + Progress bar
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 5px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: item.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.fs-sm;
+                                    font-weight: 500;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: item.detail;
+                                    color: item.state == 2
+                                        ? Theme.danger
+                                        : (item.state == 1 ? Theme.success : Theme.text-secondary);
+                                    font-size: Theme.fs-xs;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Rectangle {
+                                height: 5px;
+                                border-radius: 2.5px;
+                                background: Theme.bg-hover;
+                                clip: true;
+                                Rectangle {
+                                    x: 0;
+                                    y: 0;
+                                    width: parent.width * clamp(item.percent, 0.0, 1.0);
+                                    height: parent.height;
+                                    border-radius: 2.5px;
+                                    background: item.state == 2
+                                        ? Theme.danger
+                                        : (item.state == 1 ? Theme.success : Theme.accent);
+                                }
+                            }
+                        }
+
+                        // Cancel button when active (0) or preparing (3)
+                        if item.state == 0 || item.state == 3 : SftpIconBtn {
+                            y: (parent.height - self.height) / 2;
+                            icon: "close";
+                            danger: true;
+                            tooltip-left: true;
+                            tooltip: @tr("Cancel transfer");
+                            clicked => { root.cancel-transfer(item.id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SftpTunnelsView inherits Rectangle {
+    in-out property <string> tunnel-kind: "local";
+    in-out property <string> tunnel-name: "";
+    in-out property <string> tunnel-bind: "127.0.0.1";
+    in-out property <string> tunnel-bind-port: "1080";
+    in-out property <string> tunnel-host: "127.0.0.1";
+    in-out property <string> tunnel-host-port: "80";
+    in-out property <bool> tunnel-save: false;
+    in-out property <bool> tunnel-auto-start: true;
+    in property <[TunnelInfo]> tunnels: [];
+
+    callback tunnel-add(string, string, string, string, string, string, bool, bool);
+    callback tunnel-stop(string);
+    callback tunnel-start(string);
+    callback tunnel-delete(string);
+
+    clip: true;
+    background: transparent;
+
+    ScrollView {
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, tunnel-body.preferred-height);
+
+        tunnel-body := VerticalLayout {
+            padding: 10px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 6px;
+                Rectangle {
+                    width: 54px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.tunnel-kind == "local" ? Theme.accent : (tl-ta.has-hover ? Theme.bg-hover : Theme.bg-root);
+                    tl-ta := TouchArea { mouse-cursor: pointer; clicked => { root.tunnel-kind = "local"; } }
+                    Text { text: "-L"; color: root.tunnel-kind == "local" ? #ffffff : Theme.text-primary; font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Rectangle {
+                    width: 54px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.tunnel-kind == "dynamic" ? Theme.accent : (td-ta.has-hover ? Theme.bg-hover : Theme.bg-root);
+                    td-ta := TouchArea { mouse-cursor: pointer; clicked => { root.tunnel-kind = "dynamic"; } }
+                    Text { text: "-D"; color: root.tunnel-kind == "dynamic" ? #ffffff : Theme.text-primary; font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Rectangle {
+                    width: 54px; height: 24px; border-radius: Theme.radius-sm;
+                    background: root.tunnel-kind == "remote" ? Theme.accent : (tr-ta.has-hover ? Theme.bg-hover : Theme.bg-root);
+                    tr-ta := TouchArea { mouse-cursor: pointer; clicked => { root.tunnel-kind = "remote"; } }
+                    Text { text: "-R"; color: root.tunnel-kind == "remote" ? #ffffff : Theme.text-primary; font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    width: 72px; height: 24px; border-radius: Theme.radius-sm;
+                    background: add-tunnel-ta.has-hover ? Theme.accent-hover : Theme.accent;
+                    add-tunnel-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.tunnel-bind-port != "" && (root.tunnel-kind == "dynamic" || (root.tunnel-host != "" && root.tunnel-host-port != ""))) {
+                                root.tunnel-add(root.tunnel-name, root.tunnel-kind, root.tunnel-bind, root.tunnel-bind-port, root.tunnel-host, root.tunnel-host-port, root.tunnel-save, root.tunnel-auto-start);
+                            }
+                        }
+                    }
+                    Text { text: @tr("Add"); color: #ffffff; font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1; spacing: 3px;
+                    Text { text: @tr("Name (optional)"); color: Theme.text-secondary; font-size: Theme.fs-xs; }
+                    Rectangle {
+                        height: 24px; border-radius: Theme.radius-sm;
+                        background: Theme.bg-root; border-width: 1px; border-color: Theme.border-subtle;
+                        TextInput { x: 7px; width: parent.width - 14px; height: parent.height; text <=> root.tunnel-name; color: Theme.text-primary; font-family: Theme.ui-font-family; font-size: Theme.fs-sm; single-line: true; vertical-alignment: center; }
+                    }
+                }
+                VerticalLayout {
+                    width: 128px; spacing: 3px;
+                    Text { text: root.tunnel-kind == "remote" ? @tr("Server listen address") : @tr("Local listen address"); color: Theme.text-secondary; font-size: Theme.fs-xs; overflow: elide; }
+                    Rectangle {
+                        height: 24px; border-radius: Theme.radius-sm;
+                        background: Theme.bg-root; border-width: 1px; border-color: Theme.border-subtle;
+                        TextInput { x: 7px; width: parent.width - 14px; height: parent.height; text <=> root.tunnel-bind; color: Theme.text-primary; font-family: Theme.ui-font-family; font-size: Theme.fs-sm; single-line: true; vertical-alignment: center; }
+                    }
+                }
+                VerticalLayout {
+                    width: 74px; spacing: 3px;
+                    Text { text: @tr("Listen port"); color: Theme.text-secondary; font-size: Theme.fs-xs; overflow: elide; }
+                    Rectangle {
+                        height: 24px; border-radius: Theme.radius-sm;
+                        background: Theme.bg-root; border-width: 1px; border-color: Theme.border-subtle;
+                        TextInput { x: 7px; width: parent.width - 14px; height: parent.height; text <=> root.tunnel-bind-port; color: Theme.text-primary; font-family: Theme.ui-font-family; font-size: Theme.fs-sm; single-line: true; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            if root.tunnel-kind != "dynamic" : HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1; spacing: 3px;
+                    Text { text: root.tunnel-kind == "remote" ? @tr("Local target host") : @tr("Server target host"); color: Theme.text-secondary; font-size: Theme.fs-xs; }
+                    Rectangle {
+                        height: 24px; border-radius: Theme.radius-sm;
+                        background: Theme.bg-root; border-width: 1px; border-color: Theme.border-subtle;
+                        TextInput { x: 7px; width: parent.width - 14px; height: parent.height; text <=> root.tunnel-host; color: Theme.text-primary; font-family: Theme.ui-font-family; font-size: Theme.fs-sm; single-line: true; vertical-alignment: center; }
+                    }
+                }
+                VerticalLayout {
+                    width: 76px; spacing: 3px;
+                    Text { text: @tr("Target port"); color: Theme.text-secondary; font-size: Theme.fs-xs; }
+                    Rectangle {
+                        height: 24px; border-radius: Theme.radius-sm;
+                        background: Theme.bg-root; border-width: 1px; border-color: Theme.border-subtle;
+                        TextInput { x: 7px; width: parent.width - 14px; height: parent.height; text <=> root.tunnel-host-port; color: Theme.text-primary; font-family: Theme.ui-font-family; font-size: Theme.fs-sm; single-line: true; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    width: 16px; height: 16px; border-radius: 3px; border-width: 1px; border-color: Theme.border-subtle;
+                    background: root.tunnel-save ? Theme.accent : Theme.bg-root;
+                    TouchArea { clicked => { root.tunnel-save = !root.tunnel-save; } }
+                    Text { text: root.tunnel-save ? "✓" : ""; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: @tr("Save to this SSH session"); color: Theme.text-secondary; font-size: Theme.fs-xs; }
+            }
+            if root.tunnel-save : HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    width: 16px; height: 16px; border-radius: 3px; border-width: 1px; border-color: Theme.border-subtle;
+                    background: root.tunnel-auto-start ? Theme.accent : Theme.bg-root;
+                    TouchArea { clicked => { root.tunnel-auto-start = !root.tunnel-auto-start; } }
+                    Text { text: root.tunnel-auto-start ? "✓" : ""; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: @tr("Start automatically when connecting"); color: Theme.text-secondary; font-size: Theme.fs-xs; }
+            }
+
+            Rectangle { height: 1px; background: Theme.border-subtle; }
+
+            if root.tunnels.length == 0 : Rectangle {
+                height: 36px;
+                Text { text: @tr("No tunnels"); color: Theme.text-muted; font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center; }
+            }
+
+            for tun in root.tunnels : Rectangle {
+                height: 34px;
+                border-radius: Theme.radius-sm;
+                background: tunnel-row-ta.has-hover ? Theme.bg-hover : Theme.bg-root.with-alpha(0.42);
+                tunnel-row-ta := TouchArea {}
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px; spacing: 8px;
+                    Text { text: tun.active ? "●" : "○"; color: tun.active ? #28c76f : Theme.text-muted; width: 14px; font-size: Theme.fs-sm; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: tun.kind == "dynamic" ? "-D" : (tun.kind == "remote" ? "-R" : "-L"); color: Theme.text-muted; width: 28px; font-size: Theme.fs-sm; vertical-alignment: center; horizontal-alignment: center; }
+                    Text { text: tun.name; color: Theme.text-primary; width: 120px; font-size: Theme.fs-sm; overflow: elide; vertical-alignment: center; }
+                    Text { text: tun.bind + (tun.target != "" ? " → " + tun.target : ""); color: Theme.text-secondary; horizontal-stretch: 1; font-size: Theme.fs-xs; overflow: elide; vertical-alignment: center; }
+                    Text { text: tun.status; color: tun.active ? Theme.accent : Theme.text-muted; width: 62px; font-size: Theme.fs-xs; overflow: elide; vertical-alignment: center; horizontal-alignment: right; }
+                    Rectangle {
+                        width: 48px; height: 22px; border-radius: Theme.radius-sm;
+                        background: control-ta.has-hover ? Theme.bg-hover : transparent;
+                        control-ta := TouchArea { mouse-cursor: pointer; clicked => { if (tun.active) { root.tunnel-stop(tun.id); } else { root.tunnel-start(tun.id); } } }
+                        Text { text: tun.active ? @tr("Stop") : @tr("Start"); color: tun.active ? Theme.danger : Theme.accent; font-size: Theme.fs-xs; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 52px; height: 22px; border-radius: Theme.radius-sm;
+                        background: delete-ta.has-hover ? Theme.danger.with-alpha(0.24) : transparent;
+                        delete-ta := TouchArea { mouse-cursor: pointer; clicked => { root.tunnel-delete(tun.id); } }
+                        Text { text: @tr("Delete"); color: Theme.danger; font-size: Theme.fs-xs; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+}

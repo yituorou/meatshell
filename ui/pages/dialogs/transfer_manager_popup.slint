@@ -1,0 +1,638 @@
+import { Theme, TooltipState } from "../../theme.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { TransferInfo } from "../../sftp_panel.slint";
+
+export component TransferManagerPopup inherits Rectangle {
+    in-out property <bool> download-open: false;
+    in property <[TransferInfo]> transfers: [];
+    in property <bool> has-active-transfers: false;
+    in property <bool> lang-en: false;
+    in property <string> download-dir: "";
+    in-out property <string> dl-filter: "all";
+    in-out property <length> dl-w: 480px;
+    in-out property <length> dl-h: 360px;
+    in-out property <bool> dl-custom-sized: false;
+    in-out property <bool> dl-resizing: false;
+    in-out property <length> dl-base-w: 0px;
+    in-out property <length> dl-base-h: 0px;
+    in-out property <length> dl-grab-x: 0px;
+    in-out property <length> dl-grab-y: 0px;
+
+    callback clear-transfers();
+    callback copy-text(string);
+    callback pick-download-dir();
+    callback open-download-dir();
+    callback cancel-transfer(string);
+
+    property <length> auto-h: root.transfers.length == 0
+        ? 278px
+        : min(420px, max(296px, root.transfers.length * 64px + 188px));
+    width: root.dl-w;
+    height: root.dl-custom-sized ? root.dl-h : self.auto-h;
+    visible: root.download-open;
+    background: Theme.popup-bg;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    drop-shadow-blur: 22px;
+    drop-shadow-color: #00000058;
+
+    // Swallow pointer events so right-clicks don't fall through to the
+    // terminal's context menu underneath.
+    TouchArea {}
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+
+        // --- Header: Icon + Title + Count Badge + Filter Tabs + Close ---
+        HorizontalLayout {
+            height: 28px;
+            spacing: 8px;
+            Rectangle {
+                width: 26px;
+                height: 26px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 7px;
+                background: Theme.accent.with-alpha(0.14);
+                OutlineIcon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    name: "transfer";
+                    icon-size: 15px;
+                    color: Theme.accent;
+                }
+            }
+            Text {
+                text: @tr("Transfers manager");
+                color: Theme.text-primary;
+                font-size: Theme.fs-md;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            if root.transfers.length > 0 : Rectangle {
+                width: dl-cnt-txt.preferred-width + 12px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 9px;
+                background: root.has-active-transfers ? Theme.accent.with-alpha(0.16) : Theme.bg-elevated;
+                dl-cnt-txt := Text {
+                    text: "" + root.transfers.length;
+                    color: root.has-active-transfers ? Theme.accent : Theme.text-secondary;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+
+            // Segmented filter tabs (All / Active / Done)
+            Rectangle {
+                height: 24px;
+                width: 138px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 6px;
+                background: Theme.bg-root;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                HorizontalLayout {
+                    padding: 2px;
+                    spacing: 2px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 4px;
+                        background: root.dl-filter == "all" ? Theme.bg-elevated : (dlf-all-ta.has-hover ? Theme.bg-hover : transparent);
+                        dlf-all-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.dl-filter = "all"; }
+                        }
+                        Text {
+                            text: root.lang-en ? "All" : "全部";
+                            color: root.dl-filter == "all" ? Theme.text-primary : Theme.text-muted;
+                            font-size: 11px;
+                            font-weight: root.dl-filter == "all" ? 600 : 400;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 4px;
+                        background: root.dl-filter == "active" ? Theme.bg-elevated : (dlf-act-ta.has-hover ? Theme.bg-hover : transparent);
+                        dlf-act-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.dl-filter = "active"; }
+                        }
+                        Text {
+                            text: root.lang-en ? "Active" : "进行中";
+                            color: root.dl-filter == "active" ? Theme.text-primary : Theme.text-muted;
+                            font-size: 11px;
+                            font-weight: root.dl-filter == "active" ? 600 : 400;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: 4px;
+                        background: root.dl-filter == "done" ? Theme.bg-elevated : (dlf-dn-ta.has-hover ? Theme.bg-hover : transparent);
+                        dlf-dn-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.dl-filter = "done"; }
+                        }
+                        Text {
+                            text: root.lang-en ? "Done" : "已完成";
+                            color: root.dl-filter == "done" ? Theme.text-primary : Theme.text-muted;
+                            font-size: 11px;
+                            font-weight: root.dl-filter == "done" ? 600 : 400;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: parent.width;
+                            height: parent.height;
+                        }
+                    }
+                }
+            }
+
+            if root.transfers.length > 0 : Rectangle {
+                height: 24px;
+                width: clr-txt.preferred-width + 14px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 6px;
+                background: clr-ta.has-hover ? Theme.bg-hover : transparent;
+                clr-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        TooltipState.hide(@tr("Clear finished transfers"));
+                        root.clear-transfers();
+                    }
+                    changed has-hover => {
+                        if (self.has-hover) {
+                            TooltipState.show(@tr("Clear finished transfers"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                        } else {
+                            TooltipState.hide(@tr("Clear finished transfers"));
+                        }
+                    }
+                }
+                clr-txt := Text {
+                    text: @tr("Clear");
+                    color: clr-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+            Rectangle {
+                width: 24px; height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 6px;
+                background: close-ta.has-hover ? Theme.bg-hover : transparent;
+                animate background { duration: 90ms; }
+                close-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.download-open = false; }
+                }
+                OutlineIcon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    name: "close";
+                    icon-size: 13px;
+                    color: close-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                }
+            }
+        }
+
+        // --- Two-Row Save Directory Card (Full Untruncated Path + Quick Actions) ---
+        Rectangle {
+            height: 62px;
+            background: Theme.bg-root;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            VerticalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                spacing: 5px;
+
+                // Row 1: Label + Quick Action Buttons
+                HorizontalLayout {
+                    height: 20px;
+                    spacing: 6px;
+                    OutlineIcon {
+                        y: (parent.height - self.height) / 2;
+                        name: "download";
+                        icon-size: 13px;
+                        color: Theme.accent;
+                    }
+                    Text {
+                        text: root.lang-en ? "Default download folder" : "默认下载保存目录";
+                        color: Theme.text-secondary;
+                        font-size: 11.5px;
+                        font-weight: 600;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+                    // Copy path button
+                    if root.download-dir != "" : Rectangle {
+                        width: 22px;
+                        height: 20px;
+                        border-radius: 5px;
+                        background: dl-cp-ta.has-hover ? Theme.bg-hover : transparent;
+                        dl-cp-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                TooltipState.hide(root.lang-en ? "Copy path" : "复制保存路径");
+                                root.copy-text(root.download-dir);
+                            }
+                            changed has-hover => {
+                                if (self.has-hover) {
+                                    TooltipState.show(root.lang-en ? "Copy path" : "复制保存路径", parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                } else {
+                                    TooltipState.hide(root.lang-en ? "Copy path" : "复制保存路径");
+                                }
+                            }
+                        }
+                        OutlineIcon {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            name: "copy";
+                            icon-size: 12px;
+                            color: dl-cp-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+                        }
+                    }
+                    // Choose folder pill
+                    Rectangle {
+                        height: 20px;
+                        width: pick-row.preferred-width + 12px;
+                        border-radius: 5px;
+                        background: pick-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        pick-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.pick-download-dir(); }
+                        }
+                        pick-row := HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 4px;
+                            OutlineIcon {
+                                y: (parent.height - self.height) / 2;
+                                name: "edit";
+                                icon-size: 11px;
+                                color: Theme.text-secondary;
+                            }
+                            Text {
+                                text: @tr("Choose save path");
+                                color: Theme.text-primary;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    // Open folder pill
+                    Rectangle {
+                        height: 20px;
+                        width: open-row.preferred-width + 12px;
+                        border-radius: 5px;
+                        background: open-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        open-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-download-dir(); }
+                        }
+                        open-row := HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 4px;
+                            OutlineIcon {
+                                y: (parent.height - self.height) / 2;
+                                name: "folder";
+                                icon-size: 11px;
+                                color: Theme.accent;
+                            }
+                            Text {
+                                text: @tr("Open folder");
+                                color: Theme.text-primary;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                // Row 2: Full-width path pill (clicking opens folder or chooses path)
+                Rectangle {
+                    height: 22px;
+                    border-radius: 5px;
+                    background: path-pill-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated.with-alpha(0.55);
+                    path-pill-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (root.download-dir == "") {
+                                root.pick-download-dir();
+                            } else {
+                                root.open-download-dir();
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 6px;
+                        OutlineIcon {
+                            y: (parent.height - self.height) / 2;
+                            name: "folder";
+                            icon-size: 12px;
+                            color: Theme.text-muted;
+                        }
+                        Text {
+                            text: root.download-dir == "" ? @tr("(ask every time)") : root.download-dir;
+                            color: root.download-dir == "" ? Theme.text-muted : Theme.text-primary;
+                            font-family: Theme.font-mono;
+                            font-size: 11.5px;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+
+        // --- Transfer Task List / Centered Empty State ------------------
+        if root.transfers.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            border-radius: 10px;
+            background: Theme.bg-root.with-alpha(0.5);
+            VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                alignment: center;
+                spacing: 8px;
+                Rectangle {
+                    width: 38px;
+                    height: 38px;
+                    x: (parent.width - self.width) / 2;
+                    border-radius: 19px;
+                    background: Theme.bg-elevated;
+                    OutlineIcon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        name: "transfer";
+                        icon-size: 18px;
+                        color: Theme.text-muted;
+                    }
+                }
+                Text {
+                    width: parent.width;
+                    text: @tr("No transfers yet");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    width: parent.width;
+                    text: root.lang-en
+                        ? "Drag files or click Upload / Download in SFTP to start"
+                        : "在 SFTP 面板拖拽文件或点击上传/下载后，实时进度将显示在此处";
+                    color: Theme.text-muted;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+
+        if root.transfers.length > 0 : Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: max(self.height, xfer-col.preferred-height);
+            xfer-col := VerticalLayout {
+                width: root.width - 28px;
+                alignment: start;
+                spacing: 6px;
+
+                for t in root.transfers : VerticalLayout {
+                    padding: 0px;
+                    spacing: 0px;
+                    if root.dl-filter == "all"
+                        || (root.dl-filter == "active" && (t.state == 0 || t.state == 3))
+                        || (root.dl-filter == "done" && (t.state == 1 || t.state == 2)) : Rectangle {
+                        height: 56px;
+                        border-radius: 9px;
+                        background: Theme.bg-root;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+
+                            Rectangle {
+                                width: 32px;
+                                height: 32px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 8px;
+                                background: t.state == 2
+                                    ? Theme.danger.with-alpha(0.14)
+                                    : (t.state == 1 ? Theme.success.with-alpha(0.14) : Theme.accent.with-alpha(0.14));
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: t.is-upload ? "upload" : "download";
+                                    icon-size: 15px;
+                                    color: t.state == 2 ? Theme.danger
+                                         : t.state == 1 ? Theme.success
+                                         : Theme.accent;
+                                }
+                            }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 5px;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Rectangle {
+                                        width: dir-tag-txt.preferred-width + 8px;
+                                        height: 16px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 4px;
+                                        background: t.is-upload ? Theme.accent.with-alpha(0.14) : Theme.success.with-alpha(0.14);
+                                        dir-tag-txt := Text {
+                                            text: t.is-upload ? (root.lang-en ? "UP" : "上传") : (root.lang-en ? "DOWN" : "下载");
+                                            color: t.is-upload ? Theme.accent : Theme.success;
+                                            font-size: 10px;
+                                            font-weight: 600;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                            width: parent.width;
+                                            height: parent.height;
+                                        }
+                                    }
+                                    Text {
+                                        text: t.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.fs-xs;
+                                        font-weight: 600;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: t.detail;
+                                        color: t.state == 2 ? Theme.danger
+                                             : t.state == 1 ? Theme.success
+                                             : Theme.text-muted;
+                                        font-size: 11px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        height: 5px;
+                                        y: (parent.height - self.height) / 2;
+                                        border-radius: 2.5px;
+                                        background: Theme.bg-elevated;
+                                        clip: true;
+                                        Rectangle {
+                                            x: 0; y: 0; height: parent.height;
+                                            width: parent.width * clamp(t.percent, 0.0, 1.0);
+                                            border-radius: 2.5px;
+                                            background: t.state == 2 ? Theme.danger
+                                                      : t.state == 1 ? Theme.success
+                                                      : Theme.accent;
+                                        }
+                                    }
+                                    Text {
+                                        width: 32px;
+                                        text: Math.round(clamp(t.percent, 0.0, 1.0) * 100) + "%";
+                                        color: Theme.text-muted;
+                                        font-family: Theme.font-mono;
+                                        font-size: 10.5px;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            if t.state == 0 || t.state == 3 : Rectangle {
+                                width: 24px; height: 24px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 6px;
+                                background: cancel-ta.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
+                                cancel-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        TooltipState.hide(@tr("Cancel transfer"));
+                                        root.cancel-transfer(t.id);
+                                    }
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            TooltipState.show(@tr("Cancel transfer"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                        } else {
+                                            TooltipState.hide(@tr("Cancel transfer"));
+                                        }
+                                    }
+                                }
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: "close";
+                                    icon-size: 12px;
+                                    color: cancel-ta.has-hover ? Theme.danger : Theme.text-muted;
+                                }
+                            }
+
+                            if t.state == 1 && !t.is-upload : Rectangle {
+                                width: 24px; height: 24px;
+                                y: (parent.height - self.height) / 2;
+                                border-radius: 6px;
+                                background: open-item-ta.has-hover ? Theme.bg-hover : transparent;
+                                open-item-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        TooltipState.hide(@tr("Open folder"));
+                                        root.open-download-dir();
+                                    }
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            TooltipState.show(@tr("Open folder"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                                        } else {
+                                            TooltipState.hide(@tr("Open folder"));
+                                        }
+                                    }
+                                }
+                                OutlineIcon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    name: "folder";
+                                    icon-size: 13px;
+                                    color: open-item-ta.has-hover ? Theme.accent : Theme.text-secondary;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Bottom-right resize grip (#dl-resize) -------------------------
+    Rectangle {
+        x: parent.width - 16px;
+        y: parent.height - 16px;
+        width: 16px;
+        height: 16px;
+        background: transparent;
+        Rectangle { x: parent.width - 5px;  y: parent.height - 5px;  width: 2px; height: 2px;
+                    background: Theme.text-muted; }
+        Rectangle { x: parent.width - 9px;  y: parent.height - 5px;  width: 2px; height: 2px;
+                    background: Theme.text-muted; }
+        Rectangle { x: parent.width - 5px;  y: parent.height - 9px;  width: 2px; height: 2px;
+                    background: Theme.text-muted; }
+        dl-resize-ta := TouchArea {
+            mouse-cursor: nwse-resize;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.down) {
+                    root.dl-resizing = true;
+                    root.dl-custom-sized = true;
+                    root.dl-base-w = root.dl-w;
+                    root.dl-base-h = root.height;
+                    root.dl-grab-x = self.absolute-position.x + self.mouse-x;
+                    root.dl-grab-y = self.absolute-position.y + self.mouse-y;
+                } else if (e.kind == PointerEventKind.up) {
+                    root.dl-resizing = false;
+                }
+            }
+            moved => {
+                if (root.dl-resizing) {
+                    root.dl-w = clamp(
+                        round((root.dl-base-w + (self.absolute-position.x + self.mouse-x - root.dl-grab-x)) / 1px) * 1px,
+                        360px, 900px);
+                    root.dl-h = clamp(
+                        round((root.dl-base-h + (self.absolute-position.y + self.mouse-y - root.dl-grab-y)) / 1px) * 1px,
+                        260px, 900px);
+                }
+            }
+        }
+    }
+}

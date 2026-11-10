@@ -68,6 +68,7 @@ pub(super) fn sync_sessions_for_window(
     if !refresh_session_rows_in_place(store, model, &query) {
         window.set_sessions_revision(window.get_sessions_revision() + 1);
     }
+    window.set_recent_sessions(recent_sessions_model(store));
 }
 
 /// Parse the batch-import textarea (#150). Each non-empty, non-`#` line is
@@ -1471,9 +1472,10 @@ pub(super) fn wire_session_callbacks(
                 sftp_panel_width: sftp_w_default,
                 sftp_saved_height: sftp_h_default,
             });
-            // A restored split view lists its remembered folder right away —
-            // the pane would otherwise stay blank until it is toggled (#532).
-            if has_sftp && split_default {
+            // A restored split view lists its remembered folder right away when
+            // the SFTP panel starts open; if SFTP starts collapsed, defer disk
+            // enumeration until the user expands the panel (#532).
+            if has_sftp && split_default && !sftp_collapsed_default {
                 if let Some(w) = weak.upgrade() {
                     let start = if local_dir.is_empty() {
                         home_dir()
@@ -1488,14 +1490,16 @@ pub(super) fn wire_session_callbacks(
             // terminal-resize callback). 5000-line scrollback is stored for
             // future scroll-navigation support.
             let is_dark_now = weak.upgrade().map(|w| w.get_dark_mode()).unwrap_or(true);
-            let (output_highlight, custom_highlight_rules) = {
+            let (output_highlight, custom_highlight_rules, term_palette) = {
                 let settings = store.borrow();
+                let mgr = settings.terminal_theme_manager(is_dark_now);
                 (
                     OutputHighlightPreset::from_settings(
                         settings.output_highlight_enabled(),
                         settings.output_highlight_preset(),
                     ),
                     compile_output_rules(settings.output_highlight_rules()),
+                    mgr.current_theme().to_resolved_palette(),
                 )
             };
             bufs.lock().unwrap().insert(
@@ -1504,7 +1508,12 @@ pub(super) fn wire_session_callbacks(
                     parser: vt100::Parser::new(24, 80, 5000),
                     find_query: String::new(),
                     find_cursor: None,
-                    is_dark: is_dark_now,
+                    is_dark: if term_palette.explicit_scheme {
+                        term_palette.is_dark
+                    } else {
+                        is_dark_now
+                    },
+                    term_palette,
                     output_highlight,
                     custom_highlight_rules,
                     json_format_output: store.borrow().json_format_output(),
@@ -1556,6 +1565,21 @@ pub(super) fn wire_session_callbacks(
                     &panes_model,
                     &splitters_model,
                 );
+                // FinalShell-style left sidebar workflow: when connecting to a
+                // session from Quick Connect, automatically switch the left
+                // sidebar from Quick Connect to the Server Resource Monitor.
+                if !w.get_collapse_sidebar_default() && w.get_sidebar_dock().as_str() == "left" {
+                    if w.get_welcome_as_sidebar()
+                        && w.get_welcome_sidebar_dock().as_str() == "left"
+                    {
+                        w.set_welcome_collapsed(true);
+                    }
+                    if w.get_quick_panel_open() && w.get_quick_panel_dock().as_str() == "left" {
+                        w.set_quick_panel_collapsed(true);
+                    }
+                    w.set_sidebar_collapsed(false);
+                    w.invoke_dock_layout_changed();
+                }
             }
 
             // Spawn the shell (+ SFTP) workers and their event-pump threads.
@@ -1742,6 +1766,9 @@ pub(super) fn listen_for_config_changes(ctx: &WinCtx, sessions_model: &Rc<VecMod
                 apply_dark_mode(&w, &bufs, theme_pref_is_dark(&store.borrow()));
                 // Colour theme preset + immersive switch (Wallpaper & theme).
                 super::color_theme::apply_color_theme(&w, &store.borrow());
+                // Terminal color scheme (iTerm2-Color-Schemes).
+                apply_terminal_color_scheme(&w, &store.borrow(), &bufs);
+                refresh_terminal_scheme_list(&w, &store.borrow(), TERMINAL_SCHEME_PAGE_STEP);
                 // Language translations are process-global; refresh our flag only.
                 w.set_lang_en(crate::i18n::is_en());
                 // Command-bar visibility is a global preference.

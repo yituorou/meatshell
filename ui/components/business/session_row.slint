@@ -1,0 +1,391 @@
+import { Theme } from "../../theme.slint";
+import { OutlineIcon } from "../../widgets.slint";
+
+export struct SessionInfo {
+    id: string,
+    name: string,
+    host: string,
+    serial-detail: string, // device, baud rate and framing; empty for non-serial sessions
+    port: int,
+    user: string,
+    auth: string,      // "password" | "key"
+    last-used: string, // ISO timestamp or "never"
+    group: string,        // folder/group name ("" = ungrouped)
+    group-header: string, // set on the first row of each group → render a header
+    collapsed: bool,      // group is collapsed → this session row is hidden
+    builtin: bool,        // built-in local shell, not a saved server session
+}
+
+// --- SessionRow ------------------------------------------------------------
+export component SessionRow inherits Rectangle {
+    in property <SessionInfo> session;
+    in property <bool> compact;
+    callback connect();
+    callback edit();
+    callback duplicate();
+    callback move-to-group(string);
+    callback remove();
+    // Drag-to-reorder: direction -1 = up, 1 = down. Emitted once per row-hop.
+    callback reorder(int) -> bool;
+    // Drag lifecycle, owned by the Welcome list: start publishes the dragged
+    // id, end persists the order. The card never follows the pointer — hops
+    // swap rows instantly, so overlapping neighbours / group headers cannot
+    // happen at all.
+    callback drag-start();
+    callback drag-end();
+    // Full session list — group-header is non-empty once per group, so the
+    // "move to group" submenu can iterate it to list each group exactly once.
+    in property <[SessionInfo]> all-sessions;
+    // Drag is only allowed outside search (visible indices would not match
+    // stored order) and never on built-in system rows.
+    in property <bool> reorder-enabled: false;
+    // Shared list-level drag state (see Welcome): which session is being
+    // dragged. The lifted card follows the dragged session's DATA, not the
+    // component holding the pointer grab — rows swap contents under the grab
+    // on every hop.
+    in property <bool> drag-target: false;
+    // List-level drag state, mirrored here so a press can detect a stale
+    // drag (the grab was lost when a hop changed the row count and rebuilt
+    // the model) and clear it instead of leaving the card lifted.
+    in property <bool> list-dragging: false;
+    property <bool> system-row: root.session.builtin;
+    // Local gesture state: this instance received the press and drives the
+    // drag (it keeps the pointer grab across in-place model updates).
+    property <bool> pressing: false;
+    property <bool> grab-dragging: false;
+    property <length> grab-y;
+
+    height: (root.compact ? 50px : 44px) * Theme.ui-scale;
+
+    // Remember where the right-click landed so the popup can appear there.
+    property <length> ctx-x;
+    property <length> ctx-y;
+
+    touch := TouchArea {
+        mouse-cursor: root.grab-dragging ? move : pointer;
+        // Connect is handled in pointer-event below so a finished drag never
+        // counts as a click.
+        pointer-event(e) => {
+            // Built-in PowerShell/CMD/WSL rows have no edit/move/delete actions.
+            // All menu items are conditional on !system-row, so opening the
+            // popup for them only produces an empty rectangle (#336).
+            if (!root.system-row && e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                ctx-x = self.mouse-x;
+                ctx-y = self.mouse-y;
+                ctx-menu.show();
+            } else if (e.button == PointerEventButton.left) {
+                if (e.kind == PointerEventKind.down) {
+                    // A press while the list still thinks a drag is running
+                    // means that drag's pointer grab was destroyed by a
+                    // row-count-changing hop; end it before starting fresh.
+                    if (root.list-dragging) {
+                        root.drag-end();
+                    }
+                    root.pressing = true;
+                    // Reset any stale drag (e.g. released outside the row).
+                    root.grab-dragging = false;
+                    root.grab-y = self.mouse-y;
+                } else if (e.kind == PointerEventKind.up) {
+                    // `pressing` proves this instance received the down: the
+                    // row under a released pointer must not treat it as a
+                    // click when the grab landed elsewhere after hops.
+                    if (root.pressing && !root.grab-dragging) {
+                        root.connect();
+                    }
+                    if (root.grab-dragging) {
+                        root.drag-end();
+                    }
+                    root.pressing = false;
+                    root.grab-dragging = false;
+                } else if (e.kind == PointerEventKind.cancel) {
+                    // System-cancelled grab (e.g. compositor takeover): treat
+                    // as a release but never as a connect click.
+                    if (root.grab-dragging) {
+                        root.drag-end();
+                    }
+                    root.pressing = false;
+                    root.grab-dragging = false;
+                }
+            }
+        }
+        moved => {
+            if (!root.pressing) { return; }
+            if (!root.grab-dragging) {
+                // A few pixels of vertical drift start a reorder drag; below
+                // that the press still resolves to a connect click.
+                if (root.reorder-enabled && abs(touch.mouse-y - root.grab-y) > 5px) {
+                    root.grab-dragging = true;
+                    root.grab-y = touch.mouse-y;
+                    root.drag-start();
+                }
+            } else {
+                // Swap at the neighbour's midpoint, then shift the anchor by a
+                // full slot (row + 2px spacing) — NOT back to the cursor — so
+                // overshoot carries over and the drag stays glued to the
+                // pointer across consecutive hops. Only advance the anchor
+                // when the swap happened: at list boundaries reorder fails,
+                // and advancing anyway would drift the anchor out of sync.
+                if (touch.mouse-y - root.grab-y > (root.height + 2px) / 2) {
+                    if (root.reorder(1)) {
+                        root.grab-y = root.grab-y + root.height + 2px;
+                    }
+                } else if (root.grab-y - touch.mouse-y > (root.height + 2px) / 2) {
+                    if (root.reorder(-1)) {
+                        root.grab-y = root.grab-y - root.height - 2px;
+                    }
+                }
+            }
+        }
+    }
+
+    // Right-click context menu -----------------------------------------------
+    ctx-menu := PopupWindow {
+        x: ctx-x;
+        y: ctx-y;
+        width: 140px;
+        // Height follows the content so a variable number of "move to" rows fit.
+        height: menu-vl.preferred-height;
+
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000050;
+
+            menu-vl := VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+
+                // Edit
+                if !root.system-row : Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: edit-ta.has-hover ? Theme.bg-hover : transparent;
+                    edit-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.edit(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        Text { text: "\u{E3C9}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("Edit"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+
+                // Duplicate — clone this session as a starting point (#41).
+                if !root.system-row : Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: dup-ta.has-hover ? Theme.bg-hover : transparent;
+                    dup-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.duplicate(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        Text { text: "\u{E14D}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("Duplicate"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+
+                // Delete (red tint)
+                if !root.system-row : Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: del-ta.has-hover ? #cc333320 : transparent;
+                    del-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.remove(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        Text { text: "\u{E872}"; font-family: "Material Icons"; color: #cc3333; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text { text: @tr("Delete"); color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+
+                if !root.system-row : Rectangle { height: 1px; background: Theme.border-subtle; }
+
+                // "Move to" hint — labels the group list below so the user knows
+                // these entries move the session into that folder.
+                if !root.system-row : HorizontalLayout {
+                    padding-left: 10px;
+                    padding-top: 2px;
+                    spacing: 6px;
+                    Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-muted; font-size: Theme.fs-xs; vertical-alignment: center; }
+                    Text { text: @tr("Move to"); color: Theme.text-muted; font-size: Theme.fs-xs; vertical-alignment: center; horizontal-stretch: 1; }
+                }
+
+                // Move to another group (#41). group-header is non-empty once
+                // per group (incl. empty folders), so iterating the full list
+                // yields each group once; the current group is skipped.
+                for s[i] in root.all-sessions : Rectangle {
+                    visible: !root.system-row && s.group-header != ""
+                        && !s.builtin && s.group-header != root.session.group;
+                    height: self.visible ? 28px : 0px;
+                    border-radius: Theme.radius-sm;
+                    background: mv-ta.has-hover ? Theme.bg-hover : transparent;
+                    mv-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.move-to-group(s.group-header); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text {
+                            text: s.group-header == "default" ? @tr("Default group") : s.group-header;
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-md;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Row content — wrapped in a card so the dragged row can lift (shadow +
+    // highlight) while the grabbing TouchArea keeps its grab. The card stays
+    // in its slot: row swaps alone convey the reorder.
+    card := Rectangle {
+        property <bool> row-hovered: touch.has-hover || edit-btn-ta.has-hover || more-btn-ta.has-hover;
+        width: parent.width;
+        height: parent.height;
+        border-radius: Theme.radius-md;
+        background: root.drag-target ? Theme.bg-elevated
+            : (self.row-hovered ? Theme.bg-hover : transparent);
+        border-width: !root.compact ? 1px : 0px;
+        border-color: !root.compact && self.row-hovered
+            ? Theme.border-strong
+            : (!root.compact ? Theme.border-subtle.with-alpha(0.5) : transparent);
+        drop-shadow-blur: root.drag-target ? 14px : 0px;
+        drop-shadow-color: root.drag-target ? #00000060 : transparent;
+        animate background { duration: 120ms; }
+        animate drop-shadow-blur { duration: 120ms; }
+
+    HorizontalLayout {
+        padding-left: 10px * Theme.ui-scale;
+        padding-right: 8px * Theme.ui-scale;
+        spacing: (root.compact ? 10px : 12px) * Theme.ui-scale;
+
+        Rectangle {
+            width: 32px * Theme.ui-scale;
+            height: 32px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-md;
+            background: card.row-hovered
+                ? Theme.bg-active
+                : Theme.bg-elevated;
+            OutlineIcon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                name: root.system-row ? "terminal" : (session.serial-detail != "" ? "terminal" : "sessions");
+                color: card.row-hovered ? Theme.text-primary : Theme.text-secondary;
+                icon-size: 16px * Theme.ui-scale;
+            }
+        }
+
+        if root.compact : VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px * Theme.ui-scale;
+            Text {
+                text: session.name;
+                color: Theme.text-primary;
+                font-size: Theme.fs-md;
+                font-weight: 500;
+                overflow: elide;
+            }
+            Text {
+                text: session.serial-detail != "" ? session.serial-detail
+                    : session.builtin ? session.host
+                    : (session.user != "" ? session.user + "@" : "")
+                        + (session.port > 0 ? session.host + ":" + session.port : session.host);
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                overflow: elide;
+            }
+        }
+        if !root.compact : Text {
+            text: session.name;
+            color: Theme.text-primary;
+            font-size: Theme.fs-md;
+            font-weight: 600;
+            vertical-alignment: center;
+            width: 200px * Theme.ui-scale;
+            overflow: elide;
+        }
+        if !root.compact : Text {
+            text: session.serial-detail != "" ? session.serial-detail
+                : session.port > 0 ? session.host + ":" + session.port : session.host;
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+            width: 200px * Theme.ui-scale;
+            overflow: elide;
+        }
+        if !root.compact : Text {
+            text: session.serial-detail != "" ? "" : session.user;
+            color: Theme.text-muted;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        // Quick-edit button on hover (for non-system sessions).
+        Rectangle {
+            visible: !root.system-row && card.row-hovered;
+            width: !root.system-row && card.row-hovered ? 26px * Theme.ui-scale : 0px;
+            height: 26px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: edit-btn-ta.has-hover ? Theme.bg-active : transparent;
+            edit-btn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.edit(); }
+            }
+            OutlineIcon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                name: "edit";
+                color: edit-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                icon-size: 14px * Theme.ui-scale;
+            }
+        }
+
+        // More actions (⋯) button on hover (opens context menu without requiring right-click).
+        Rectangle {
+            visible: !root.system-row && card.row-hovered;
+            width: !root.system-row && card.row-hovered ? 26px * Theme.ui-scale : 0px;
+            height: 26px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: more-btn-ta.has-hover ? Theme.bg-active : transparent;
+            more-btn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.ctx-x = max(8px, parent.x - 110px);
+                    root.ctx-y = parent.y + parent.height;
+                    ctx-menu.show();
+                }
+            }
+            Text {
+                text: "\u{E5D4}"; // more_vert
+                font-family: "Material Icons";
+                color: more-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                font-size: 16px * Theme.ui-scale;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+    }
+}

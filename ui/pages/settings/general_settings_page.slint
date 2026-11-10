@@ -1,0 +1,519 @@
+// General & Appearance settings page (Appearance, Language, Scale, Color Theme, Layout & Sidebars, Wallpaper & Rendering).
+
+import { Theme } from "../../theme.slint";
+import { ComboBox, Slider, ScrollView } from "std-widgets.slint";
+import { GhostButton } from "../../widgets.slint";
+import { SectionHeader, SettingRow, Switch, Stepper } from "../../components/common/settings_controls.slint";
+import { ColorThemeItem, ColorThemePicker, CursorColorInput, WallpaperSwatch } from "../../components/business/appearance_pickers.slint";
+
+export component GeneralSettingsPage inherits VerticalLayout {
+    in property <bool> lang-en;
+    in property <bool> dark-mode;
+    in property <float> ui-scale;
+    in property <[ColorThemeItem]> color-themes;
+    in property <string> color-theme: "default";
+    in-out property <string> color-theme-custom: "#4A90E2";
+    in-out property <bool> zen-mode: false;
+    in-out property <bool> welcome-as-sidebar;
+    in-out property <bool> collapse-sidebar-default;
+    in-out property <bool> collapse-sftp-default;
+    in-out property <bool> quick-commands-as-sidebar;
+    in property <string> current-wallpaper;
+    in property <string> custom-wallpaper-name;
+    in property <bool> wp-is-custom;
+    in property <bool> immersive-colors: true;
+    in-out property <float> wallpaper-overlay;
+    in-out property <string> renderer-mode: "software";
+    in-out property <bool> renderer-restart-required;
+
+    callback set-dark-mode(bool);
+    callback toggle-language();
+    callback set-ui-scale(int);
+    callback set-panel-font(int);
+    callback set-color-theme(string);
+    callback set-color-theme-custom(string) -> bool;
+    callback set-zen-mode(bool);
+    callback set-welcome-as-sidebar(bool);
+    callback set-collapse-sidebar-default(bool);
+    callback set-collapse-sftp-default(bool);
+    callback set-quick-commands-as-sidebar(bool);
+    callback set-wallpaper(string);
+    callback pick-wallpaper-file();
+    callback set-immersive-colors(bool);
+    callback persist-wallpaper-overlay(float);
+    callback set-renderer-mode(string);
+
+    padding-left: 28px;
+    padding-right: 28px;
+    padding-top: 20px;
+    padding-bottom: 28px;
+    spacing: 0;
+    alignment: start;
+
+    SectionHeader { text: root.lang-en ? "APPEARANCE & LANGUAGE" : "外观与语言"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Appearance" : "外观模式";
+        desc: root.lang-en ? "Switch between clean light and carbon dark workspace palettes."
+                           : "在简洁浅色与深邃暗色工作台配色之间切换。";
+        Rectangle {
+            height: 32px;
+            width: 184px;
+            border-radius: 8px;
+            background: Theme.bg-panel-alt;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            HorizontalLayout {
+                padding: 2px;
+                spacing: 2px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 6px;
+                    background: !root.dark-mode ? (Theme.dark ? Theme.bg-active : Theme.bg-root) : (light-ta.has-hover ? Theme.bg-hover : transparent);
+                    border-width: !root.dark-mode ? 1px : 0px;
+                    border-color: Theme.border-subtle;
+                    light-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { if (root.dark-mode) { root.set-dark-mode(false); } }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        Text {
+                            text: "\u{E518}";
+                            font-family: "Material Icons";
+                            font-size: 15px * Theme.panel-font;
+                            color: !root.dark-mode ? Theme.text-primary : Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.lang-en ? "Light" : "浅色";
+                            font-size: 13px * Theme.panel-font;
+                            font-weight: !root.dark-mode ? 600 : 400;
+                            color: !root.dark-mode ? Theme.text-primary : Theme.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 6px;
+                    background: root.dark-mode ? (Theme.dark ? Theme.bg-active : Theme.bg-root) : (dark-ta.has-hover ? Theme.bg-hover : transparent);
+                    border-width: root.dark-mode ? 1px : 0px;
+                    border-color: Theme.border-subtle;
+                    dark-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { if (!root.dark-mode) { root.set-dark-mode(true); } }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        Text {
+                            text: "\u{E51C}";
+                            font-family: "Material Icons";
+                            font-size: 15px * Theme.panel-font;
+                            color: root.dark-mode ? Theme.text-primary : Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.lang-en ? "Dark" : "深色";
+                            font-size: 13px * Theme.panel-font;
+                            font-weight: root.dark-mode ? 600 : 400;
+                            color: root.dark-mode ? Theme.text-primary : Theme.text-secondary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Language" : "界面语言";
+        desc: root.lang-en ? "Choose display language for menus, panels and prompts."
+                           : "选择菜单、面板与提示的界面显示语言。";
+        Rectangle {
+            height: 32px;
+            width: 184px;
+            border-radius: 8px;
+            background: Theme.bg-panel-alt;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+            HorizontalLayout {
+                padding: 2px;
+                spacing: 2px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 6px;
+                    background: !root.lang-en ? (Theme.dark ? Theme.bg-active : Theme.bg-root) : (zh-ta.has-hover ? Theme.bg-hover : transparent);
+                    border-width: !root.lang-en ? 1px : 0px;
+                    border-color: Theme.border-subtle;
+                    zh-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { if (root.lang-en) { root.toggle-language(); } }
+                    }
+                    Text {
+                        text: "简体中文";
+                        font-size: 13px * Theme.panel-font;
+                        font-weight: !root.lang-en ? 600 : 400;
+                        color: !root.lang-en ? Theme.text-primary : Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 6px;
+                    background: root.lang-en ? (Theme.dark ? Theme.bg-active : Theme.bg-root) : (en-ta.has-hover ? Theme.bg-hover : transparent);
+                    border-width: root.lang-en ? 1px : 0px;
+                    border-color: Theme.border-subtle;
+                    en-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { if (!root.lang-en) { root.toggle-language(); } }
+                    }
+                    Text {
+                        text: "English";
+                        font-size: 13px * Theme.panel-font;
+                        font-weight: root.lang-en ? 600 : 400;
+                        color: root.lang-en ? Theme.text-primary : Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "UI scale" : "界面缩放";
+        desc: root.lang-en ? "Zooms the whole interface."
+                           : "按比例缩放整个应用界面。";
+        Stepper {
+            value: round(root.ui-scale * 100); minimum: 80; maximum: 200; step: 10; unit: "%";
+            changed(v) => { root.set-ui-scale(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Settings font size" : "设置面板字体大小";
+        desc: root.lang-en ? "Adjusts font size and dimensions of this settings window."
+                           : "调整本设置窗口的字号与展示比例。";
+        Stepper {
+            value: round(Theme.panel-font * 100); minimum: 80; maximum: 160; step: 10; unit: "%";
+            changed(v) => { root.set-panel-font(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Color theme" : "配色方案";
+        desc: root.lang-en
+            ? "Accent and surface colors. Follows the light/dark switch."
+            : "强调色与面板配色，随浅色 / 深色自动切换。";
+        show-divider: root.color-theme == "custom";
+        ColorThemePicker {
+            width: 220px;
+            items: root.color-themes;
+            current: root.color-theme;
+            lang-en: root.lang-en;
+            selected(id) => { root.set-color-theme(id); }
+        }
+    }
+    if root.color-theme == "custom" : SettingRow {
+        label: root.lang-en ? "Custom color" : "自定义颜色";
+        desc: root.lang-en
+            ? "Hex color (#RRGGBB) used as the accent; surfaces pick up a hint of it."
+            : "十六进制颜色（#RRGGBB），作为强调色，并轻微染到面板上。";
+        show-divider: false;
+        CursorColorInput {
+            value <=> root.color-theme-custom;
+            preview-color: Theme.palette-dark.accent;
+            apply-color(hex) => { return root.set-color-theme-custom(hex); }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "LAYOUT & SIDEBARS" : "界面布局与侧边栏"; height: 26px; }
+    SettingRow {
+        label: root.lang-en ? "Zen mode" : "专注模式";
+        desc: root.lang-en
+            ? "Hide side panels and collapsed edge strips so the terminal fills the window."
+            : "隐藏侧边栏与底部面板，让终端填满整个内容区。";
+        Switch {
+            on: root.zen-mode;
+            toggled(v) => { root.zen-mode = v; root.set-zen-mode(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Show session list as left sidebar" : "左侧常驻会话列表";
+        desc: root.lang-en
+            ? "Dock the session list on the left instead of opening a welcome tab."
+            : "将会话列表固定停靠在左侧，打开的终端会话直接占据中央工作区。";
+        Switch {
+            on: root.welcome-as-sidebar;
+            toggled(v) => { root.set-welcome-as-sidebar(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Collapse resource monitor by default" : "默认收起服务器资源监控";
+        Switch {
+            on: root.collapse-sidebar-default;
+            toggled(v) => { root.collapse-sidebar-default = v; root.set-collapse-sidebar-default(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Collapse SFTP drawer by default" : "默认收起底部 SFTP 文件抽屉";
+        desc: root.lang-en
+            ? "Takes effect on next launch; reduces background overhead on jump hosts."
+            : "下次启动生效；在低配跳板机上可减少常驻面板开销。";
+        Switch {
+            on: root.collapse-sftp-default;
+            toggled(v) => { root.collapse-sftp-default = v; root.set-collapse-sftp-default(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Dockable quick commands" : "允许快捷命令停靠为侧栏";
+        desc: root.lang-en
+            ? "Allows the quick-command popup to be dragged and docked to a window edge."
+            : "允许把快捷命令弹窗拖动并停靠到窗口边缘。";
+        show-divider: false;
+        Switch {
+            on: root.quick-commands-as-sidebar;
+            toggled(v) => {
+                root.quick-commands-as-sidebar = v;
+                root.set-quick-commands-as-sidebar(v);
+            }
+        }
+    }
+
+    Rectangle { height: 24px; }
+    SectionHeader { text: root.lang-en ? "WALLPAPER & RENDERING" : "背景壁纸与渲染"; height: 26px; }
+    Text {
+        text: root.lang-en
+            ? "Pick an optional background wallpaper. Leave on None for the clean ChatGPT studio look."
+            : "可选背景壁纸。选择「无」即可保持简洁纯净的工作台外观。";
+        color: Theme.text-muted; font-size: 12px * Theme.panel-font; wrap: word-wrap;
+    }
+    Rectangle { height: 12px; }
+
+    builtin-wallpapers-scroll := ScrollView {
+        height: 106px;
+        width: 100%;
+        content-width: max(self.visible-width, builtin-wallpapers-row.preferred-width);
+        content-height: self.visible-height;
+
+        builtin-wallpapers-row := HorizontalLayout {
+            spacing: 11px;
+            alignment: start;
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "";
+                clicked => { root.set-wallpaper(""); }
+                Rectangle {
+                    width: 100%; height: 100%;
+                    background: Theme.window-base;
+                    Text {
+                        text: "\u{E14C}";
+                        font-family: "Material Icons"; color: Theme.text-muted;
+                        font-size: 22px * Theme.panel-font;
+                        width: 100%; height: 100%;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
+            }
+            Text { text: root.lang-en ? "None" : "无"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "builtin:light";
+                clicked => { root.set-wallpaper("builtin:light"); }
+                Rectangle {
+                    width: 100%; height: 100%;
+                    background: @linear-gradient(135deg, #eff3fb 0%, #d5e1f2 100%);
+                    Rectangle {
+                        x: parent.width * 0.66; y: -parent.height * 0.2;
+                        width: 56px; height: 56px; border-radius: 28px;
+                        background: #4a90e2; opacity: 0.30;
+                    }
+                }
+            }
+            Text { text: root.lang-en ? "Meat Light" : "简约·浅"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "builtin:dark";
+                clicked => { root.set-wallpaper("builtin:dark"); }
+                Rectangle {
+                    width: 100%; height: 100%;
+                    background: @linear-gradient(135deg, #10131a 0%, #1b2233 100%);
+                    Rectangle {
+                        x: parent.width * 0.66; y: -parent.height * 0.2;
+                        width: 56px; height: 56px; border-radius: 28px;
+                        background: #4a6ce0; opacity: 0.40;
+                    }
+                }
+            }
+            Text { text: root.lang-en ? "Meat Dark" : "简约·暗"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "builtin:tech";
+                clicked => { root.set-wallpaper("builtin:tech"); }
+                Rectangle {
+                    width: 100%; height: 100%;
+                    background: @linear-gradient(180deg, #05060f 0%, #0b1430 55%, #1a0a2e 100%);
+                    clip: true;
+                    Rectangle {
+                        x: parent.width * 0.5 - 16px; y: parent.height * 0.22;
+                        width: 32px; height: 32px; border-radius: 16px;
+                        background: @radial-gradient(circle, #ff5ea8 0%, #ff5ea800 70%);
+                    }
+                    Rectangle {
+                        y: parent.height * 0.58; width: parent.width; height: 2px;
+                        background: #19e6ff; opacity: 0.85;
+                    }
+                }
+            }
+            Text { text: root.lang-en ? "Fantasy 3048" : "幻想3048"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "builtin:ms";
+                clicked => { root.set-wallpaper("builtin:ms"); }
+                Image {
+                    width: 100%; height: 100%;
+                    source: @image-url("../../../assets/ms.jpg");
+                    image-fit: cover;
+                }
+            }
+            Text { text: "MS"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        VerticalLayout {
+            spacing: 5px;
+            WallpaperSwatch {
+                width: 100px;
+                selected: root.current-wallpaper == "builtin:miku";
+                clicked => { root.set-wallpaper("builtin:miku"); }
+                Image {
+                    width: 100%; height: 100%;
+                    source: @image-url("../../../assets/miku.jpg");
+                    image-fit: cover;
+                }
+            }
+            Text { text: "Miku"; font-size: 12px * Theme.panel-font;
+                   color: Theme.text-secondary; horizontal-alignment: center; }
+        }
+        }
+    }
+
+    Rectangle { height: 12px; }
+    SettingRow {
+        label: root.lang-en ? "Custom wallpaper image" : "自定义壁纸图片";
+        desc: root.wp-is-custom ? root.custom-wallpaper-name : (root.lang-en ? "Choose a local image file." : "选择本地图片作为背景。");
+        GhostButton {
+            text: root.lang-en ? "Choose file…" : "选择文件…";
+            clicked => { root.pick-wallpaper-file(); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Immersive colors" : "沉浸式配色";
+        desc: root.lang-en
+            ? "Recolor the interface from the wallpaper."
+            : "根据壁纸色彩自动调整界面色调。";
+        Switch {
+            on: root.immersive-colors;
+            toggled(v) => { root.set-immersive-colors(v); }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Wallpaper transparency" : "壁纸遮罩透明度";
+        desc: root.lang-en
+            ? "How much the wallpaper shows through panels and the terminal."
+            : "壁纸透过面板与终端背景的程度（未设置壁纸时不生效）。";
+        HorizontalLayout {
+            spacing: 8px;
+            Slider {
+                width: 150px;
+                minimum: 0;
+                maximum: 70;
+                value: (1.0 - root.wallpaper-overlay) * 100;
+                changed(v) => { root.wallpaper-overlay = 1.0 - v / 100; }
+                released(v) => { root.persist-wallpaper-overlay(1.0 - v / 100); }
+            }
+            Text {
+                text: "\{round((1.0 - root.wallpaper-overlay) * 100)}%";
+                color: Theme.text-secondary;
+                font-size: 12px * Theme.panel-font;
+                vertical-alignment: center;
+                width: 34px;
+            }
+        }
+    }
+    SettingRow {
+        label: root.lang-en ? "Graphics renderer" : "图形渲染器";
+        desc: root.renderer-restart-required
+            ? (root.lang-en ? "Restart MeatShell to apply the renderer change." : "重启 MeatShell 后渲染器设置才会生效。")
+            : (Theme.is-mac
+                ? (root.lang-en ? "CPU is the compatibility default. FemtoVG and Skia use GPU acceleration." : "CPU 是兼容性默认渲染器；FemtoVG 和 Skia 使用 GPU 加速。")
+                : (root.lang-en ? "Automatic tries GPU acceleration and falls back to software." : "自动模式优先尝试 GPU 加速，失败时回退到软件渲染。"));
+        show-divider: false;
+        ComboBox {
+            width: 150px;
+            model: Theme.is-mac
+                ? ["CPU", "FemtoVG", "Skia"]
+                : (root.lang-en
+                    ? ["Automatic", "GPU", "Software"]
+                    : ["自动", "GPU", "软件"]);
+            current-value: Theme.is-mac
+                ? (root.renderer-mode == "skia"
+                    ? "Skia"
+                    : root.renderer-mode == "femtovg" ? "FemtoVG" : "CPU")
+                : (root.renderer-mode == "auto"
+                    ? (root.lang-en ? "Automatic" : "自动")
+                    : root.renderer-mode == "gpu"
+                        ? "GPU"
+                        : (root.lang-en ? "Software" : "软件"));
+            selected(v) => {
+                if (Theme.is-mac && v == "CPU"
+                        && root.renderer-mode != "software") {
+                    root.renderer-mode = "software";
+                    root.set-renderer-mode("software");
+                    root.renderer-restart-required = true;
+                } else if (Theme.is-mac && v == "FemtoVG"
+                        && root.renderer-mode != "femtovg") {
+                    root.renderer-mode = "femtovg";
+                    root.set-renderer-mode("femtovg");
+                    root.renderer-restart-required = true;
+                } else if (Theme.is-mac && v == "Skia"
+                        && root.renderer-mode != "skia") {
+                    root.renderer-mode = "skia";
+                    root.set-renderer-mode("skia");
+                    root.renderer-restart-required = true;
+                } else if (!Theme.is-mac && (v == "Automatic" || v == "自动")
+                        && root.renderer-mode != "auto") {
+                    root.renderer-mode = "auto";
+                    root.set-renderer-mode("auto");
+                    root.renderer-restart-required = true;
+                } else if (!Theme.is-mac && v == "GPU" && root.renderer-mode != "gpu") {
+                    root.renderer-mode = "gpu";
+                    root.set-renderer-mode("gpu");
+                    root.renderer-restart-required = true;
+                } else if (!Theme.is-mac && (v == "Software" || v == "软件")
+                        && root.renderer-mode != "software") {
+                    root.renderer-mode = "software";
+                    root.set-renderer-mode("software");
+                    root.renderer-restart-required = true;
+                }
+            }
+        }
+    }
+}

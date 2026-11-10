@@ -1,0 +1,331 @@
+// SFTP bookmarks & places dropdown buttons (remote SftpPlacesButton + local LocalPlacesButton).
+
+import { Theme, TooltipState } from "../../theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { OutlineIcon } from "../../widgets.slint";
+import { SftpLocalPlace, SftpMenuItem, SftpPlaceRow } from "sftp_types_and_buttons.slint";
+
+// Toolbar button that opens the path bookmarks + recent folders menu (#500).
+export component SftpPlacesButton inherits Rectangle {
+    in property <[string]> bookmarks;
+    in property <[string]> recent;
+    in property <string> current-path;
+    in property <bool> bookmarked: false;
+    callback opened();
+    callback toggle-bookmark();
+    callback navigate(string);
+    callback remove-bookmark(string);
+    callback clear-recent();
+    property <string> tip: @tr("Bookmarks & recent folders");
+    property <length> rows-h:
+        34px
+        + 24px + max(1, root.bookmarks.length) * 29px
+        + 10px
+        + 24px + max(1, root.recent.length) * 29px
+        + (root.recent.length > 0 ? 30px : 0px);
+    width: 28px;
+    height: 26px;
+    border-radius: 6px;
+    background: places-ta.has-hover ? Theme.bg-hover : transparent;
+    places-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tip);
+            root.opened();
+            places-menu.show();
+        }
+        changed has-hover => {
+            if (self.has-hover) {
+                TooltipState.show(root.tip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tip);
+            }
+        }
+    }
+    OutlineIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: "bookmark";
+        icon-size: 15px * Theme.ui-scale;
+        color: root.bookmarked ? #f59e0b : (places-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+    }
+    places-menu := PopupWindow {
+        x: min(0px, root.width - self.width);
+        y: root.height + 4px;
+        width: 310px;
+        height: min(380px, root.rows-h + 16px);
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000060;
+            ScrollView {
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 2px;
+                    // Quick bookmark toggle row right at the top of the popover
+                    Rectangle {
+                        height: 30px;
+                        border-radius: 6px;
+                        background: bm-act-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated.with-alpha(0.6);
+                        bm-act-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle-bookmark(); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            OutlineIcon {
+                                y: (parent.height - self.height) / 2;
+                                name: "star";
+                                icon-size: 14px;
+                                color: root.bookmarked ? #f59e0b : Theme.text-secondary;
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.bookmarked ? @tr("Bookmarked current folder (click to remove)") : @tr("Bookmark current folder");
+                                color: Theme.text-primary;
+                                font-size: Theme.fs-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    Rectangle { height: 4px; }
+                    Text {
+                        height: 20px;
+                        text: "  " + @tr("Bookmarks");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if root.bookmarks.length == 0 : Text {
+                        height: 26px;
+                        text: "  " + @tr("No bookmarked folders yet");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for b in root.bookmarks : SftpPlaceRow {
+                        path: b;
+                        icon: "star";
+                        current: b == root.current-path;
+                        removable: true;
+                        go => { root.navigate(b); }
+                        remove => { root.remove-bookmark(b); }
+                    }
+                    Rectangle { height: 6px; }
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+                    Rectangle { height: 4px; }
+                    Text {
+                        height: 20px;
+                        text: "  " + @tr("Recent");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if root.recent.length == 0 : Text {
+                        height: 26px;
+                        text: "  " + @tr("Folders you open will show up here.");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for r in root.recent : SftpPlaceRow {
+                        path: r;
+                        icon: "history";
+                        current: r == root.current-path;
+                        go => { root.navigate(r); }
+                    }
+                    if root.recent.length > 0 : SftpMenuItem {
+                        label: @tr("Clear recent");
+                        icon: "trash";
+                        tint: Theme.text-secondary;
+                        clicked => { root.clear-recent(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Places dropdown for the local pane: home, desktop, downloads, documents and
+// the machine's drives (#532).
+export component LocalPlacesButton inherits Rectangle {
+    in property <[SftpLocalPlace]> quick-places;
+    in property <[SftpLocalPlace]> drive-places;
+    in property <[string]> bookmarks;
+    in property <[string]> recent;
+    in property <string> current-path: "";
+    in property <bool> bookmarked: false;
+    callback opened();
+    callback toggle-bookmark();
+    callback navigate(string);
+    callback remove-bookmark(string);
+    callback clear-recent();
+    property <length> rows-h:
+        34px
+        + 22px + max(1, root.bookmarks.length) * 29px
+        + 8px
+        + 22px + (root.quick-places.length + root.drive-places.length) * 29px
+        + 8px
+        + 22px + max(1, root.recent.length) * 29px
+        + (root.recent.length > 0 ? 29px : 0px);
+    property <length> menu-h: min(390px, root.rows-h + 16px);
+    in property <length> pane-height: 0px;
+    property <string> tip: @tr("Local bookmarks & common folders");
+    width: 28px;
+    height: 26px;
+    border-radius: 6px;
+    background: places-ta.has-hover ? Theme.bg-hover : transparent;
+    places-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            TooltipState.hide(root.tip);
+            root.opened();
+            places-menu.show();
+        }
+        changed has-hover => {
+            if (self.has-hover) {
+                TooltipState.show(root.tip, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            } else {
+                TooltipState.hide(root.tip);
+            }
+        }
+    }
+    OutlineIcon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        name: "bookmark";
+        icon-size: 15px * Theme.ui-scale;
+        color: root.bookmarked ? #f59e0b : (places-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+    }
+    places-menu := PopupWindow {
+        x: 0px;
+        y: root.pane-height > root.menu-h + 100px ? root.height + 4px : -(root.menu-h + 4px);
+        width: 290px;
+        height: root.menu-h;
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000060;
+            ScrollView {
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 2px;
+                    Rectangle {
+                        height: 30px;
+                        border-radius: 6px;
+                        background: lbm-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated.with-alpha(0.6);
+                        lbm-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle-bookmark(); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            OutlineIcon {
+                                y: (parent.height - self.height) / 2;
+                                name: "star";
+                                icon-size: 14px;
+                                color: root.bookmarked ? #f59e0b : Theme.text-secondary;
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: root.bookmarked ? @tr("Bookmarked current folder (click to remove)") : @tr("Bookmark current folder");
+                                color: Theme.text-primary;
+                                font-size: Theme.fs-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    Rectangle { height: 4px; }
+                    Text {
+                        height: 20px;
+                        text: "  " + @tr("Bookmarks");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if root.bookmarks.length == 0 : Text {
+                        height: 26px;
+                        text: "  " + @tr("No bookmarked folders yet");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for b in root.bookmarks : SftpPlaceRow {
+                        path: b;
+                        icon: "star";
+                        current: b == root.current-path;
+                        removable: true;
+                        go => { root.navigate(b); }
+                        remove => { root.remove-bookmark(b); }
+                    }
+                    if root.quick-places.length > 0 || root.drive-places.length > 0 : Rectangle {
+                        height: 8px;
+                        Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.border-subtle; }
+                    }
+                    for place in root.quick-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: "folder";
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                    for place in root.drive-places : SftpPlaceRow {
+                        label: place.label;
+                        path: place.path;
+                        icon: "folder";
+                        current: place.current;
+                        go => { root.navigate(place.path); }
+                    }
+                    Rectangle {
+                        height: 8px;
+                        Rectangle { y: 4px; height: 1px; width: 100%; background: Theme.border-subtle; }
+                    }
+                    Text {
+                        height: 20px;
+                        text: "  " + @tr("Recent");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if root.recent.length == 0 : Text {
+                        height: 26px;
+                        text: "  " + @tr("Folders you open will show up here.");
+                        color: Theme.text-muted;
+                        font-size: Theme.fs-xs;
+                        vertical-alignment: center;
+                    }
+                    for r in root.recent : SftpPlaceRow {
+                        path: r;
+                        icon: "history";
+                        current: r == root.current-path;
+                        go => { root.navigate(r); }
+                    }
+                    if root.recent.length > 0 : SftpMenuItem {
+                        label: @tr("Clear recent");
+                        icon: "trash";
+                        tint: Theme.text-secondary;
+                        clicked => { root.clear-recent(); }
+                    }
+                }
+            }
+        }
+    }
+}

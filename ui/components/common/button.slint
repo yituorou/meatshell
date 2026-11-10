@@ -1,0 +1,69 @@
+import { Theme } from "../../theme.slint";
+
+// --- PrimaryButton ---------------------------------------------------------
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    height: 30px;
+    min-width: 80px;
+    border-radius: Theme.radius-sm;
+    background: disabled
+        ? Theme.bg-elevated
+        : (touch.pressed ? Theme.accent-pressed
+           : (touch.has-hover ? Theme.accent-hover : Theme.accent));
+    animate background { duration: 120ms; }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+        Text {
+            text: root.text;
+            color: disabled ? Theme.text-muted : white;
+            font-size: Theme.fs-md;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: !disabled;
+        mouse-cursor: disabled ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// --- GhostButton -----------------------------------------------------------
+export component GhostButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    height: 30px;
+    min-width: 80px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.border-strong : Theme.border-subtle;
+    background: touch.pressed ? Theme.bg-active
+        : (touch.has-hover ? Theme.bg-hover : Theme.bg-elevated.with-alpha(0.55));
+    animate background, border-color { duration: 120ms; }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+        Text {
+            text: root.text;
+            color: touch.has-hover ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.fs-sm;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}

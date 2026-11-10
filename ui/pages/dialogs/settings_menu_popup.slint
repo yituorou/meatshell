@@ -1,0 +1,216 @@
+import { Theme } from "../../theme.slint";
+
+export component SettingsMenuPopup inherits Rectangle {
+    in-out property <bool> settings-open: false;
+    in-out property <bool> interface-open: false;
+    in-out property <bool> batch-import-open: false;
+    in-out property <string> batch-import-text: "";
+    in-out property <bool> shortcuts-open: false;
+    in-out property <bool> about-open: false;
+    in property <bool> lang-en: false;
+    in property <string> ssh-import-hint: "";
+
+    callback export-sessions();
+    callback import-sessions();
+    callback import-ssh-config();
+    callback set-language(string);
+
+    width: 198px;
+    // Size to the menu's content so adding/removing items (or the
+    // ~/.ssh/config import hint expanding) never overflows the card (#150-fix).
+    height: menu-vl.preferred-height;
+    visible: root.settings-open;
+    background: Theme.popup-bg;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    drop-shadow-blur: 14px;
+    drop-shadow-color: #00000060;
+
+    TouchArea {}   // swallow events so they don't reach the terminal
+
+    menu-vl := VerticalLayout {
+        padding: 4px;
+        spacing: 1px;
+        // Interface (font) settings.
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: iface-ta.has-hover ? Theme.bg-hover : transparent;
+            iface-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.interface-open = true;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E429}"; font-family: "Material Icons"; // tune
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "Interface" : "界面";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        // Export all connections to a portable file (#46).
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: export-ta.has-hover ? Theme.bg-hover : transparent;
+            export-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.export-sessions();
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E5D8}"; font-family: "Material Icons"; // ↑ export
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "Export connections" : "导出连接";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        // Import connections from a portable file (#46).
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: impconn-ta.has-hover ? Theme.bg-hover : transparent;
+            impconn-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.import-sessions();
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E5DB}"; font-family: "Material Icons"; // ↓ import
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "Import connections" : "导入连接";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        // Batch-import connections from pasted text (#150).
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: batchimp-ta.has-hover ? Theme.bg-hover : transparent;
+            batchimp-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.batch-import-text = "";
+                    root.batch-import-open = true;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E1C3}"; font-family: "Material Icons"; // table/rows
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "Batch import (text)" : "批量导入(文本)";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        // Import hosts from ~/.ssh/config.
+        Rectangle {
+            height: root.ssh-import-hint != "" ? 46px : 28px;
+            border-radius: Theme.radius-sm;
+            background: import-ta.has-hover ? Theme.bg-hover : transparent;
+            import-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.import-ssh-config(); }
+            }
+            HorizontalLayout {
+                padding-left: 8px; padding-right: 8px; spacing: 8px;
+                Text { text: "\u{E890}"; font-family: "Material Icons"; // input/import
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text { text: @tr("Import ~/.ssh/config"); color: Theme.text-primary; font-size: Theme.fs-md;
+                           vertical-alignment: center; }
+                    if root.ssh-import-hint != "" : Text {
+                        text: root.ssh-import-hint;
+                        color: Theme.text-muted; font-size: Theme.fs-xs;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+        // Language toggle: shows the language you'll switch TO.
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: lang-ta.has-hover ? Theme.bg-hover : transparent;
+            lang-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.set-language(root.lang-en ? "zh" : "en");
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E894}"; font-family: "Material Icons"; // language/translate
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "切换到中文" : "Switch to English";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        // Keyboard shortcuts reference (#103).
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: keys-ta.has-hover ? Theme.bg-hover : transparent;
+            keys-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.shortcuts-open = true;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E312}"; font-family: "Material Icons"; // keyboard
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: root.lang-en ? "Shortcuts" : "快捷键";
+                       color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+        Rectangle {
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: about-ta.has-hover ? Theme.bg-hover : transparent;
+            about-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.settings-open = false;
+                    root.about-open = true;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 8px; spacing: 8px;
+                Text { text: "\u{E88E}"; font-family: "Material Icons"; // Info
+                       color: Theme.text-secondary; font-size: Theme.fs-sm;
+                       vertical-alignment: center; }
+                Text { text: @tr("About"); color: Theme.text-primary; font-size: Theme.fs-md;
+                       vertical-alignment: center; horizontal-stretch: 1; }
+            }
+        }
+    }
+}

@@ -118,7 +118,6 @@ fn upload_local_paths(
         for path in paths {
             handle.upload(std::path::PathBuf::from(path), remote_dir.clone());
         }
-        window.set_download_open(true);
     }
 }
 
@@ -157,7 +156,6 @@ fn download_into_local_pane(
     if let Ok(handles) = sftp_handles.lock() {
         if let Some(handle) = handles.get(tab_id) {
             handle.download_into(remotes, local_dir, conflict);
-            window.set_download_open(true);
         }
     }
 }
@@ -387,6 +385,22 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
             clear_sftp_selection(model, tab_id.as_str());
         });
     }
+    {
+        let weak = window.as_weak();
+        window.on_sftp_local_sort_request(
+            move |tab_id: SharedString, key: SharedString, dir: i32| {
+                let Some(w) = weak.upgrade() else { return };
+                let terminals = w.get_terminals();
+                let Some(tm) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+                    return;
+                };
+                update_terminal_row(tm, tab_id.as_str(), |row| {
+                    row.sftp_local_entries =
+                        sorted_sftp_entries_from_model(&row.sftp_local_entries, key.as_str(), dir);
+                });
+            },
+        );
+    }
 }
 
 pub(super) fn wire_sftp_callbacks(
@@ -499,17 +513,11 @@ pub(super) fn wire_sftp_callbacks(
                         {
                             h.download(remote_path, preset, conflict);
                         }
-                        // Pop the transfers panel so progress is visible (user
-                        // request: any download opens the download popup).
-                        if let Some(w) = weak.upgrade() {
-                            w.set_download_open(true);
-                        }
                     }
                 }
                 return;
             }
             let sftp_handles = sftp_handles.clone();
-            let weak = weak.clone();
             std::thread::spawn(move || {
                 if let Some(dir) = owner.file().pick_folder() {
                     let local_dir = dir.to_string_lossy().to_string();
@@ -524,7 +532,6 @@ pub(super) fn wire_sftp_callbacks(
                             }
                         }
                     }
-                    let _ = weak.upgrade_in_event_loop(|w| w.set_download_open(true));
                 }
             });
         });
@@ -601,7 +608,6 @@ pub(super) fn wire_sftp_callbacks(
             }
             let sync_targets = upload_sync_targets(&w, &sftp_handles, &tab_id);
             queue_uploads(&sftp_handles, &tab_id, &remote_dir, &locals, &sync_targets);
-            w.set_download_open(true);
             set_sftp_status(
                 &w,
                 &tab_id,
@@ -682,6 +688,14 @@ pub(super) fn wire_sftp_callbacks(
         });
     }
 
+    {
+        window.on_sftp_entry_matches(
+            |name: SharedString, file_type: SharedString, query: SharedString| {
+                sftp_entry_matches_query(name.as_str(), file_type.as_str(), query.as_str())
+            },
+        );
+    }
+
     // SFTP file-list sorting (#248): click a header to cycle asc -> desc -> default.
     {
         let weak = window.as_weak();
@@ -693,17 +707,26 @@ pub(super) fn wire_sftp_callbacks(
             };
             update_terminal_row(tm, tab_id.as_str(), |row| {
                 let key = key.to_string();
-                let next_dir = if row.sftp_sort_key.as_str() != key || row.sftp_sort_dir == 0 {
+                let cur_key = if row.sftp_sort_key.is_empty() {
+                    "name"
+                } else {
+                    row.sftp_sort_key.as_str()
+                };
+                let cur_dir = if row.sftp_sort_dir == 0 {
                     1
-                } else if row.sftp_sort_dir > 0 {
+                } else {
+                    row.sftp_sort_dir
+                };
+                let next_dir = if cur_key != key {
+                    1
+                } else if cur_dir > 0 {
                     -1
                 } else {
-                    0
+                    1
                 };
-                let next_key = if next_dir == 0 { String::new() } else { key };
                 row.sftp_entries =
-                    sorted_sftp_entries_from_model(&row.sftp_entries, &next_key, next_dir);
-                row.sftp_sort_key = next_key.into();
+                    sorted_sftp_entries_from_model(&row.sftp_entries, &key, next_dir);
+                row.sftp_sort_key = key.into();
                 row.sftp_sort_dir = next_dir;
             });
         });
@@ -884,10 +907,8 @@ pub(super) fn wire_sftp_callbacks(
                         }
                     }
                 }
-                w.set_download_open(true);
             } else {
                 let sftp_handles = sftp_handles.clone();
-                let weak2 = weak.clone();
                 let tab = tab_id.to_string();
                 std::thread::spawn(move || {
                     if let Some(dir) = owner.file().pick_folder() {
@@ -909,7 +930,6 @@ pub(super) fn wire_sftp_callbacks(
                                 }
                             }
                         }
-                        let _ = weak2.upgrade_in_event_loop(|w| w.set_download_open(true));
                     }
                 });
             }
@@ -966,7 +986,6 @@ pub(super) fn wire_sftp_callbacks(
                         return;
                     };
                     src.copy_to(paths, dst.commands.clone(), target_dir);
-                    w.set_download_open(true);
                 }
             },
         );
@@ -999,7 +1018,6 @@ pub(super) fn wire_sftp_callbacks(
                         return;
                     };
                     src.copy_to(paths, dst.commands.clone(), target_dir);
-                    w.set_download_open(true);
                 }
                 clear_sftp_selection(tm, tab_id.as_str());
             },

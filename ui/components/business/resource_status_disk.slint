@@ -1,0 +1,388 @@
+import { Theme } from "../../theme.slint";
+import { OutlineIcon, IconButton } from "../../widgets.slint";
+import { DiskInfo } from "resource_stat_row.slint";
+
+// --- StatusBlock -----------------------------------------------------------
+// Unified Top Header + Host Identity Card + Quick Actions (System Info / Processes).
+export component StatusBlock inherits VerticalLayout {
+    in property <int> conn-state;
+    in property <string> status-heading: @tr("Status");
+    in property <string> connection-state;
+    in property <string> conn-host;
+    in property <bool> is-local-mode: true;
+    in property <bool> lang-en: false;
+    in property <bool> system-info-available;
+    in property <bool> proc-available;
+    in property <string> collapse-icon;
+    callback dock-drag-move(length, length);
+    callback dock-drag-end();
+    callback collapse();
+    callback switch-to-sessions();
+    callback show-system-info();
+    callback show-processes();
+    callback copy-host(string);
+    property <bool> copied;
+
+    vertical-stretch: 0;
+    spacing: 8px * Theme.ui-scale;
+
+    // 1. Panel Titlebar (with drag handle, quick switch to Sessions, and collapse button)
+    Rectangle {
+        z: 60;
+        height: 32px * Theme.ui-scale;
+        background: transparent;
+
+        TouchArea {
+            mouse-cursor: move;
+            moved => {
+                if (self.pressed) {
+                    root.dock-drag-move(self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                }
+            }
+            pointer-event(ev) => {
+                if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+                    root.dock-drag-end();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 2px;
+            padding-right: 2px;
+            spacing: 7px;
+
+            // Live status indicator with soft outer ring
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 7px;
+                    background: (root.conn-state == 1 ? Theme.success
+                              : root.conn-state == 2 ? Theme.warning
+                              : root.is-local-mode ? Theme.accent
+                              : Theme.text-muted).with-alpha(0.18);
+                    Rectangle {
+                        x: 3px; y: 3px;
+                        width: 8px; height: 8px;
+                        border-radius: 4px;
+                        background: root.conn-state == 1 ? Theme.success
+                                  : root.conn-state == 2 ? Theme.warning
+                                  : root.is-local-mode ? Theme.accent
+                                  : Theme.text-muted;
+                    }
+                }
+            }
+
+            Text {
+                text: root.is-local-mode
+                    ? (root.lang-en ? "Local Monitor" : "本机监控")
+                    : (root.lang-en ? "Server Health" : "服务器监控");
+                color: Theme.text-primary;
+                font-size: Theme.fs-lg;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            // Quick switch back to Sessions list on the left
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    size: 28px * Theme.ui-scale;
+                    glyph: "sessions";
+                    font-family: "Material Icons";
+                    tooltip: root.lang-en ? "Switch to sessions" : "切换到会话列表";
+                    tooltip-left: true;
+                    clicked => { root.switch-to-sessions(); }
+                }
+            }
+
+            // Collapse panel button
+            VerticalLayout {
+                alignment: center;
+                IconButton {
+                    size: 28px * Theme.ui-scale;
+                    glyph: root.collapse-icon;
+                    font-family: "Material Icons";
+                    tooltip: root.lang-en ? "Collapse monitor" : "收起监控面板";
+                    tooltip-left: true;
+                    clicked => { root.collapse(); }
+                }
+            }
+        }
+    }
+
+    // 2. Host Identity & Quick Action Card (System Info + Process Manager)
+    Rectangle {
+        z: 40;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+        height: host-card-vl.preferred-height;
+
+        host-card-vl := VerticalLayout {
+            padding: 10px * Theme.ui-scale;
+            spacing: 8px * Theme.ui-scale;
+
+            // Host / IP row (click to copy)
+            Rectangle {
+                height: 24px * Theme.ui-scale;
+                border-radius: 6px;
+                background: (root.conn-host != "" && ip-ta.has-hover) ? Theme.bg-hover : transparent;
+                ip-ta := TouchArea {
+                    enabled: root.conn-host != "";
+                    mouse-cursor: root.conn-host != "" ? pointer : default;
+                    clicked => {
+                        root.copy-host(root.conn-host);
+                        root.copied = true;
+                        copied-timer.running = true;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    spacing: 6px;
+                    VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: root.is-local-mode ? "terminal" : "globe";
+                            color: Theme.text-secondary;
+                            icon-size: 14px * Theme.ui-scale;
+                        }
+                    }
+                    Text {
+                        text: root.connection-state;
+                        color: Theme.text-primary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.fs-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if root.copied : Text {
+                        text: @tr("Copied");
+                        color: Theme.success;
+                        font-size: 11px * Theme.ui-scale;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if !root.copied && root.conn-host != "" : VerticalLayout {
+                        alignment: center;
+                        OutlineIcon {
+                            name: "copy";
+                            color: ip-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+                            icon-size: 13px * Theme.ui-scale;
+                        }
+                    }
+                }
+            }
+
+            // Prominent dual action pills: System Info & Process Manager
+            if root.system-info-available || root.proc-available : HorizontalLayout {
+                spacing: 8px * Theme.ui-scale;
+                height: 28px * Theme.ui-scale;
+
+                if root.system-info-available : Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 7px;
+                    border-width: 1px;
+                    border-color: sys-btn-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                    background: sys-btn-ta.pressed ? Theme.bg-active
+                              : sys-btn-ta.has-hover ? Theme.bg-hover
+                              : (Theme.dark ? #1e1e1e : #f5f6f8);
+                    sys-btn-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-system-info(); }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        VerticalLayout {
+                            alignment: center;
+                            OutlineIcon {
+                                name: "info";
+                                color: sys-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                                icon-size: 13px * Theme.ui-scale;
+                            }
+                        }
+                        Text {
+                            text: root.lang-en ? "Server Info" : "服务器信息";
+                            color: sys-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            font-size: 11.5px * Theme.ui-scale;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.proc-available : Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 7px;
+                    border-width: 1px;
+                    border-color: proc-btn-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                    background: proc-btn-ta.pressed ? Theme.bg-active
+                              : proc-btn-ta.has-hover ? Theme.bg-hover
+                              : (Theme.dark ? #1e1e1e : #f5f6f8);
+                    proc-btn-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.show-processes(); }
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        VerticalLayout {
+                            alignment: center;
+                            OutlineIcon {
+                                name: "cpu";
+                                color: proc-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                                icon-size: 13px * Theme.ui-scale;
+                            }
+                        }
+                        Text {
+                            text: root.lang-en ? "Processes" : "进程管理";
+                            color: proc-btn-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                            font-size: 11.5px * Theme.ui-scale;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    copied-timer := Timer {
+        interval: 1400ms;
+        running: false;
+        triggered => { root.copied = false; self.running = false; }
+    }
+}
+
+// --- DiskBlock -------------------------------------------------------------
+// Elevated card for clean disk mount usage with proper clipping.
+export component DiskBlock inherits Rectangle {
+    in property <[DiskInfo]> disks;
+    in property <bool> lang-en: false;
+
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.dark ? Theme.bg-elevated : Theme.bg-root;
+    clip: true;
+
+    VerticalLayout {
+        padding: 10px * Theme.ui-scale;
+        spacing: 6px * Theme.ui-scale;
+
+        HorizontalLayout {
+            height: 18px * Theme.ui-scale;
+            Text {
+                text: root.lang-en ? "Storage Mounts" : "磁盘存储";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                font-weight: 600;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            Text {
+                text: @tr("Free/Total");
+                color: Theme.text-muted;
+                font-size: 11px * Theme.ui-scale;
+                vertical-alignment: center;
+            }
+        }
+
+        flick := Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: max(self.height, disk-col.preferred-height);
+
+            if root.disks.length == 0 : Rectangle {
+                width: 100%;
+                height: parent.height;
+                Text {
+                    text: root.lang-en ? "No disk data available" : "暂无可用磁盘数据";
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            disk-col := VerticalLayout {
+                alignment: start;
+                spacing: 6px * Theme.ui-scale;
+                for d[i] in root.disks : Rectangle {
+                    height: 38px * Theme.ui-scale;
+                    border-radius: 6px;
+                    background: ta.has-hover ? Theme.bg-hover : transparent;
+                    ta := TouchArea {}
+
+                    VerticalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+                        spacing: 5px;
+                        alignment: center;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: d.path;
+                                color: Theme.text-primary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.fs-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: d.detail;
+                                color: Theme.text-muted;
+                                font-family: Theme.font-mono;
+                                font-size: 11px * Theme.ui-scale;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: Math.round(d.percent * 100) + "%";
+                                color: d.percent >= 0.90 ? Theme.danger
+                                     : d.percent >= 0.80 ? Theme.warning
+                                     : Theme.text-secondary;
+                                font-family: Theme.font-mono;
+                                font-size: 11px * Theme.ui-scale;
+                                font-weight: 600;
+                                min-width: 30px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Rectangle {
+                            height: 4px * Theme.ui-scale;
+                            border-radius: 2px;
+                            background: Theme.dark ? #262626 : #ebedf0;
+                            clip: true;
+                            Rectangle {
+                                x: 0;
+                                y: 0;
+                                height: parent.height;
+                                width: max(d.percent > 0.005 ? 3px : 0px, parent.width * clamp(d.percent, 0.0, 1.0));
+                                border-radius: 2px;
+                                background: d.percent >= 0.90 ? Theme.danger
+                                          : d.percent >= 0.80 ? Theme.warning
+                                          : Theme.accent;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

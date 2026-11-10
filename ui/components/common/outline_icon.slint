@@ -1,0 +1,167 @@
+import { Theme } from "../../theme.slint";
+
+// --- OutlineIcon -----------------------------------------------------------
+// ChatGPT Desktop-style thin-stroke (1.75px) 24×24 vector outline icon.
+// Maps both semantic names ("sessions", "monitor", "settings", ...) and
+// legacy Material Icons codepoints ("\u{E875}", "\u{E85C}", ...) to crisp
+// rounded-cap vector strokes.
+export component OutlineIcon {
+    in property <string> name;
+    in property <brush> color: Theme.text-secondary;
+    in property <length> icon-size: 18px;
+    in property <length> stroke-w: 1.75px;
+
+    width: root.icon-size;
+    height: root.icon-size;
+
+    property <string> svg-path:
+        (root.name == "sessions" || root.name == "\u{E875}" || root.name == "\u{E88A}")
+            ? "M 4 5 A 2 2 0 0 1 6 3 H 18 A 2 2 0 0 1 20 5 V 9 A 2 2 0 0 1 18 11 H 6 A 2 2 0 0 1 4 9 Z M 4 15 A 2 2 0 0 1 6 13 H 18 A 2 2 0 0 1 20 15 V 19 A 2 2 0 0 1 18 21 H 6 A 2 2 0 0 1 4 19 Z M 8 7 H 8.05 M 8 17 H 8.05"
+        : (root.name == "monitor" || root.name == "\u{E85C}" || root.name == "\u{E871}")
+            ? "M 4 4 H 20 A 2 2 0 0 1 22 6 V 18 A 2 2 0 0 1 20 20 H 4 A 2 2 0 0 1 2 18 V 6 A 2 2 0 0 1 4 4 Z M 6 12 H 8.5 L 10.5 7.5 L 13.5 16.5 L 15.5 12 H 18"
+        : (root.name == "bolt" || root.name == "\u{E3E7}")
+            ? "M 13 2 L 4 14 H 12 L 11 22 L 20 10 H 12 Z"
+        : (root.name == "transfer" || root.name == "\u{E8D5}")
+            ? "M 7 4 V 20 M 3 8 L 7 4 L 11 8 M 17 20 V 4 M 13 16 L 17 20 L 21 16"
+        : (root.name == "sun" || root.name == "\u{E518}")
+            ? "M 12 8 A 4 4 0 1 0 12 16 A 4 4 0 1 0 12 8 Z M 12 2 V 4 M 12 20 V 22 M 4.93 4.93 L 6.34 6.34 M 17.66 17.66 L 19.07 19.07 M 2 12 H 4 M 20 12 H 22 M 6.34 17.66 L 4.93 19.07 M 19.07 4.93 L 17.66 6.34"
+        : (root.name == "moon" || root.name == "\u{E51C}")
+            ? "M 21 12.79 A 9 9 0 1 1 11.21 3 A 7 7 0 0 0 21 12.79 Z"
+        : (root.name == "update" || root.name == "\u{E2C0}")
+            ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 8 V 16 M 8.5 12.5 L 12 16 L 15.5 12.5"
+        : (root.name == "info" || root.name == "\u{E88E}")
+            ? "M 12 3 A 9 9 0 1 0 12 21 A 9 9 0 1 0 12 3 Z M 12 16 V 11 M 12 8 H 12.05"
+        : (root.name == "settings" || root.name == "\u{E8B8}")
+            ? "M 12 9 A 3 3 0 1 0 12 15 A 3 3 0 1 0 12 9 Z M 19.4 15 A 1.65 1.65 0 0 0 19.73 16.82 L 19.79 16.88 A 2 2 0 1 1 16.96 19.71 L 16.9 19.65 A 1.65 1.65 0 0 0 15.08 19.32 A 1.65 1.65 0 0 0 14 20.83 V 21 A 2 2 0 1 1 10 21 V 20.91 A 1.65 1.65 0 0 0 8.92 19.4 A 1.65 1.65 0 0 0 7.1 19.73 L 7.04 19.79 A 2 2 0 1 1 4.21 16.96 L 4.27 16.9 A 1.65 1.65 0 0 0 4.6 15.08 A 1.65 1.65 0 0 0 3.09 14 H 3 A 2 2 0 1 1 3 10 H 3.09 A 1.65 1.65 0 0 0 4.6 8.92 A 1.65 1.65 0 0 0 4.27 7.1 L 4.21 7.04 A 2 2 0 1 1 7.04 4.21 L 7.1 4.27 A 1.65 1.65 0 0 0 8.92 4.6 H 9 A 1.65 1.65 0 0 0 10 3.09 V 3 A 2 2 0 1 1 14 3 V 3.09 A 1.65 1.65 0 0 0 15.08 4.6 A 1.65 1.65 0 0 0 16.9 4.27 L 16.96 4.21 A 2 2 0 1 1 19.79 7.04 L 19.73 7.1 A 1.65 1.65 0 0 0 19.4 8.92 V 9 A 1.65 1.65 0 0 0 20.91 10 H 21 A 2 2 0 1 1 21 14 H 20.91 A 1.65 1.65 0 0 0 19.4 15 Z"
+        : (root.name == "plus" || root.name == "\u{E145}" || root.name == "+")
+            ? "M 12 5 V 19 M 5 12 H 19"
+        : (root.name == "folder-plus" || root.name == "\u{E2CC}")
+            ? "M 22 19 A 2 2 0 0 1 20 21 H 4 A 2 2 0 0 1 2 19 V 5 A 2 2 0 0 1 4 3 H 9 L 11 6 H 20 A 2 2 0 0 1 22 8 Z M 12 11 V 17 M 9 14 H 15"
+        : (root.name == "file-plus" || root.name == "\u{E89C}")
+            ? "M 14 2 H 6 A 2 2 0 0 0 4 4 V 20 A 2 2 0 0 0 6 22 H 18 A 2 2 0 0 0 20 20 V 8 Z M 14 2 V 8 H 20 M 12 18 V 12 M 9 15 H 15"
+        : (root.name == "search" || root.name == "\u{E8B6}")
+            ? "M 11 4 A 7 7 0 1 0 11 18 A 7 7 0 1 0 11 4 Z M 20 20 L 16.15 16.15"
+        : (root.name == "chevron-left" || root.name == "\u{E5CB}")
+            ? "M 15 18 L 9 12 L 15 6"
+        : (root.name == "chevron-right" || root.name == "\u{E5CC}")
+            ? "M 9 18 L 15 12 L 9 6"
+        : (root.name == "chevron-up" || root.name == "\u{E5CE}")
+            ? "M 18 15 L 12 9 L 6 15"
+        : (root.name == "chevron-down" || root.name == "\u{E5CF}")
+            ? "M 6 9 L 12 15 L 18 9"
+        : (root.name == "close" || root.name == "\u{E5CD}" || root.name == "×")
+            ? "M 18 6 L 6 18 M 6 6 L 18 18"
+        : (root.name == "refresh" || root.name == "\u{E5D5}")
+            ? "M 21 12 A 9 9 0 0 1 6.3 19 L 3 16 M 3 12 A 9 9 0 0 1 17.7 5 L 21 8 M 21 3 V 8 H 16 M 3 21 V 16 H 8"
+        : (root.name == "pin" || root.name == "\u{F10D}")
+            ? "M 12 17 V 22 M 5 17 H 19 V 15 L 17 13 V 7 L 18 5 H 6 L 7 7 V 13 L 5 15 Z"
+        : (root.name == "code" || root.name == "\u{E86F}")
+            ? "M 16 18 L 22 12 L 16 6 M 8 6 L 2 12 L 8 18"
+        : (root.name == "sync" || root.name == "\u{E8D4}")
+            ? "M 8 3 H 5 A 2 2 0 0 0 3 5 V 8 M 21 8 V 5 A 2 2 0 0 0 19 3 H 16 M 16 21 H 19 A 2 2 0 0 0 21 19 V 16 M 3 16 V 19 A 2 2 0 0 0 5 21 H 8 M 8 12 H 16 M 12 8 V 16"
+        : (root.name == "terminal" || root.name == "\u{E30A}" || root.name == "\u{E8C7}")
+            ? "M 4 17 L 10 11 L 4 5 M 12 19 H 20"
+        : (root.name == "upload" || root.name == "\u{E2C6}")
+            ? "M 21 15 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 15 M 17 8 L 12 3 L 7 8 M 12 3 V 15"
+        : (root.name == "download" || root.name == "\u{E2C4}")
+            ? "M 21 15 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 15 M 7 10 L 12 15 L 17 10 M 12 15 V 3"
+        : (root.name == "folder" || root.name == "\u{E2C7}" || root.name == "\u{E2C8}")
+            ? "M 22 19 A 2 2 0 0 1 20 21 H 4 A 2 2 0 0 1 2 19 V 5 A 2 2 0 0 1 4 3 H 9 L 11 6 H 20 A 2 2 0 0 1 22 8 Z"
+        : (root.name == "file" || root.name == "\u{E873}")
+            ? "M 14 2 H 6 A 2 2 0 0 0 4 4 V 20 A 2 2 0 0 0 6 22 H 18 A 2 2 0 0 0 20 20 V 8 Z M 14 2 V 8 H 20"
+        : (root.name == "trash" || root.name == "\u{E872}")
+            ? "M 3 6 H 21 M 19 6 V 20 A 2 2 0 0 1 17 22 H 7 A 2 2 0 0 1 5 20 V 6 M 8 6 V 4 A 2 2 0 0 1 10 2 H 14 A 2 2 0 0 1 16 4 V 6"
+        : (root.name == "copy" || root.name == "\u{E14D}")
+            ? "M 9 9 H 19 A 2 2 0 0 1 21 11 V 20 A 2 2 0 0 1 19 22 H 9 A 2 2 0 0 1 7 20 V 11 A 2 2 0 0 1 9 9 Z M 5 15 H 4 A 2 2 0 0 1 2 13 V 4 A 2 2 0 0 1 4 2 H 13 A 2 2 0 0 1 15 4 V 5"
+        : (root.name == "edit" || root.name == "\u{E3C9}")
+            ? "M 17 3 A 2.83 2.83 0 1 1 21 7 L 7.5 20.5 L 2 22 L 3.5 16.5 Z"
+        : (root.name == "cpu" || root.name == "proc")
+            ? "M 6 4 H 18 A 2 2 0 0 1 20 6 V 18 A 2 2 0 0 1 18 20 H 6 A 2 2 0 0 1 4 18 V 6 A 2 2 0 0 1 6 4 Z M 9 9 H 15 V 15 H 9 Z M 9 1 V 4 M 15 1 V 4 M 9 20 V 23 M 15 20 V 23 M 20 9 H 23 M 20 15 H 23 M 1 9 H 4 M 1 15 H 4"
+        : (root.name == "sliders" || root.name == "\u{E429}")
+            ? "M 4 21 V 14 M 4 10 V 3 M 12 21 V 12 M 12 8 V 3 M 20 21 V 16 M 20 12 V 3 M 1 14 H 7 M 9 8 H 15 M 17 16 H 23"
+        : (root.name == "palette" || root.name == "\u{E40A}")
+            ? "M 12 2 A 10 10 0 0 0 2 12 A 10 10 0 0 0 12 22 A 2.5 2.5 0 0 0 14.5 19.5 C 14.5 18.8 14.2 18.2 13.8 17.8 C 13.4 17.4 13.1 16.8 13.1 16.2 A 2.5 2.5 0 0 1 15.6 13.7 H 17 A 5 5 0 0 0 22 8.7 C 22 4.9 17.5 2 12 2 Z"
+        : (root.name == "keyboard" || root.name == "\u{E312}")
+            ? "M 4 5 H 20 A 2 2 0 0 1 22 7 V 17 A 2 2 0 0 1 20 19 H 4 A 2 2 0 0 1 2 17 V 7 A 2 2 0 0 1 4 5 Z M 6 9 H 6.05 M 10 9 H 10.05 M 14 9 H 14.05 M 18 9 H 18.05 M 8 15 H 16"
+        : (root.name == "sparkle" || root.name == "\u{E923}")
+            ? "M 12 3 L 14.5 9.5 L 21 12 L 14.5 14.5 L 12 21 L 9.5 14.5 L 3 12 L 9.5 9.5 Z"
+        : (root.name == "globe" || root.name == "\u{E894}")
+            ? "M 12 2 A 10 10 0 1 0 12 22 A 10 10 0 1 0 12 2 Z M 2 12 H 22 M 12 2 A 15.3 15.3 0 0 1 16 12 A 15.3 15.3 0 0 1 12 22 A 15.3 15.3 0 0 1 8 12 A 15.3 15.3 0 0 1 12 2 Z"
+        : (root.name == "split" || root.name == "\u{E8F9}" || root.name == "\u{E8F8}")
+            ? "M 5 3 H 19 A 2 2 0 0 1 21 5 V 19 A 2 2 0 0 1 19 21 H 5 A 2 2 0 0 1 3 19 V 5 A 2 2 0 0 1 5 3 Z M 12 3 V 21"
+        : (root.name == "up" || root.name == "\u{E5D8}")
+            ? "M 12 19 V 5 M 5 12 L 12 5 L 19 12"
+        : (root.name == "down" || root.name == "\u{E5DB}")
+            ? "M 12 5 V 19 M 5 12 L 12 19 L 19 12"
+        : (root.name == "home" || root.name == "\u{E88A}")
+            ? "M 3 10 L 12 3 L 21 10 V 20 A 2 2 0 0 1 19 22 H 5 A 2 2 0 0 1 3 20 Z M 9 22 V 12 H 15 V 22"
+        : (root.name == "star" || root.name == "star-filled" || root.name == "\u{E838}" || root.name == "\u{E83A}")
+            ? "M 12 2 L 15.09 8.26 L 22 9.27 L 17 14.14 L 18.18 21.02 L 12 17.77 L 5.82 21.02 L 7 14.14 L 2 9.27 L 8.91 8.26 Z"
+        : (root.name == "eye" || root.name == "\u{E8F4}" || root.name == "\u{E8F5}")
+            ? "M 2 12 C 4 7 7.5 4 12 4 C 16.5 4 20 7 22 12 C 20 17 16.5 20 12 20 C 7.5 20 4 17 2 12 Z M 12 9 A 3 3 0 1 0 12 15 A 3 3 0 1 0 12 9 Z"
+        : (root.name == "paste" || root.name == "\u{E14F}")
+            ? "M 16 4 H 18 A 2 2 0 0 1 20 6 V 20 A 2 2 0 0 1 18 22 H 6 A 2 2 0 0 1 4 20 V 6 A 2 2 0 0 1 6 4 H 8 M 9 2 H 15 A 1 1 0 0 1 16 3 V 5 A 1 1 0 0 1 15 6 H 9 A 1 1 0 0 1 8 5 V 3 A 1 1 0 0 1 9 2 Z"
+        : (root.name == "tree" || root.name == "\u{E94A}")
+            ? "M 3 5 H 9 V 9 H 3 Z M 15 5 H 21 V 9 H 15 Z M 15 15 H 21 V 19 H 15 Z M 9 7 H 15 M 12 7 V 17 H 15"
+        : (root.name == "history" || root.name == "\u{E889}")
+            ? "M 3 12 A 9 9 0 1 0 12 3 A 9 9 0 0 0 5.6 5.6 L 3 8 M 3 3 V 8 H 8 M 12 7 V 12 L 15 14"
+        : (root.name == "bookmark" || root.name == "bookmarks")
+            ? "M 19 21 L 12 16 L 5 21 V 5 A 2 2 0 0 1 7 3 H 17 A 2 2 0 0 1 19 5 Z"
+        : (root.name == "check" || root.name == "\u{E5CA}")
+            ? "M 20 6 L 9 17 L 4 12"
+        : (root.name == "more" || root.name == "\u{E5D4}" || root.name == "\u{E5D3}")
+            ? "M 12 5 A 1 1 0 1 0 12 7 A 1 1 0 1 0 12 5 Z M 12 11 A 1 1 0 1 0 12 13 A 1 1 0 1 0 12 11 Z M 12 17 A 1 1 0 1 0 12 19 A 1 1 0 1 0 12 17 Z"
+        : (root.name == "filter" || root.name == "\u{E152}")
+            ? "M 3 5 H 21 L 14 13 V 19 L 10 21 V 13 Z"
+        : (root.name == "laptop" || root.name == "\u{E30C}")
+            ? "M 4 5 A 2 2 0 0 1 6 3 H 18 A 2 2 0 0 1 20 5 V 15 H 4 Z M 2 18 H 22"
+        : (root.name == "folder-upload")
+            ? "M 22 19 A 2 2 0 0 1 20 21 H 4 A 2 2 0 0 1 2 19 V 5 A 2 2 0 0 1 4 3 H 9 L 11 6 H 20 A 2 2 0 0 1 22 8 Z M 12 17 V 11 M 9.5 13.5 L 12 11 L 14.5 13.5"
+        : (root.name == "eye-off")
+            ? "M 17.94 17.94 A 10.07 10.07 0 0 1 12 20 C 7 20 2.73 16.11 1 12 C 1.73 10.24 2.84 8.69 4.22 7.46 M 9.9 4.24 A 9.12 9.12 0 0 1 12 4 C 17 4 21.27 7.89 23 12 A 11.6 11.6 0 0 1 19.72 16.69 M 14.12 14.12 A 3 3 0 1 1 9.88 9.88 M 3 3 L 21 21"
+        : (root.name == "dock-bottom")
+            ? "M 4 4 H 20 A 2 2 0 0 1 22 6 V 18 A 2 2 0 0 1 20 20 H 4 A 2 2 0 0 1 2 18 V 6 A 2 2 0 0 1 4 4 Z M 2 14 H 22 M 6 17 H 18"
+        : (root.name == "dock-top")
+            ? "M 4 4 H 20 A 2 2 0 0 1 22 6 V 18 A 2 2 0 0 1 20 20 H 4 A 2 2 0 0 1 2 18 V 6 A 2 2 0 0 1 4 4 Z M 2 10 H 22 M 6 7 H 18"
+        : (root.name == "dock-left")
+            ? "M 4 4 H 20 A 2 2 0 0 1 22 6 V 18 A 2 2 0 0 1 20 20 H 4 A 2 2 0 0 1 2 18 V 6 A 2 2 0 0 1 4 4 Z M 10 4 V 20 M 6 8 V 16"
+        : (root.name == "dock-right")
+            ? "M 4 4 H 20 A 2 2 0 0 1 22 6 V 18 A 2 2 0 0 1 20 20 H 4 A 2 2 0 0 1 2 18 V 6 A 2 2 0 0 1 4 4 Z M 14 4 V 20 M 18 8 V 16"
+        : (root.name == "maximize")
+            ? "M 15 3 H 21 V 9 M 9 21 H 3 V 15 M 21 3 L 14 10 M 3 21 L 10 14"
+        : (root.name == "minimize")
+            ? "M 4 14 H 10 V 20 M 20 10 H 14 V 4 M 14 10 L 21 3 M 3 21 L 10 14"
+        : (root.name == "sort")
+            ? "M 8 4 V 16 M 5 7 L 8 4 L 11 7 M 16 20 V 8 M 13 17 L 16 20 L 19 17"
+        : (root.name == "sort-asc")
+            ? "M 12 19 V 5 M 6 11 L 12 5 L 18 11"
+        : (root.name == "sort-desc")
+            ? "M 12 5 V 19 M 6 13 L 12 19 L 18 13"
+        : "";
+
+    if root.svg-path != "" : Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: transparent;
+        stroke: root.color;
+        stroke-width: root.stroke-w;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        commands: root.svg-path;
+    }
+
+    if root.svg-path == "" : Text {
+        text: root.name;
+        font-family: "Material Icons";
+        color: root.color;
+        font-size: root.icon-size;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}

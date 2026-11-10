@@ -7,509 +7,45 @@
 // of the global UI scale; only the font-preview reflects the real terminal size.
 
 import { Theme } from "theme.slint";
-import { ComboBox, Slider, ScrollView } from "std-widgets.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 import { LabeledInput, PrimaryButton, GhostButton } from "widgets.slint";
+import { NavItem, SectionHeader, SettingRow, Switch, Stepper } from "components/common/settings_controls.slint";
+import {
+    OutputRuleItem, UpdateMirrorRow, WslProfileInfo, ColorThemeItem,
+    TerminalSchemeItem, CustomAgentInfo, ShortcutBinding,
+    CursorStyleButton
+} from "components/business/appearance_pickers.slint";
+import { TerminalSchemeSection } from "pages/settings/terminal_scheme_section.slint";
+import { GeneralSettingsPage } from "pages/settings/general_settings_page.slint";
+import { ConnectionSettingsPage, SftpSettingsPage } from "pages/settings/connection_sftp_pages.slint";
+import { AgentsSettingsPage, UpdatesSettingsPage, AboutSettingsPage } from "pages/settings/agents_update_about_pages.slint";
 
-export struct OutputRuleItem {
-    pattern: string,
-    regex: bool,
-    case-sensitive: bool,
-    whole-line: bool,
-    color: string,
-    enabled: bool,
-}
-
-// One download source on Settings → Updates (GitHub first, then mirrors).
-// `key` is the normalised prefix ("" = GitHub). `selected` is the source a
-// one-click update will use first (the user's pick, or the fastest in auto).
-// `level`: 0 untested/testing, 1 fast, 2 medium, 3 slow, 4 failed.
-export struct UpdateMirrorRow {
-    url: string,
-    key: string,
-    ping: string,
-    level: int,
-    fastest: bool,
-    selected: bool,
-    removable: bool,
-}
-
-export struct WslProfileInfo {
-    id: string,
-    name: string,
-    distribution: string,
-    directory: string,
-}
-
-// One colour theme preset in Settings › Wallpaper & theme. `swatch` is the
-// dot shown next to the name.
-export struct ColorThemeItem {
-    id: string,
-    name-en: string,
-    name-zh: string,
-    swatch: color,
-}
-
-// A user-defined agent launcher (#427).
-export struct CustomAgentInfo {
-    id: string,
-    name: string,
-    command: string,
-    directory: string,
-}
-
-// One left-nav row (icon + label).
-component NavItem inherits Rectangle {
-    in property <string> icon;
-    in property <string> label;
-    in property <bool> active;
-    callback clicked();
-    height: 30px;
-    border-radius: 6px;
-    background: root.active ? Theme.bg-active : (ta.has-hover ? Theme.bg-hover : transparent);
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-    HorizontalLayout {
-        padding-left: 10px;
-        spacing: 9px;
-        Text { text: root.icon; font-family: "Material Icons";
-               color: root.active ? Theme.text-primary : Theme.text-secondary;
-               font-size: 15px * Theme.panel-font; vertical-alignment: center; }
-        Text { text: root.label;
-               color: root.active ? Theme.text-primary : Theme.text-secondary;
-               font-size: 13px * Theme.panel-font; vertical-alignment: center; horizontal-stretch: 1; }
-    }
-}
-
-// Small muted group heading (字体 / 预览 / SFTP …).
-component SectionHeader inherits Text {
-    font-size: 11px * Theme.panel-font;
-    font-weight: 700;
-    color: Theme.text-muted;
-    vertical-alignment: center;
-}
-
-// A settings row: label (+ optional description) on the left, a control slot on
-// the right via @children. Right-aligned and vertically centered.
-component SettingRow inherits Rectangle {
-    in property <string> label;
-    in property <string> desc;
-    in property <bool> show-divider: true;
-    VerticalLayout {
-        HorizontalLayout {
-            spacing: 14px;
-            padding-top: 9px;
-            padding-bottom: 9px;
-            VerticalLayout {
-                horizontal-stretch: 1;
-                alignment: center;
-                spacing: 3px;
-                Text { text: root.label; font-size: 13px * Theme.panel-font; color: Theme.text-primary; }
-                if root.desc != "" : Text { text: root.desc; font-size: 11px * Theme.panel-font;
-                       color: Theme.text-muted; wrap: word-wrap; }
-            }
-            VerticalLayout {
-                alignment: center;
-                @children
-            }
-        }
-        if root.show-divider : Rectangle { height: 1px; background: Theme.border-subtle; }
-    }
-}
-
-// iOS-style toggle switch. Display-only `on` (driven by the parent); a tap emits
-// the intended new value so the parent owns the state (avoids Slint's
-// binding-break-on-self-assign gotcha).
-component Switch inherits Rectangle {
-    in property <bool> on;
-    callback toggled(bool);
-    width: 38px;
-    height: 22px;
-    border-radius: 11px;
-    background: root.on ? Theme.accent : Theme.bg-active;
-    animate background { duration: 120ms; }
-    Rectangle {
-        width: 16px;
-        height: 16px;
-        border-radius: 8px;
-        y: 3px;
-        x: root.on ? parent.width - self.width - 3px : 3px;
-        background: white;
-        animate x { duration: 120ms; easing: ease-out; }
-    }
-    TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.toggled(!root.on); }
-    }
-}
-
-// [- value +] stepper. Display-only `value`; emits the clamped new value.
-component Stepper inherits Rectangle {
-    in property <int> value;
-    in property <int> minimum: 0;
-    in property <int> maximum: 100;
-    in property <int> step: 1;
-    in property <string> unit;
-    callback changed(int);
-    width: 112px;
-    height: 26px;
-    border-radius: 6px;
-    background: Theme.bg-elevated;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
-    clip: true;
-    HorizontalLayout {
-        Rectangle {
-            width: 30px;
-            background: minus-ta.has-hover ? Theme.bg-hover : transparent;
-            minus-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.changed(max(root.minimum, root.value - root.step)); }
-            }
-            Text { text: "\u{E15B}"; font-family: "Material Icons"; font-size: 14px * Theme.panel-font;
-                   color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; }
-        }
-        Rectangle { width: 1px; background: Theme.border-subtle; }
-        Text { text: root.value + root.unit; horizontal-stretch: 1;
-               font-size: 12px * Theme.panel-font; color: Theme.text-primary;
-               horizontal-alignment: center; vertical-alignment: center; }
-        Rectangle { width: 1px; background: Theme.border-subtle; }
-        Rectangle {
-            width: 30px;
-            background: plus-ta.has-hover ? Theme.bg-hover : transparent;
-            plus-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.changed(min(root.maximum, root.value + root.step)); }
-            }
-            Text { text: "\u{E145}"; font-family: "Material Icons"; font-size: 14px * Theme.panel-font;
-                   color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; }
-        }
-    }
-}
-
-// Compact cursor-shape choice with a live visual sample (#275).
-component CursorStyleButton inherits Rectangle {
-    in property <string> label;
-    in property <string> cursor-kind;
-    in property <bool> selected;
-    callback clicked();
-    width: 74px;
-    height: 30px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: root.selected ? Theme.accent : Theme.border-subtle;
-    background: root.selected ? Theme.bg-active : (cursor-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
-    cursor-ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-    HorizontalLayout {
-        padding-left: 7px;
-        padding-right: 7px;
-        spacing: 6px;
-        alignment: center;
-        Rectangle {
-            width: 14px;
-            height: 100%;
-            background: transparent;
-            Rectangle {
-                y: (parent.height - self.height) / 2;
-                width: 14px;
-                height: 18px;
-                background: Theme.term-bg;
-                Rectangle {
-                    x: 2px;
-                    y: root.cursor-kind == "underline" ? parent.height - 3px : 2px;
-                    width: root.cursor-kind == "bar" ? 2px : 10px;
-                    height: root.cursor-kind == "underline" ? 2px : 14px;
-                    background: Theme.term-fg;
-                }
-            }
-        }
-        Text {
-            text: root.label;
-            color: root.selected ? Theme.text-primary : Theme.text-secondary;
-            font-size: 11px * Theme.panel-font;
-            vertical-alignment: center;
-        }
-    }
-}
-
-component CursorPaletteSwatch inherits Rectangle {
-    in property <string> hex;
-    in property <color> swatch-color;
-    in property <bool> selected;
-    callback chosen(string);
-    width: 26px;
-    height: 26px;
-    border-radius: 5px;
-    border-width: root.selected ? 2px : 1px;
-    border-color: root.selected ? Theme.accent : Theme.border-strong;
-    background: root.swatch-color;
-    swatch-ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.chosen(root.hex); }
-    }
-}
-
-// Hex RGB editor with a live swatch. Incomplete/invalid input remains editable
-// but is marked red and is not applied or persisted.
-component CursorColorInput inherits Rectangle {
-    in-out property <string> value;
-    in property <color> preview-color;
-    property <bool> valid: true;
-    callback apply-color(string) -> bool;
-    width: 160px;
-    height: 30px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: root.valid ? Theme.border-subtle : #e05252;
-    background: Theme.bg-elevated;
-    Rectangle {
-        x: 7px;
-        y: 6px;
-        width: 18px;
-        height: 18px;
-        border-radius: 4px;
-        border-width: 1px;
-        border-color: Theme.border-strong;
-        background: root.preview-color;
-        color-button := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { color-picker.show(); }
-        }
-    }
-    color-input := TextInput {
-        x: 34px;
-        width: parent.width - 41px;
-        height: parent.height;
-        text <=> root.value;
-        color: Theme.text-primary;
-        font-family: Theme.term-font-family;
-        font-size: 12px * Theme.panel-font;
-        vertical-alignment: center;
-        single-line: true;
-        changed text => { root.valid = root.apply-color(self.text); }
-    }
-    color-picker := PopupWindow {
-        x: parent.width - self.width;
-        y: parent.height + 4px;
-        width: 210px;
-        height: 160px;
-        Rectangle {
-            background: Theme.popup-bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border-strong;
-            drop-shadow-blur: 12px;
-            drop-shadow-color: #00000060;
-            VerticalLayout {
-                padding: 10px;
-                spacing: 7px;
-                Text {
-                    text: root.value;
-                    color: Theme.text-secondary;
-                    font-family: Theme.term-font-family;
-                    font-size: 11px * Theme.panel-font;
-                    vertical-alignment: center;
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    CursorPaletteSwatch { hex: "#D4D4D4"; swatch-color: #D4D4D4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FFFFFF"; swatch-color: #FFFFFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FF5252"; swatch-color: #FF5252; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FF9800"; swatch-color: #FF9800; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FFD740"; swatch-color: #FFD740; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#69F0AE"; swatch-color: #69F0AE; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    CursorPaletteSwatch { hex: "#00E676"; swatch-color: #00E676; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#00E5FF"; swatch-color: #00E5FF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#40C4FF"; swatch-color: #40C4FF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#448AFF"; swatch-color: #448AFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#7C4DFF"; swatch-color: #7C4DFF; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#E040FB"; swatch-color: #E040FB; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    CursorPaletteSwatch { hex: "#F48FB1"; swatch-color: #F48FB1; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FF8A65"; swatch-color: #FF8A65; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#FFF176"; swatch-color: #FFF176; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#A5D6A7"; swatch-color: #A5D6A7; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#80CBC4"; swatch-color: #80CBC4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#90CAF9"; swatch-color: #90CAF9; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    CursorPaletteSwatch { hex: "#B39DDB"; swatch-color: #B39DDB; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#CE93D8"; swatch-color: #CE93D8; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#BCAAA4"; swatch-color: #BCAAA4; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#9E9E9E"; swatch-color: #9E9E9E; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#607D8B"; swatch-color: #607D8B; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                    CursorPaletteSwatch { hex: "#2D2D2F"; swatch-color: #2D2D2F; selected: root.value == self.hex; chosen(v) => { if root.apply-color(v) { root.value = v; root.valid = true; color-picker.close(); } } }
-                }
-            }
-        }
-    }
-}
-
-// Colour dot used by the colour theme picker.
-component ThemeDot inherits Rectangle {
-    in property <color> swatch;
-    width: 12px;
-    height: 12px;
-    border-radius: 6px;
-    background: root.swatch;
-    border-width: 1px;
-    border-color: Theme.border-strong;
-}
-
-// Colour theme dropdown: the current theme's dot + name, opening a list of
-// presets with a check on the selected one.
-component ColorThemePicker inherits Rectangle {
-    in property <[ColorThemeItem]> items;
-    in property <string> current;
-    in property <bool> lang-en;
-    callback selected(string);
-    height: 30px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: picker-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
-    background: Theme.bg-elevated;
-
-    picker-ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { theme-list.show(); }
-    }
-    // The current theme's row; all rows are stacked and only the match shows.
-    for item in root.items : Rectangle {
-        x: 0; y: 0;
-        width: parent.width - 26px;
-        height: parent.height;
-        visible: item.id == root.current;
-        HorizontalLayout {
-            padding-left: 10px;
-            spacing: 8px;
-            alignment: start;
-            VerticalLayout { alignment: center; ThemeDot { swatch: item.swatch; } }
-            Text {
-                text: root.lang-en ? item.name-en : item.name-zh;
-                color: Theme.text-primary;
-                font-size: 12px * Theme.panel-font;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
-    }
-    Text {
-        x: parent.width - 24px;
-        width: 18px;
-        height: parent.height;
-        text: "\u{E5CF}"; // expand_more
-        font-family: "Material Icons";
-        font-size: 16px * Theme.panel-font;
-        color: Theme.text-secondary;
-        vertical-alignment: center;
-        horizontal-alignment: center;
-    }
-
-    theme-list := PopupWindow {
-        x: 0;
-        y: root.height + 4px;
-        width: root.width;
-        height: min(root.items.length * 28px + 10px, 360px);
-        Rectangle {
-            background: Theme.popup-bg;
-            border-radius: 8px;
-            border-width: 1px;
-            border-color: Theme.border-strong;
-            drop-shadow-blur: 12px;
-            drop-shadow-color: #00000060;
-            ScrollView {
-                content-width: self.visible-width;
-                content-height: list.preferred-height;
-                list := VerticalLayout {
-                    padding: 5px;
-                    spacing: 0;
-                    for item in root.items : Rectangle {
-                        height: 28px;
-                        border-radius: 5px;
-                        background: item.id == root.current
-                            ? Theme.bg-active
-                            : (row-ta.has-hover ? Theme.bg-hover : transparent);
-                        row-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.selected(item.id);
-                                theme-list.close();
-                            }
-                        }
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 8px;
-                            VerticalLayout { alignment: center; ThemeDot { swatch: item.swatch; } }
-                            Text {
-                                text: root.lang-en ? item.name-en : item.name-zh;
-                                color: Theme.text-primary;
-                                font-size: 12px * Theme.panel-font;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-                            Text {
-                                text: item.id == root.current ? "\u{E5CA}" : ""; // check
-                                font-family: "Material Icons";
-                                font-size: 15px * Theme.panel-font;
-                                color: Theme.text-primary;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// A macOS-style wallpaper thumbnail: a rounded, clipped preview (passed via
-// @children) with a selection ring + check badge. The label sits below it in
-// the page, not inside.
-component WallpaperSwatch inherits Rectangle {
-    in property <bool> selected;
-    callback clicked();
-    width: 120px;
-    height: 74px;
-    border-radius: 8px;
-    border-width: root.selected ? 3px : 1px;
-    border-color: root.selected ? Theme.accent : Theme.border-strong;
-    clip: true;
-    @children
-    if root.selected : Rectangle {
-        x: parent.width - self.width - 5px;
-        y: 5px;
-        width: 18px;
-        height: 18px;
-        border-radius: 9px;
-        background: Theme.accent;
-        Text {
-            text: "\u{E5CA}"; // check
-            font-family: "Material Icons"; color: white; font-size: 13px * Theme.panel-font;
-            width: 100%; height: 100%;
-            horizontal-alignment: center; vertical-alignment: center;
-        }
-    }
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
+export { OutputRuleItem, UpdateMirrorRow, WslProfileInfo, ColorThemeItem, TerminalSchemeItem, CustomAgentInfo, ShortcutBinding }
 
 // The settings content (nav + pages). Embedded in AppWindow's modal overlay.
 export component InterfacePanel inherits Rectangle {
     in property <bool> lang-en;
     in property <bool> is-windows;
+    in property <bool> dark-mode: Theme.dark;
+    callback set-dark-mode(bool);
+    callback toggle-language();
+    in property <string> download-dir;
+    callback pick-download-dir();
+    callback open-download-dir();
+    callback import-ssh-config();
+    callback import-connections();
+    callback export-connections();
+    callback open-batch-import();
+    in property <[ShortcutBinding]> shortcut-bindings;
+    in-out property <string> shortcut-recording;
+    in-out property <string> shortcut-status;
+    in property <bool> shortcut-status-error;
+    callback shortcut-record(string, string, bool, bool, bool, bool);
+    callback shortcut-reset(string);
+    callback shortcut-reset-all();
+    in property <string> app-version: "0.8.2";
+    callback open-repo();
+
     in-out property <string> renderer-mode: "software";
     in property <[string]> term-fonts;
     in property <string> term-font-family;
@@ -517,8 +53,6 @@ export component InterfacePanel inherits Rectangle {
     in-out property <float> terminal-line-spacing: 1.0;
     in-out property <bool> term-font-bold;
     in-out property <string> term-cursor-style: "block";
-    in-out property <string> term-cursor-color-hex: "#D4D4D4";
-    in property <color> term-cursor-color: #D4D4D4;
     in-out property <bool> output-highlight-enabled;
     in-out property <bool> json-format-output: true;
     in-out property <string> output-highlight-preset;
@@ -593,6 +127,24 @@ export component InterfacePanel inherits Rectangle {
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
     callback set-immersive-colors(bool);
+
+    // Terminal color schemes (iTerm2-Color-Schemes + custom themes).
+    in property <[TerminalSchemeItem]> terminal-schemes;
+    in property <TerminalSchemeItem> active-terminal-scheme;
+    in-out property <string> terminal-scheme-id: "default";
+    in-out property <string> terminal-scheme-search: "";
+    in-out property <string> terminal-scheme-category: "all";
+    in property <int> terminal-schemes-total: 0;
+    in property <bool> terminal-schemes-has-more: false;
+    in-out property <string> terminal-scheme-status: "";
+    callback select-terminal-scheme(string);
+    callback toggle-favorite-terminal-scheme(string);
+    callback filter-terminal-schemes(string /* query */, string /* category */);
+    callback load-more-terminal-schemes();
+    callback reset-terminal-scheme();
+    callback import-terminal-scheme();
+    callback export-terminal-scheme();
+    callback delete-custom-terminal-scheme(string);
     in property <[WslProfileInfo]> wsl-profiles;
     in-out property <string> wsl-new-name: "WSL";
     in-out property <string> wsl-new-distribution;
@@ -600,8 +152,26 @@ export component InterfacePanel inherits Rectangle {
 
     // Page shown when the panel opens; "agents" when opened from the tab
     // bar's launch menu (#427).
-    in property <string> start-page: "font";
+    in property <string> start-page: "general";
     property <string> ifd-page: root.start-page;
+    property <bool> is-general-page:
+        root.ifd-page == "general" || root.ifd-page == "wallpaper"
+        || root.ifd-page == "sidebar" || root.ifd-page == "renderer";
+    property <bool> is-terminal-page:
+        root.ifd-page == "terminal" || root.ifd-page == "font"
+        || root.ifd-page == "input" || root.ifd-page == "output"
+        || root.ifd-page == "session-log";
+    property <bool> is-sftp-page:
+        root.ifd-page == "sftp" || root.ifd-page == "download"
+        || root.ifd-page == "sync";
+    property <bool> is-connection-page:
+        root.ifd-page == "connection" || root.ifd-page == "webdav";
+    property <bool> is-shortcuts-page: root.ifd-page == "shortcuts";
+    property <bool> is-agents-page:
+        root.ifd-page == "agents" || root.ifd-page == "mcp" || root.ifd-page == "wsl";
+    property <bool> is-update-page: root.ifd-page == "update";
+    property <bool> is-about-page: root.ifd-page == "about";
+
     in property <[CustomAgentInfo]> custom-agents;
     in-out property <string> agent-new-name;
     in-out property <string> agent-new-command;
@@ -622,7 +192,6 @@ export component InterfacePanel inherits Rectangle {
     callback set-terminal-line-spacing(float);
     callback set-term-font-bold(bool);
     callback set-term-cursor-style(string);
-    callback set-term-cursor-color(string) -> bool;
     callback set-output-highlight(bool, string);
     callback set-json-format-output(bool);
     callback add-output-highlight-rule(string, bool, bool, bool, string) -> bool;
@@ -663,12 +232,11 @@ export component InterfacePanel inherits Rectangle {
     callback pick-agent-directory();
 
     HorizontalLayout {
-        // --- Left nav ------------------------------------------------------
+        // --- Left nav (ChatGPT Desktop Settings Sidebar) -------------------
         Rectangle {
-            width: 168px;
-            // Transparent so the whole dialog is one frosted layer (the card's
-            // bg-panel); a 1px divider keeps the nav/content separation (items 6/7).
-            background: transparent;
+            width: 204px;
+            background: Theme.bg-panel;
+            border-bottom-left-radius: 14px;
             Rectangle {
                 x: parent.width - 1px; width: 1px; height: parent.height;
                 background: Theme.border-subtle;
@@ -680,99 +248,57 @@ export component InterfacePanel inherits Rectangle {
                 content-height: max(self.visible-height, nav-items.preferred-height);
                 nav-items := VerticalLayout {
                     width: nav-scroll.visible-width;
-                    padding: 10px;
-                    spacing: 2px;
+                    padding: 12px;
+                    spacing: 4px;
                     alignment: start;
                 NavItem {
-                    icon: "\u{E167}"; label: root.lang-en ? "Font" : "字体";
-                    active: root.ifd-page == "font";
-                    clicked => { root.ifd-page = "font"; }
+                    icon: "sliders"; label: root.lang-en ? "General & Appearance" : "通用与外观";
+                    active: root.is-general-page;
+                    clicked => { root.ifd-page = "general"; }
                 }
                 NavItem {
-                    icon: "\u{E312}"; label: root.lang-en ? "Input" : "输入";
-                    active: root.ifd-page == "input";
-                    clicked => { root.ifd-page = "input"; }
+                    icon: "terminal"; label: root.lang-en ? "Terminal" : "终端";
+                    active: root.is-terminal-page;
+                    clicked => { root.ifd-page = "terminal"; }
                 }
                 NavItem {
-                    icon: "\u{E1B1}"; label: root.lang-en ? "Rendering" : "渲染";
-                    active: root.ifd-page == "renderer";
-                    clicked => { root.ifd-page = "renderer"; }
+                    icon: "folder"; label: root.lang-en ? "Files & SFTP" : "文件与传输";
+                    active: root.is-sftp-page;
+                    clicked => { root.ifd-page = "sftp"; }
                 }
                 NavItem {
-                    icon: "\u{E8D4}"; label: root.lang-en ? "Output" : "输出高亮";
-                    active: root.ifd-page == "output";
-                    clicked => { root.ifd-page = "output"; }
-                }
-                NavItem {
-                    icon: "\u{E1BC}"; label: root.lang-en ? "Wallpaper & theme" : "壁纸与主题";
-                    active: root.ifd-page == "wallpaper";
-                    clicked => { root.ifd-page = "wallpaper"; }
-                }
-                NavItem {
-                    icon: "\u{E8BE}"; label: root.lang-en ? "Connection" : "连接";
-                    active: root.ifd-page == "connection";
+                    icon: "globe"; label: root.lang-en ? "Connection & Data" : "连接与数据";
+                    active: root.is-connection-page;
                     clicked => { root.ifd-page = "connection"; }
                 }
                 NavItem {
-                    icon: "\u{E2C7}"; label: "SFTP";
-                    active: root.ifd-page == "sftp";
-                    clicked => { root.ifd-page = "sftp"; }
-                }
-                if root.is-windows : NavItem {
-                    icon: "\u{E30A}"; label: "WSL";
-                    active: root.ifd-page == "wsl";
-                    clicked => { root.ifd-page = "wsl"; }
+                    icon: "keyboard"; label: root.lang-en ? "Shortcuts" : "快捷键";
+                    active: root.is-shortcuts-page;
+                    clicked => { root.ifd-page = "shortcuts"; }
                 }
                 NavItem {
-                    icon: "\u{F06C}"; label: root.lang-en ? "AI agents" : "AI 智能体";
-                    active: root.ifd-page == "agents";
+                    icon: "sparkle"; label: root.lang-en ? "AI & Agents" : "AI 与智能体";
+                    active: root.is-agents-page;
                     clicked => { root.ifd-page = "agents"; }
                 }
                 NavItem {
-                    icon: "\u{E5CB}"; label: root.lang-en ? "Sidebars" : "侧栏";
-                    active: root.ifd-page == "sidebar";
-                    clicked => { root.ifd-page = "sidebar"; }
-                }
-                NavItem {
-                    icon: "\u{E627}"; label: root.lang-en ? "Session sync" : "会话同步";
-                    active: root.ifd-page == "sync";
-                    clicked => { root.ifd-page = "sync"; }
-                }
-                NavItem {
-                    icon: "\u{E2C2}"; label: "WebDAV";
-                    active: root.ifd-page == "webdav";
-                    clicked => { root.ifd-page = "webdav"; }
-                }
-                NavItem {
-                    icon: "\u{E2C4}"; label: root.lang-en ? "Download" : "下载";
-                    active: root.ifd-page == "download";
-                    clicked => { root.ifd-page = "download"; }
-                }
-                NavItem {
-                    icon: "\u{E873}"; label: root.lang-en ? "Session log" : "会话日志";
-                    active: root.ifd-page == "session-log";
-                    clicked => { root.ifd-page = "session-log"; }
-                }
-                NavItem {
-                    icon: "\u{E335}"; label: "MCP";
-                    active: root.ifd-page == "mcp";
-                    clicked => { root.ifd-page = "mcp"; }
-                }
-                NavItem {
-                    icon: "\u{E923}"; label: root.lang-en ? "Updates" : "软件更新";
-                    active: root.ifd-page == "update";
+                    icon: "update"; label: root.lang-en ? "Updates" : "软件更新";
+                    active: root.is-update-page;
                     clicked => { root.ifd-page = "update"; }
+                }
+                NavItem {
+                    icon: "info"; label: root.lang-en ? "About" : "关于";
+                    active: root.is-about-page;
+                    clicked => { root.ifd-page = "about"; }
                 }
                 }
             }
         }
-        // --- Right content -------------------------------------------------
+        // --- Right content (ChatGPT Desktop Settings Main Content) ---------
         Rectangle {
             horizontal-stretch: 1;
-            // Transparent: the card's single bg-panel frost shows through, so the
-            // settings panel matches the welcome/resource panels and tracks the
-            // wallpaper-opacity slider (items 6/7).
             background: transparent;
+            border-bottom-right-radius: 14px;
 
             settings-scroll := ScrollView {
                 width: 100%;
@@ -783,15 +309,39 @@ export component InterfacePanel inherits Rectangle {
                 settings-pages := VerticalLayout {
                     width: settings-scroll.visible-width;
 
-            // --- Font page ---------------------------------------------
-            if root.ifd-page == "font" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
+            // --- Terminal page (Color Schemes + Font + Input + Output + Session Log) ---
+            if root.is-terminal-page : VerticalLayout {
+                padding-left: 28px;
+                padding-right: 28px;
+                padding-top: 20px;
+                padding-bottom: 28px;
                 spacing: 0;
                 alignment: start;
 
-                SectionHeader { text: root.lang-en ? "FONT" : "字体"; height: 24px; }
+                // ── Terminal Color Scheme Manager (iTerm2-Color-Schemes) ──────
+                TerminalSchemeSection {
+                    lang-en: root.lang-en;
+                    terminal-schemes: root.terminal-schemes;
+                    active-terminal-scheme: root.active-terminal-scheme;
+                    terminal-scheme-id <=> root.terminal-scheme-id;
+                    terminal-scheme-search <=> root.terminal-scheme-search;
+                    terminal-scheme-category <=> root.terminal-scheme-category;
+                    terminal-schemes-total: root.terminal-schemes-total;
+                    terminal-schemes-has-more: root.terminal-schemes-has-more;
+                    terminal-scheme-status <=> root.terminal-scheme-status;
+                    term-cursor-style: root.term-cursor-style;
+                    select-terminal-scheme(id) => { root.select-terminal-scheme(id); }
+                    toggle-favorite-terminal-scheme(id) => { root.toggle-favorite-terminal-scheme(id); }
+                    filter-terminal-schemes(q, cat) => { root.filter-terminal-schemes(q, cat); }
+                    load-more-terminal-schemes => { root.load-more-terminal-schemes(); }
+                    reset-terminal-scheme => { root.reset-terminal-scheme(); }
+                    import-terminal-scheme => { root.import-terminal-scheme(); }
+                    export-terminal-scheme => { root.export-terminal-scheme(); }
+                    delete-custom-terminal-scheme(id) => { root.delete-custom-terminal-scheme(id); }
+                }
+
+                Rectangle { height: 24px; }
+                SectionHeader { text: root.lang-en ? "FONT & CURSOR" : "字体与光标"; height: 26px; }
                 SettingRow {
                     label: root.lang-en ? "Terminal font" : "终端字体";
                     ComboBox {
@@ -819,14 +369,6 @@ export component InterfacePanel inherits Rectangle {
                     }
                 }
                 SettingRow {
-                    label: root.lang-en ? "Installed fonts" : "已安装字体";
-                    desc: root.lang-en
-                        ? "Install a TTF/OTF font in Windows, then restart meatshell to refresh this list."
-                        : "在 Windows 中安装 TTF/OTF 字体后，重启 meatshell 即可刷新字体列表。";
-                    show-divider: false;
-                    Rectangle { width: 1px; height: 1px; background: transparent; }
-                }
-                SettingRow {
                     label: root.lang-en ? "Bold terminal text" : "终端字体加粗";
                     desc: root.lang-en ? "Makes regular terminal output use a bold face."
                                        : "让普通终端输出使用加粗字重。";
@@ -837,8 +379,9 @@ export component InterfacePanel inherits Rectangle {
                 }
                 SettingRow {
                     label: root.lang-en ? "Cursor shape" : "光标类型";
-                    desc: root.lang-en ? "Choose the terminal insertion cursor shape."
-                                       : "选择终端输入光标的形状。";
+                    desc: root.lang-en ? "Choose the terminal insertion cursor shape. Cursor color follows the active color scheme."
+                                       : "选择终端输入光标的形状（光标颜色自动跟随当前终端配色方案）。";
+                    show-divider: false;
                     HorizontalLayout {
                         spacing: 5px;
                         CursorStyleButton {
@@ -861,66 +404,9 @@ export component InterfacePanel inherits Rectangle {
                         }
                     }
                 }
-                SettingRow {
-                    label: root.lang-en ? "Cursor color" : "光标颜色";
-                    desc: root.lang-en ? "Enter a hexadecimal RGB color."
-                                       : "输入十六进制 RGB 颜色。";
-                    CursorColorInput {
-                        value <=> root.term-cursor-color-hex;
-                        preview-color: root.term-cursor-color;
-                        apply-color(v) => { root.set-term-cursor-color(v) }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "UI scale" : "界面缩放";
-                    desc: root.lang-en ? "Zooms the whole interface (not this panel)."
-                                       : "缩放整个界面(不影响本面板)。";
-                    Stepper {
-                        value: round(root.ui-scale * 100); minimum: 80; maximum: 200; step: 10; unit: "%";
-                        changed(v) => { root.set-ui-scale(v); }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Settings font size" : "界面字体大小";
-                    desc: root.lang-en ? "Enlarges this settings panel (font + window)."
-                                       : "放大本设置面板的字体和窗口。";
-                    show-divider: false;
-                    Stepper {
-                        value: round(Theme.panel-font * 100); minimum: 80; maximum: 160; step: 10; unit: "%";
-                        changed(v) => { root.set-panel-font(v); }
-                    }
-                }
 
-                Rectangle { height: 14px; }
-                SectionHeader { text: root.lang-en ? "PREVIEW" : "预览"; height: 22px; }
-                Rectangle {
-                    height: 52px;
-                    background: Theme.term-bg;
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
-                    Text {
-                        x: 12px;
-                        text: "meatshell ~$ echo preview 0123";
-                        font-family: Theme.term-font-family;
-                        font-size: Theme.term-font-size;
-                        font-weight: Theme.term-font-bold ? 700 : 400;
-                        color: Theme.term-fg;
-                        vertical-alignment: center;
-                        height: parent.height;
-                    }
-                }
-            }
-
-            // --- Input page -------------------------------------------
-            if root.ifd-page == "input" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-
-                SectionHeader { text: root.lang-en ? "INPUT" : "输入"; height: 24px; }
+                Rectangle { height: 24px; }
+                SectionHeader { text: root.lang-en ? "INPUT & PASTE" : "输入与粘贴"; height: 26px; }
                 SettingRow {
                     label: root.lang-en ? "Confirm multiline paste" : "确认多行粘贴";
                     desc: root.lang-en ? "Show a review dialog before sending multiline content."
@@ -940,17 +426,9 @@ export component InterfacePanel inherits Rectangle {
                         toggled(v) => { root.extra-paste-shortcuts-enabled = v; root.set-extra-paste-shortcuts-enabled(v); }
                     }
                 }
-            }
 
-            // --- Output highlighting page -----------------------------
-            if root.ifd-page == "output" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-
-                SectionHeader { text: root.lang-en ? "OUTPUT HIGHLIGHTING" : "输出高亮"; height: 24px; }
+                Rectangle { height: 24px; }
+                SectionHeader { text: root.lang-en ? "OUTPUT HIGHLIGHTING" : "输出高亮与 JSON"; height: 26px; }
                 SettingRow {
                     label: root.lang-en ? "Highlight plain terminal output" : "高亮纯文本终端输出";
                     desc: root.lang-en
@@ -969,7 +447,6 @@ export component InterfacePanel inherits Rectangle {
                     desc: root.lang-en
                         ? "Log levels is conservative; DevOps also recognises deployment and health states."
                         : "日志级别更保守；DevOps 还识别部署与健康状态。";
-                    show-divider: false;
                     ComboBox {
                         width: 190px;
                         enabled: root.output-highlight-enabled;
@@ -1001,33 +478,14 @@ export component InterfacePanel inherits Rectangle {
                     }
                 }
 
-                Rectangle { height: 18px; }
-                SectionHeader { text: root.lang-en ? "PREVIEW" : "预览"; height: 22px; }
-                Rectangle {
-                    height: root.output-highlight-preset == "devops" ? 116px : 92px;
-                    background: Theme.term-bg;
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 5px;
-                        Text { text: "DEBUG cache lookup"; color: root.output-highlight-enabled ? Theme.text-muted : Theme.term-fg; font-family: Theme.term-font-family; font-size: 12px; }
-                        Text { text: "INFO server ready"; color: root.output-highlight-enabled ? Theme.accent : Theme.term-fg; font-family: Theme.term-font-family; font-size: 12px; }
-                        Text { text: "WARN disk nearly full"; color: root.output-highlight-enabled ? Theme.warning : Theme.term-fg; font-family: Theme.term-font-family; font-size: 12px; }
-                        Text { text: "ERROR connection failed"; color: root.output-highlight-enabled ? Theme.danger : Theme.term-fg; font-family: Theme.term-font-family; font-size: 12px; }
-                        if root.output-highlight-preset == "devops" : Text { text: "SUCCESS deployment completed"; color: root.output-highlight-enabled ? Theme.success : Theme.term-fg; font-family: Theme.term-font-family; font-size: 12px; }
-                    }
-                }
-
-                Rectangle { height: 18px; }
-                SectionHeader { text: root.lang-en ? "CUSTOM RULES" : "自定义规则"; height: 22px; }
+                Rectangle { height: 14px; }
+                SectionHeader { text: root.lang-en ? "CUSTOM HIGHLIGHT RULES" : "自定义高亮规则"; height: 22px; }
                 Text {
                     text: root.lang-en
                         ? "Custom rules run before the built-in preset and never overwrite ANSI colours."
                         : "自定义规则优先于内置规则，且不会覆盖程序输出的 ANSI 颜色。";
                     color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
+                    font-size: 12px * Theme.panel-font;
                     wrap: word-wrap;
                 }
                 Rectangle { height: 10px; }
@@ -1108,17 +566,10 @@ export component InterfacePanel inherits Rectangle {
                 if root.output-highlight-rule-status != "" : Text {
                     text: root.output-highlight-rule-status;
                     color: Theme.danger;
-                    font-size: 11px * Theme.panel-font;
+                    font-size: 12px * Theme.panel-font;
                     wrap: word-wrap;
                 }
 
-                if root.output-highlight-rules.length == 0 : Text {
-                    text: root.lang-en ? "No custom rules yet." : "暂无自定义规则。";
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    height: 34px;
-                    vertical-alignment: center;
-                }
                 for rule[index] in root.output-highlight-rules : Rectangle {
                     height: 44px;
                     Rectangle { y: 0px; width: 100%; height: 1px; background: Theme.border-subtle; }
@@ -1152,7 +603,7 @@ export component InterfacePanel inherits Rectangle {
                                     + (rule.case-sensitive ? " · Aa" : "")
                                     + (rule.whole-line ? (root.lang-en ? " · whole line" : " · 整行") : "");
                                 color: Theme.text-muted;
-                                font-size: 10px * Theme.panel-font;
+                                font-size: 11px * Theme.panel-font;
                             }
                         }
                         Switch {
@@ -1162,7 +613,7 @@ export component InterfacePanel inherits Rectangle {
                         Rectangle {
                             width: 28px;
                             height: 28px;
-                            border-radius: 5px;
+                            border-radius: 6px;
                             background: delete-ta.has-hover ? Theme.bg-hover : transparent;
                             delete-ta := TouchArea {
                                 mouse-cursor: pointer;
@@ -1172,7 +623,7 @@ export component InterfacePanel inherits Rectangle {
                                 text: "\u{E872}";
                                 font-family: "Material Icons";
                                 color: Theme.text-muted;
-                                font-size: 15px * Theme.panel-font;
+                                font-size: 16px * Theme.panel-font;
                                 width: 100%; height: 100%;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -1180,830 +631,14 @@ export component InterfacePanel inherits Rectangle {
                         }
                     }
                 }
-            }
 
-            // --- Wallpaper page ----------------------------------------
-            if root.ifd-page == "wallpaper" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-
-                SectionHeader { text: root.lang-en ? "COLOR THEME" : "配色主题"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Color theme" : "配色主题";
-                    desc: root.lang-en
-                        ? "Accent and surface colors. Follows the light/dark switch."
-                        : "强调色与面板配色，随浅色 / 深色切换。";
-                    show-divider: root.color-theme == "custom";
-                    ColorThemePicker {
-                        width: 220px;
-                        items: root.color-themes;
-                        current: root.color-theme;
-                        lang-en: root.lang-en;
-                        selected(id) => { root.set-color-theme(id); }
-                    }
-                }
-                if root.color-theme == "custom" : SettingRow {
-                    label: root.lang-en ? "Custom color" : "自定义颜色";
-                    desc: root.lang-en
-                        ? "Hex color (#RRGGBB) used as the accent; surfaces pick up a hint of it."
-                        : "十六进制颜色（#RRGGBB），作为强调色，并轻微染到面板上。";
-                    show-divider: false;
-                    CursorColorInput {
-                        value <=> root.color-theme-custom;
-                        preview-color: Theme.palette-dark.accent;
-                        apply-color(hex) => { return root.set-color-theme-custom(hex); }
-                    }
-                }
-                if root.immersive-colors && root.current-wallpaper != "" : Text {
-                    text: root.lang-en
-                        ? "Immersive colors are on, so the wallpaper's colors override the theme accent. Turn them off below to use the theme with this wallpaper."
-                        : "已开启沉浸式配色，壁纸颜色会覆盖主题强调色。在下方关闭后，可在保留壁纸的同时使用该主题。";
-                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; wrap: word-wrap;
-                }
-                Rectangle { height: 16px; }
-
-                SectionHeader { text: root.lang-en ? "WALLPAPER" : "壁纸"; height: 24px; }
-                Text {
-                    text: root.lang-en
-                        ? "Pick a wallpaper. With immersive colors on, the interface tints itself to match (accent, panels, light/dark)."
-                        : "选一张壁纸。开启沉浸式配色时，界面会适配它的颜色（强调色、面板、深浅）。";
-                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; wrap: word-wrap;
-                }
-                Rectangle { height: 12px; }
-
-                // Built-in choices: keep this row horizontally scrollable as
-                // bundled wallpapers grow.
-                builtin-wallpapers-scroll := ScrollView {
-                    height: 106px;
-                    width: 100%;
-                    content-width: max(self.visible-width, builtin-wallpapers-row.preferred-width);
-                    content-height: self.visible-height;
-
-                    builtin-wallpapers-row := HorizontalLayout {
-                        spacing: 11px;
-                        alignment: start;
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "";
-                            clicked => { root.set-wallpaper(""); }
-                            Rectangle {
-                                width: 100%; height: 100%;
-                                background: Theme.window-base;
-                                Text {
-                                    text: "\u{E14C}"; // clear / none
-                                    font-family: "Material Icons"; color: Theme.text-muted;
-                                    font-size: 22px * Theme.panel-font;
-                                    width: 100%; height: 100%;
-                                    horizontal-alignment: center; vertical-alignment: center;
-                                }
-                            }
-                        }
-                        Text { text: root.lang-en ? "None" : "无"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "builtin:light";
-                            clicked => { root.set-wallpaper("builtin:light"); }
-                            Rectangle {
-                                width: 100%; height: 100%;
-                                background: @linear-gradient(135deg, #eff3fb 0%, #d5e1f2 100%);
-                                Rectangle {
-                                    x: parent.width * 0.66; y: -parent.height * 0.2;
-                                    width: 56px; height: 56px; border-radius: 28px;
-                                    background: #4a90e2; opacity: 0.30;
-                                }
-                            }
-                        }
-                        Text { text: root.lang-en ? "Meat Light" : "简约·浅"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "builtin:dark";
-                            clicked => { root.set-wallpaper("builtin:dark"); }
-                            Rectangle {
-                                width: 100%; height: 100%;
-                                background: @linear-gradient(135deg, #10131a 0%, #1b2233 100%);
-                                Rectangle {
-                                    x: parent.width * 0.66; y: -parent.height * 0.2;
-                                    width: 56px; height: 56px; border-radius: 28px;
-                                    background: #4a6ce0; opacity: 0.40;
-                                }
-                            }
-                        }
-                        Text { text: root.lang-en ? "Meat Dark" : "简约·暗"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "builtin:tech";
-                            clicked => { root.set-wallpaper("builtin:tech"); }
-                            Rectangle {
-                                width: 100%; height: 100%;
-                                background: @linear-gradient(180deg, #05060f 0%, #0b1430 55%, #1a0a2e 100%);
-                                clip: true;
-                                // glowing planet
-                                Rectangle {
-                                    x: parent.width * 0.5 - 16px; y: parent.height * 0.22;
-                                    width: 32px; height: 32px; border-radius: 16px;
-                                    background: @radial-gradient(circle, #ff5ea8 0%, #ff5ea800 70%);
-                                }
-                                // neon horizon line
-                                Rectangle {
-                                    y: parent.height * 0.58; width: parent.width; height: 2px;
-                                    background: #19e6ff; opacity: 0.85;
-                                }
-                            }
-                        }
-                        Text { text: root.lang-en ? "Fantasy 3048" : "幻想3048"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "builtin:ms";
-                            clicked => { root.set-wallpaper("builtin:ms"); }
-                            Image {
-                                width: 100%; height: 100%;
-                                source: @image-url("../assets/ms.jpg");
-                                image-fit: cover;
-                            }
-                        }
-                        Text { text: "MS"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    VerticalLayout {
-                        spacing: 5px;
-                        WallpaperSwatch {
-                            width: 100px;
-                            selected: root.current-wallpaper == "builtin:miku";
-                            clicked => { root.set-wallpaper("builtin:miku"); }
-                            Image {
-                                width: 100%; height: 100%;
-                                source: @image-url("../assets/miku.jpg");
-                                image-fit: cover;
-                            }
-                        }
-                        Text { text: "Miku"; font-size: 11px * Theme.panel-font;
-                               color: Theme.text-secondary; horizontal-alignment: center; }
-                    }
-                    }
-                }
-
-                Rectangle { height: 16px; }
-                SectionHeader { text: root.lang-en ? "CUSTOM" : "自定义"; height: 22px; }
-                HorizontalLayout {
-                    spacing: 14px;
-                    alignment: start;
-                    WallpaperSwatch {
-                        selected: root.wp-is-custom;
-                        clicked => { root.pick-wallpaper-file(); }
-                        // Show the real image when a custom one is active, else a
-                        // "choose a file" placeholder.
-                        if root.wp-is-custom : Image {
-                            width: 100%; height: 100%;
-                            source: Theme.wallpaper;
-                            image-fit: cover;
-                        }
-                        if !root.wp-is-custom : Rectangle {
-                            width: 100%; height: 100%;
-                            background: Theme.bg-elevated;
-                            Text {
-                                text: "\u{E2C6}"; // folder-open
-                                font-family: "Material Icons"; color: Theme.text-secondary;
-                                font-size: 22px * Theme.panel-font;
-                                width: 100%; height: 100%;
-                                horizontal-alignment: center; vertical-alignment: center;
-                            }
-                        }
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 6px;
-                        Rectangle {
-                            width: 130px; height: 30px;
-                            border-radius: 6px;
-                            background: pick-ta.has-hover ? Theme.accent-hover : Theme.accent;
-                            pick-ta := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.pick-wallpaper-file(); }
-                            }
-                            Text {
-                                text: root.lang-en ? "Choose file…" : "选择文件…";
-                                color: white; font-size: 12px * Theme.panel-font;
-                                width: 100%; height: 100%;
-                                horizontal-alignment: center; vertical-alignment: center;
-                            }
-                        }
-                        if root.wp-is-custom : Text {
-                            text: root.custom-wallpaper-name;
-                            color: Theme.text-muted; font-size: 11px * Theme.panel-font;
-                            width: 150px; overflow: elide;
-                        }
-                    }
-                }
-
-                Rectangle { height: 16px; }
-                SectionHeader { text: root.lang-en ? "IMMERSIVE" : "沉浸式"; height: 22px; }
-                SettingRow {
-                    label: root.lang-en ? "Immersive colors" : "沉浸式配色";
-                    desc: root.lang-en
-                        ? "Recolor the interface from the wallpaper. Off keeps the wallpaper but uses the color theme and your light/dark choice."
-                        : "根据壁纸重新着色界面。关闭后保留壁纸，但使用配色主题和你选择的浅色 / 深色。";
-                    show-divider: false;
-                    Switch {
-                        on: root.immersive-colors;
-                        toggled(v) => { root.set-immersive-colors(v); }
-                    }
-                }
-
-                Rectangle { height: 16px; }
-                SectionHeader { text: root.lang-en ? "OVERLAY" : "遮罩"; height: 22px; }
-                SettingRow {
-                    label: root.lang-en ? "Wallpaper transparency" : "壁纸遮罩透明度";
-                    desc: root.lang-en
-                        ? "How much the wallpaper shows through panels and the terminal (no effect without a wallpaper)."
-                        : "壁纸透过面板 / 终端背景的程度,越往右越透;没设壁纸时不生效。";
-                    show-divider: false;
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Slider {
-                            width: 150px;
-                            minimum: 0;
-                            // Up to 70% transparency (overlay floor 0.30).
-                            maximum: 70;
-                            value: (1.0 - root.wallpaper-overlay) * 100;
-                            changed(v) => { root.wallpaper-overlay = 1.0 - v / 100; }
-                            released(v) => { root.persist-wallpaper-overlay(1.0 - v / 100); }
-                        }
-                        Text {
-                            text: "\{round((1.0 - root.wallpaper-overlay) * 100)}%";
-                            color: Theme.text-secondary;
-                            font-size: 12px * Theme.panel-font;
-                            vertical-alignment: center;
-                            width: 34px;
-                        }
-                    }
-                }
-            }
-
-            // --- Renderer page (#280) ---------------------------------
-            if root.ifd-page == "renderer" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-
-                SectionHeader { text: root.lang-en ? "RENDERING" : "渲染"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Renderer" : "渲染器";
-                    desc: Theme.is-mac
-                        ? (root.lang-en
-                            ? "CPU is the compatibility default. FemtoVG and Skia use GPU acceleration."
-                            : "CPU 是兼容性默认渲染器；FemtoVG 和 Skia 使用 GPU 加速。")
-                        : (root.lang-en
-                            ? "Auto tries GPU acceleration and lets Slint fall back to software. Software is best for VMs and compatibility."
-                            : "自动模式会尝试 GPU 加速，并由 Slint 在初始化失败时回退到软件渲染；虚拟机或兼容性优先时请选择软件。");
-                    show-divider: false;
-                    ComboBox {
-                        width: 150px;
-                        model: Theme.is-mac
-                            ? ["CPU", "FemtoVG", "Skia"]
-                            : (root.lang-en
-                                ? ["Automatic", "GPU", "Software"]
-                                : ["自动", "GPU", "软件"]);
-                        current-value: Theme.is-mac
-                            ? (root.renderer-mode == "skia"
-                                ? "Skia"
-                                : root.renderer-mode == "femtovg" ? "FemtoVG" : "CPU")
-                            : (root.renderer-mode == "auto"
-                                ? (root.lang-en ? "Automatic" : "自动")
-                                : root.renderer-mode == "gpu"
-                                    ? "GPU"
-                                    : (root.lang-en ? "Software" : "软件"));
-                        selected(v) => {
-                            if (Theme.is-mac && v == "CPU"
-                                    && root.renderer-mode != "software") {
-                                root.renderer-mode = "software";
-                                root.set-renderer-mode("software");
-                                root.renderer-restart-required = true;
-                            } else if (Theme.is-mac && v == "FemtoVG"
-                                    && root.renderer-mode != "femtovg") {
-                                root.renderer-mode = "femtovg";
-                                root.set-renderer-mode("femtovg");
-                                root.renderer-restart-required = true;
-                            } else if (Theme.is-mac && v == "Skia"
-                                    && root.renderer-mode != "skia") {
-                                root.renderer-mode = "skia";
-                                root.set-renderer-mode("skia");
-                                root.renderer-restart-required = true;
-                            } else if (!Theme.is-mac && (v == "Automatic" || v == "自动")
-                                    && root.renderer-mode != "auto") {
-                                root.renderer-mode = "auto";
-                                root.set-renderer-mode("auto");
-                                root.renderer-restart-required = true;
-                            } else if (!Theme.is-mac && v == "GPU" && root.renderer-mode != "gpu") {
-                                root.renderer-mode = "gpu";
-                                root.set-renderer-mode("gpu");
-                                root.renderer-restart-required = true;
-                            } else if (!Theme.is-mac && (v == "Software" || v == "软件")
-                                    && root.renderer-mode != "software") {
-                                root.renderer-mode = "software";
-                                root.set-renderer-mode("software");
-                                root.renderer-restart-required = true;
-                            }
-                        }
-                    }
-                }
-                Rectangle { height: 10px; }
-                Text {
-                    text: root.renderer-restart-required
-                        ? (root.lang-en
-                            ? "Restart MeatShell to apply the renderer change."
-                            : "重启 MeatShell 后渲染器设置才会生效。")
-                        : (root.lang-en
-                            ? (Theme.is-mac
-                                ? "CPU is the default renderer on macOS."
-                                : (root.is-windows
-                                    ? "Software remains the compatibility default for existing installations."
-                                    : "Automatic remains the default renderer on Linux."))
-                            : (Theme.is-mac
-                                ? "macOS 默认使用 CPU 渲染器。"
-                                : (root.is-windows
-                                    ? "现有安装继续默认使用兼容性更好的软件渲染。"
-                                    : "Linux 默认继续使用自动渲染器。")));
-                    color: root.renderer-restart-required ? Theme.accent : Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-            }
-
-            // --- Connection page (#515) -------------------------------
-            if root.ifd-page == "connection" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-
-                SectionHeader { text: root.lang-en ? "SSH KEEPALIVE" : "SSH 保活"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Send keepalives" : "发送保活包";
-                    desc: root.lang-en
-                        ? "Stops NAT, firewalls and gateways from dropping idle SSH / SFTP connections, and reports a dead connection instead of waiting for a keypress. Applies to new connections."
-                        : "防止空闲的 SSH / SFTP 连接被 NAT、防火墙或网关回收，连接断开时也能及时提示，而不是等到按键才发现。对新建连接生效。";
-                    show-divider: root.ssh-keepalive-enabled;
-                    Switch {
-                        on: root.ssh-keepalive-enabled;
-                        toggled(v) => {
-                            root.ssh-keepalive-enabled = v;
-                            root.set-ssh-keepalive(v, root.ssh-keepalive-interval, root.ssh-keepalive-max);
-                        }
-                    }
-                }
-                if root.ssh-keepalive-enabled : SettingRow {
-                    label: root.lang-en ? "Interval" : "发送间隔";
-                    desc: root.lang-en ? "Send a keepalive after the server has been silent this long."
-                                       : "服务器持续无数据多久后发送一次保活包。";
-                    Stepper {
-                        value: root.ssh-keepalive-interval; minimum: 5; maximum: 300; step: 5; unit: "s";
-                        changed(v) => {
-                            root.ssh-keepalive-interval = v;
-                            root.set-ssh-keepalive(true, v, root.ssh-keepalive-max);
-                        }
-                    }
-                }
-                if root.ssh-keepalive-enabled : SettingRow {
-                    label: root.lang-en ? "Unanswered keepalives" : "最大无响应次数";
-                    desc: root.lang-en
-                        ? "Disconnect after this many keepalives in a row get no reply (about " + (root.ssh-keepalive-max + 1) * root.ssh-keepalive-interval + " s)."
-                        : "连续这么多次保活包无响应后断开连接(约 " + (root.ssh-keepalive-max + 1) * root.ssh-keepalive-interval + " 秒)。";
-                    show-divider: false;
-                    Stepper {
-                        value: root.ssh-keepalive-max; minimum: 2; maximum: 10; step: 1;
-                        changed(v) => {
-                            root.ssh-keepalive-max = v;
-                            root.set-ssh-keepalive(true, root.ssh-keepalive-interval, v);
-                        }
-                    }
-                }
-            }
-
-            // --- SFTP page ---------------------------------------------
-            if root.ifd-page == "sftp" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: "SFTP"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "SFTP follows terminal cd" : "SFTP 跟随 cd 更新";
-                    desc: root.lang-en
-                        ? "A cd in the terminal switches the SFTP panel to the same directory."
-                        : "终端里执行 cd 时,SFTP 面板自动切到相同目录。";
-                    Switch {
-                        on: root.sftp-follow-cd;
-                        toggled(v) => { root.sftp-follow-cd = v; root.set-sftp-follow-cd(v); }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Open files in a tab" : "在标签页中打开文件";
-                    desc: root.lang-en
-                        ? "On: text files open as editor tabs in the main window (drag a tab to split it). Off: they open in a separate editor window."
-                        : "开启:文本文件以编辑器标签页在主界面中打开(拖动标签可分屏)。关闭:在单独的编辑器窗口中打开。";
-                    show-divider: false;
-                    Switch {
-                        on: root.editor-embedded;
-                        toggled(v) => { root.editor-embedded = v; root.set-editor-embedded(v); }
-                    }
-                }
-            }
-
-            // --- WSL page ----------------------------------------------
-            if root.ifd-page == "wsl" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 8px;
-                alignment: start;
-                SectionHeader { text: "WSL"; height: 24px; }
-                Text {
-                    text: root.lang-en
-                        ? "Add multiple WSL launch entries. A blank distribution uses the Windows default; ~ opens the selected Linux user's home directory."
-                        : "可添加多个 WSL 启动项。发行版留空时使用 Windows 默认发行版；~ 表示所选 Linux 用户的主目录。";
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Display name" : "显示名称";
-                    placeholder: "Ubuntu";
-                    value <=> root.wsl-new-name;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Distribution (optional)" : "发行版（可选）";
-                    placeholder: "Ubuntu-24.04";
-                    value <=> root.wsl-new-distribution;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    LabeledInput {
-                        horizontal-stretch: 1;
-                        label: root.lang-en ? "Startup directory" : "启动目录";
-                        placeholder: "~ or /home/user/project";
-                        value <=> root.wsl-new-directory;
-                    }
-                    VerticalLayout {
-                        alignment: end;
-                        GhostButton {
-                            text: root.lang-en ? "Browse…" : "选择目录…";
-                            clicked => { root.pick-wsl-directory(); }
-                        }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    PrimaryButton {
-                        text: root.lang-en ? "Add WSL" : "添加 WSL";
-                        clicked => {
-                            root.add-wsl-profile(root.wsl-new-name, root.wsl-new-distribution, root.wsl-new-directory);
-                            root.wsl-new-name = "WSL";
-                            root.wsl-new-distribution = "";
-                            root.wsl-new-directory = "~";
-                        }
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border-subtle; }
-                for profile in root.wsl-profiles : Rectangle {
-                    height: 54px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.bg-elevated;
-                    HorizontalLayout {
-                        padding-left: 10px; padding-right: 8px; spacing: 8px;
-                        VerticalLayout {
-                            horizontal-stretch: 1; alignment: center;
-                            Text { text: profile.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; }
-                            Text {
-                                text: (profile.distribution == "" ? (root.lang-en ? "Default distribution" : "默认发行版") : profile.distribution)
-                                    + "  ·  " + profile.directory;
-                                color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
-                            }
-                        }
-                        GhostButton {
-                            text: root.lang-en ? "Remove" : "删除";
-                            clicked => { root.remove-wsl-profile(profile.id); }
-                        }
-                    }
-                }
-            }
-
-            // --- AI agents page (#427) ---------------------------------
-            if root.ifd-page == "agents" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 8px;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "AI AGENTS" : "AI 智能体"; height: 24px; }
-                Text {
-                    text: root.is-windows
-                        ? (root.lang-en
-                            ? "Installed agents such as Claude Code, Codex and Gemini CLI are found automatically. Add any other agent here: the command runs in PowerShell, e.g. kiro-cli chat or & 'C:\\Tools\\My Agent\\agent.exe' --fast."
-                            : "Claude Code、Codex、Gemini CLI 等已安装的智能体会被自动识别。其他智能体可在此添加：命令在 PowerShell 中运行，例如 kiro-cli chat 或 & 'C:\\Tools\\My Agent\\agent.exe' --fast。")
-                        : (root.lang-en
-                            ? "Installed agents such as Claude Code, Codex and Gemini CLI are found automatically. Add any other agent here: the command runs in your login shell, e.g. kiro-cli chat."
-                            : "Claude Code、Codex、Gemini CLI 等已安装的智能体会被自动识别。其他智能体可在此添加：命令在登录 shell 中运行，例如 kiro-cli chat。");
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Display name" : "显示名称";
-                    placeholder: "Kiro";
-                    value <=> root.agent-new-name;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Command" : "启动命令";
-                    placeholder: "kiro-cli chat";
-                    value <=> root.agent-new-command;
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    LabeledInput {
-                        horizontal-stretch: 1;
-                        label: root.lang-en ? "Start folder (optional)" : "启动目录（可选）";
-                        placeholder: root.is-windows ? "D:\\Projects\\app" : "~/projects/app";
-                        value <=> root.agent-new-directory;
-                    }
-                    VerticalLayout {
-                        alignment: end;
-                        GhostButton {
-                            text: root.lang-en ? "Browse…" : "选择目录…";
-                            clicked => { root.pick-agent-directory(); }
-                        }
-                    }
-                }
-                HorizontalLayout {
-                    alignment: end;
-                    PrimaryButton {
-                        text: root.lang-en ? "Add agent" : "添加智能体";
-                        clicked => {
-                            root.add-custom-agent(root.agent-new-name, root.agent-new-command,
-                                root.agent-new-directory);
-                        }
-                    }
-                }
-                Rectangle { height: 1px; background: Theme.border-subtle; }
-                if root.custom-agents.length == 0 : Text {
-                    text: root.lang-en ? "No custom agents yet." : "暂无自定义智能体。";
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                }
-                for agent in root.custom-agents : Rectangle {
-                    height: 54px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.bg-elevated;
-                    HorizontalLayout {
-                        padding-left: 10px; padding-right: 8px; spacing: 8px;
-                        VerticalLayout {
-                            horizontal-stretch: 1; alignment: center;
-                            Text { text: agent.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; }
-                            Text {
-                                text: agent.command + (agent.directory == "" ? "" : "  ·  " + agent.directory);
-                                color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
-                            }
-                        }
-                        GhostButton {
-                            text: root.lang-en ? "Remove" : "删除";
-                            clicked => { root.remove-custom-agent(agent.id); }
-                        }
-                    }
-                }
-            }
-
-            // --- Sidebars page -----------------------------------------
-            if root.ifd-page == "sidebar" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "SIDEBARS" : "侧栏"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Collapse the resource panel by default" : "默认收起资源视图面板";
-                    Switch {
-                        on: root.collapse-sidebar-default;
-                        toggled(v) => { root.collapse-sidebar-default = v; root.set-collapse-sidebar-default(v); }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Zen mode" : "专注模式";
-                    desc: root.lang-en
-                        ? "Hide side panels and collapsed edge strips so the terminal fills the window."
-                        : "隐藏侧栏、底栏和收起图标，让终端填满窗口内容区。";
-                    Switch {
-                        on: root.zen-mode;
-                        toggled(v) => { root.zen-mode = v; root.set-zen-mode(v); }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Collapse the SFTP panel by default" : "默认收起 SFTP 侧栏";
-                    desc: root.lang-en
-                        ? "Takes effect on next launch; handy on low-spec jump hosts."
-                        : "下次启动生效;低配跳板机上可减少常驻面板开销。";
-                    Switch {
-                        on: root.collapse-sftp-default;
-                        toggled(v) => { root.collapse-sftp-default = v; root.set-collapse-sftp-default(v); }
-                    }
-                }
-                // Welcome page as a sidebar — lived on its own "Welcome page"
-                // settings page before; it is a sidebar option like the rest.
-                SettingRow {
-                    label: root.lang-en ? "Show the welcome page as a sidebar" : "欢迎页设为侧栏";
-                    desc: root.lang-en
-                        ? "Dock the session list on the left instead of a \"New tab\" tab; opened sessions fill the center."
-                        : "把会话列表停靠在左侧,不再用「新标签页」标签;打开的会话占据中央区域。";
-                    Switch {
-                        on: root.welcome-as-sidebar;
-                        // Applying this binding destroys/recreates the Welcome
-                        // subtree. Rust defers that work until this Switch
-                        // callback has returned, so do not mutate it here (#323).
-                        toggled(v) => { root.set-welcome-as-sidebar(v); }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Quick commands as a sidebar" : "快捷命令作为侧栏";
-                    desc: root.lang-en
-                        ? "Allows the quick-command popup to be dragged to a window edge. After docking, use the sidebar or its collapsed icon."
-                        : "允许把快捷命令弹窗拖到窗口边缘；停靠后通过侧栏或收起图标使用。";
-                    show-divider: false;
-                    Switch {
-                        on: root.quick-commands-as-sidebar;
-                        toggled(v) => {
-                            root.quick-commands-as-sidebar = v;
-                            root.set-quick-commands-as-sidebar(v);
-                        }
-                    }
-                }
-            }
-
-            // --- Session sync page -------------------------------------
-            if root.ifd-page == "sync" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "SESSION SYNC" : "会话同步"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Sync file uploads" : "文件上传同步";
-                    desc: root.lang-en
-                        ? "While session sync is on, an upload goes to the same path on each session; if missing, to that session's current SFTP directory."
-                        : "会话同步开启时,上传会发往各会话的相同路径;路径不存在则发往该会话当前 SFTP 目录。";
-                    show-divider: false;
-                    Switch {
-                        on: root.sync-upload-enabled;
-                        toggled(v) => { root.sync-upload-enabled = v; root.set-sync-upload-enabled(v); }
-                    }
-                }
-                Rectangle { height: 6px; }
-                Text {
-                    text: root.lang-en
-                        ? "Session sync itself is toggled from the sync icon in the top-right bar."
-                        : "会话同步本身从右上角的同步图标开关。";
-                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; wrap: word-wrap;
-                }
-            }
-
-            // --- WebDAV page (#185) ------------------------------------
-            if root.ifd-page == "webdav" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 10px;
-                alignment: start;
-                SectionHeader { text: "WEBDAV"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Enable WebDAV sync" : "启用 WebDAV 同步";
-                    desc: root.lang-en
-                        ? "Manual upload/download only; meatshell will not connect on startup."
-                        : "仅手动上传/下载;meatshell 启动时不会自动连接。";
-                    show-divider: false;
-                    Switch {
-                        on: root.webdav-enabled;
-                        toggled(v) => { root.webdav-enabled = v; }
-                    }
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Endpoint URL" : "WebDAV 地址";
-                    placeholder: "https://nas:5006/all/ or https://nas:5006/all/meatshell-connections.json";
-                    value <=> root.webdav-url;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Username" : "用户名";
-                    placeholder: root.lang-en ? "Optional" : "可选";
-                    value <=> root.webdav-username;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Password / app token" : "密码 / 应用令牌";
-                    placeholder: root.lang-en ? "Optional" : "可选";
-                    password: true;
-                    value <=> root.webdav-password;
-                }
-                LabeledInput {
-                    label: root.lang-en ? "Remote file" : "远端文件";
-                    placeholder: "meatshell-connections.json";
-                    value <=> root.webdav-remote-path;
-                }
-                SettingRow {
-                    label: root.lang-en ? "Trust self-signed / intranet certs" : "信任自签名/内网证书";
-                    desc: root.lang-en
-                        ? "Use only for trusted NAS or LAN WebDAV over HTTPS."
-                        : "仅用于可信 NAS 或局域网 HTTPS WebDAV。";
-                    show-divider: false;
-                    Switch {
-                        on: root.webdav-accept-invalid-certs;
-                        toggled(v) => { root.webdav-accept-invalid-certs = v; }
-                    }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-                    GhostButton {
-                        text: root.lang-en ? "Save" : "保存";
-                        clicked => {
-                            root.save-webdav-settings(
-                                root.webdav-enabled, root.webdav-url, root.webdav-username,
-                                root.webdav-password, root.webdav-remote-path,
-                                root.webdav-accept-invalid-certs);
-                        }
-                    }
-                    GhostButton {
-                        text: root.lang-en ? "Download" : "下载";
-                        clicked => { root.webdav-download(); }
-                    }
-                    PrimaryButton {
-                        text: root.lang-en ? "Upload" : "上传";
-                        clicked => { root.webdav-upload(); }
-                    }
-                }
-                Text {
-                    text: root.webdav-status;
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-            }
-
-            // --- Download page -----------------------------------------
-            if root.ifd-page == "download" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "DOWNLOAD" : "下载"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Always ask where to save" : "总是询问保存去何处";
-                    desc: root.lang-en
-                        ? "Every download prompts for a location instead of using the preset folder."
-                        : "每次下载都询问保存位置,而不是直接存到预设下载目录。";
-                    show-divider: false;
-                    Switch {
-                        on: root.download-always-ask;
-                        toggled(v) => { root.download-always-ask = v; root.set-download-always-ask(v); }
-                    }
-                }
-            }
-
-            // --- Session log page (#265) -------------------------------
-            if root.ifd-page == "session-log" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "SESSION LOG" : "会话日志"; height: 24px; }
+                Rectangle { height: 24px; }
+                SectionHeader { text: root.lang-en ? "SESSION LOG" : "会话日志"; height: 26px; }
                 SettingRow {
                     label: root.lang-en ? "Record session logs" : "记录会话日志";
                     desc: root.lang-en
-                        ? "Save each new terminal tab's output as timestamped plain text. Keystrokes are not recorded, so passwords typed at hidden prompts stay out of the log. A saved session can override this in its advanced options."
-                        : "将每个新终端标签页的输出保存为带时间戳的纯文本。不记录按键,在隐藏输入的提示处键入的密码不会进入日志。已保存会话可在高级选项中单独覆盖此设置。";
+                        ? "Save each new terminal tab's output as timestamped plain text. Keystrokes are not recorded."
+                        : "将每个新终端标签页的输出保存为带时间戳的纯文本，不记录按键与隐藏密码。";
                     Switch {
                         on: root.session-log-enabled;
                         toggled(v) => { root.session-log-enabled = v; root.set-session-log-enabled(v); }
@@ -2029,368 +664,288 @@ export component InterfacePanel inherits Rectangle {
                         }
                     }
                 }
-                Text {
-                    text: root.lang-en
-                        ? "One file per tab: <session>_<date-time>.log. Changes apply to tabs opened afterwards."
-                        : "每个标签页一个文件:<会话名>_<日期-时间>.log。修改仅对之后打开的标签页生效。";
-                    font-size: 11px * Theme.panel-font;
-                    color: Theme.text-muted;
-                    wrap: word-wrap;
-                }
             }
 
-            // --- MCP page ----------------------------------------------
-            if root.ifd-page == "mcp" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                // Room below the config snippet so it scrolls clear of the
-                // card's bottom edge / resize grip.
-                padding-bottom: 24px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: "MODEL CONTEXT PROTOCOL"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Enable MCP server" : "启用 MCP 服务";
-                    desc: root.lang-en
-                        ? "Allows local MCP clients to start meatshell mcp serve over stdio."
-                        : "允许本机 MCP 客户端通过 meatshell mcp serve 启动 stdio 服务。";
-                    Switch {
-                        on: root.mcp-enabled;
-                        toggled(v) => {
-                            root.mcp-enabled = v;
-                            root.set-mcp-permissions(v, root.mcp-use-saved-credentials, root.mcp-allow-commands, root.mcp-allow-file-transfers);
-                        }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Use saved credentials" : "使用已保存凭据";
-                    desc: root.lang-en
-                        ? "MCP may authenticate with saved passwords and private keys, but can never read them."
-                        : "MCP 可以使用已保存的密码和私钥完成认证，但永远不能读取其内容。";
-                    Switch {
-                        on: root.mcp-use-saved-credentials;
-                        toggled(v) => {
-                            root.mcp-use-saved-credentials = v;
-                            root.set-mcp-permissions(root.mcp-enabled, v, root.mcp-allow-commands, root.mcp-allow-file-transfers);
-                        }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Allow arbitrary SSH commands" : "允许任意 SSH 命令";
-                    desc: root.lang-en
-                        ? "Preview setting: permits run_command on saved SSH sessions."
-                        : "预览阶段设置：允许对已保存的 SSH 会话调用 run_command。";
-                    show-divider: false;
-                    Switch {
-                        on: root.mcp-allow-commands;
-                        toggled(v) => {
-                            root.mcp-allow-commands = v;
-                            root.set-mcp-permissions(root.mcp-enabled, root.mcp-use-saved-credentials, v, root.mcp-allow-file-transfers);
-                        }
-                    }
-                }
-                SettingRow {
-                    label: root.lang-en ? "Allow file transfers" : "允许文件传输";
-                    desc: root.lang-en
-                        ? "Permits MCP uploads from local paths and downloads to local directories."
-                        : "允许 MCP 从本地路径上传文件，以及将远程文件下载到本地目录。";
-                    show-divider: false;
-                    Switch {
-                        on: root.mcp-allow-file-transfers;
-                        toggled(v) => {
-                            root.mcp-allow-file-transfers = v;
-                            root.set-mcp-permissions(root.mcp-enabled, root.mcp-use-saved-credentials, root.mcp-allow-commands, v);
-                        }
-                    }
-                }
-                // Per-session MCP scope lives in the session editor (#432).
-                Rectangle { height: 10px; }
-                Text {
-                    text: root.lang-en
-                        ? "To keep a server manual-only, untick \"Allow MCP access to this session\" in its session editor."
-                        : "如需某台服务器仅供手动使用，请在其会话编辑窗口中取消勾选“允许 MCP 访问此会话”。";
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-                Rectangle { height: 18px; }
-                SectionHeader { text: root.lang-en ? "CLIENT CONFIGURATION" : "客户端配置"; height: 22px; }
-                Text {
-                    text: root.lang-en
-                        ? "Add this entry under \"mcpServers\" in your MCP client's config (for example claude_desktop_config.json). Transport: stdio, local process only."
-                        : "把这段配置加到 MCP 客户端配置的 \"mcpServers\" 下（例如 claude_desktop_config.json）。传输方式：stdio，仅本机进程。";
-                    color: Theme.text-muted;
-                    font-size: 11px * Theme.panel-font;
-                    wrap: word-wrap;
-                }
-                Rectangle { height: 8px; }
-                // The snippet, with a copy button in its top-right corner.
-                Rectangle {
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: Theme.border-subtle;
-                    background: Theme.bg-elevated;
-                    height: mcp-json-text.preferred-height + 24px;
-                    mcp-json-text := Text {
-                        x: 12px;
-                        y: 12px;
-                        width: parent.width - 12px - 44px;
-                        text: root.mcp-config-json;
-                        color: Theme.text-primary;
-                        font-family: Theme.term-font-family;
-                        font-size: 12px * Theme.panel-font;
-                        wrap: char-wrap;
-                    }
-                    copy-btn := Rectangle {
-                        x: parent.width - self.width - 6px;
-                        y: 6px;
-                        width: 30px;
-                        height: 26px;
-                        border-radius: 5px;
-                        background: copy-ta.has-hover ? Theme.bg-hover : transparent;
-                        Text {
-                            text: root.mcp-json-copied ? "\u{E5CA}" : "\u{E14D}"; // check / content_copy
-                            font-family: "Material Icons";
-                            font-size: 16px * Theme.panel-font;
-                            color: root.mcp-json-copied ? Theme.success : Theme.text-secondary;
-                            width: 100%;
-                            height: 100%;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        copy-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.copy-text(root.mcp-config-json);
-                                root.mcp-json-copied = true;
-                            }
-                        }
-                    }
-                    // Flip the check back to the copy icon after a moment.
-                    Timer {
-                        interval: 1500ms;
-                        running: root.mcp-json-copied;
-                        triggered => { root.mcp-json-copied = false; }
-                    }
-                }
+            // --- General & Appearance page ------------------------------
+            if root.is-general-page : GeneralSettingsPage {
+                lang-en: root.lang-en;
+                dark-mode: root.dark-mode;
+                ui-scale: root.ui-scale;
+                color-themes: root.color-themes;
+                color-theme: root.color-theme;
+                color-theme-custom <=> root.color-theme-custom;
+                zen-mode <=> root.zen-mode;
+                welcome-as-sidebar <=> root.welcome-as-sidebar;
+                collapse-sidebar-default <=> root.collapse-sidebar-default;
+                collapse-sftp-default <=> root.collapse-sftp-default;
+                quick-commands-as-sidebar <=> root.quick-commands-as-sidebar;
+                current-wallpaper: root.current-wallpaper;
+                custom-wallpaper-name: root.custom-wallpaper-name;
+                wp-is-custom: root.wp-is-custom;
+                immersive-colors: root.immersive-colors;
+                wallpaper-overlay <=> root.wallpaper-overlay;
+                renderer-mode <=> root.renderer-mode;
+                renderer-restart-required <=> root.renderer-restart-required;
+                set-dark-mode(v) => { root.set-dark-mode(v); }
+                toggle-language => { root.toggle-language(); }
+                set-ui-scale(v) => { root.set-ui-scale(v); }
+                set-panel-font(v) => { root.set-panel-font(v); }
+                set-color-theme(id) => { root.set-color-theme(id); }
+                set-color-theme-custom(hex) => { return root.set-color-theme-custom(hex); }
+                set-zen-mode(v) => { root.set-zen-mode(v); }
+                set-welcome-as-sidebar(v) => { root.set-welcome-as-sidebar(v); }
+                set-collapse-sidebar-default(v) => { root.set-collapse-sidebar-default(v); }
+                set-collapse-sftp-default(v) => { root.set-collapse-sftp-default(v); }
+                set-quick-commands-as-sidebar(v) => { root.set-quick-commands-as-sidebar(v); }
+                set-wallpaper(id) => { root.set-wallpaper(id); }
+                pick-wallpaper-file => { root.pick-wallpaper-file(); }
+                set-immersive-colors(v) => { root.set-immersive-colors(v); }
+                persist-wallpaper-overlay(v) => { root.persist-wallpaper-overlay(v); }
+                set-renderer-mode(v) => { root.set-renderer-mode(v); }
             }
 
-            // --- Updates -----------------------------------------------
-            if root.ifd-page == "update" : VerticalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                padding-top: 14px;
-                // Room below the mirror buttons so they scroll fully into view
-                // above the card's bottom edge / resize grip.
-                padding-bottom: 28px;
-                spacing: 0;
-                alignment: start;
-                SectionHeader { text: root.lang-en ? "UPDATES" : "软件更新"; height: 24px; }
-                SettingRow {
-                    label: root.lang-en ? "Check for new versions on startup" : "启动时检查新版本";
-                    desc: root.lang-en
-                        ? "Check automatically on startup. You can also check manually below."
-                        : "启动时自动查询新版本，也可随时在下方手动检查。";
-                    show-divider: false;
-                    Switch {
-                        on: root.update-check-enabled;
-                        toggled(v) => { root.update-check-enabled = v; root.set-update-check-enabled(v); }
-                    }
-                }
-                Rectangle { height: 16px; }
-                if root.update-version != "" : Text {
-                    text: (root.lang-en ? "Available version: " : "可用版本：") + root.update-version;
-                    color: Theme.text-primary;
-                    font-size: Theme.fs-md;
-                }
-                Text {
-                    text: root.update-status;
-                    color: root.update-error ? #e57373 : Theme.text-muted;
-                    font-size: Theme.fs-sm;
-                    wrap: word-wrap;
-                }
-                Rectangle { height: 12px; }
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
-                    PrimaryButton {
-                        text: root.lang-en ? "Check for updates" : "检查更新";
-                        disabled: root.update-busy;
-                        clicked => { root.check-for-updates(); }
-                    }
-                    if root.update-version != "" && root.update-install-supported : PrimaryButton {
-                        text: root.update-action-label;
-                        disabled: root.update-busy;
-                        clicked => { root.update-action(); }
-                    }
-                }
-                Rectangle { height: 8px; }
-                HorizontalLayout {
-                    alignment: start;
-                    GhostButton {
-                        text: root.lang-en ? "Release page" : "发布页面";
-                        clicked => { root.open-update-url(); }
-                    }
-                }
-                Rectangle { height: 12px; }
-                Text {
-                    text: root.update-via-terminal
-                        ? (root.lang-en
-                            ? "Updates are built from the AUR: MeatShell opens a terminal tab running paru, yay or makepkg. When it finishes, restart MeatShell."
-                            : "更新从 AUR 构建：MeatShell 会打开终端标签页运行 paru、yay 或 makepkg，完成后重启 MeatShell 即可。")
-                        : root.update-install-supported
-                        ? (root.lang-en
-                            ? "Downloads are verified before installation. Installing closes all windows and connections, then reopens MeatShell. Temporary packages are removed afterwards."
-                            : "安装前会校验下载文件。安装时关闭所有窗口和连接，完成后重新打开 MeatShell，并清理临时安装包。")
-                        : (root.lang-en
-                            ? "This installation can't be updated from inside MeatShell; use the release page or your package manager."
-                            : "此安装方式不支持在软件内更新，请通过发布页面或系统包管理器更新。");
-                    color: Theme.text-muted;
-                    font-size: Theme.fs-sm;
-                    wrap: word-wrap;
-                }
+            // --- Connection & Data page (Keepalive + Import/Export + WebDAV) ---
+            if root.is-connection-page : ConnectionSettingsPage {
+                lang-en: root.lang-en;
+                ssh-keepalive-enabled <=> root.ssh-keepalive-enabled;
+                ssh-keepalive-interval <=> root.ssh-keepalive-interval;
+                ssh-keepalive-max <=> root.ssh-keepalive-max;
+                webdav-enabled <=> root.webdav-enabled;
+                webdav-url <=> root.webdav-url;
+                webdav-username <=> root.webdav-username;
+                webdav-password <=> root.webdav-password;
+                webdav-remote-path <=> root.webdav-remote-path;
+                webdav-accept-invalid-certs <=> root.webdav-accept-invalid-certs;
+                webdav-status <=> root.webdav-status;
+                set-ssh-keepalive(en, iv, mx) => { root.set-ssh-keepalive(en, iv, mx); }
+                import-ssh-config => { root.import-ssh-config(); }
+                open-batch-import => { root.open-batch-import(); }
+                import-connections => { root.import-connections(); }
+                export-connections => { root.export-connections(); }
+                save-webdav-settings(en, u, usr, pwd, rp, ic) => { root.save-webdav-settings(en, u, usr, pwd, rp, ic); }
+                webdav-download => { root.webdav-download(); }
+                webdav-upload => { root.webdav-upload(); }
+            }
 
-                // Download mirrors — Chinese UI only. Rust uses them only in a
-                // mainland China time zone, racing them against GitHub.
-                if !root.lang-en : VerticalLayout {
-                    spacing: 6px;
-                    // Speed-test every source each time the section appears.
-                    init => { root.test-update-mirrors(); }
-                    Rectangle { height: 14px; }
+            // --- Files & SFTP page (SFTP + Download + Multi-session Sync) ---
+            if root.is-sftp-page : SftpSettingsPage {
+                lang-en: root.lang-en;
+                sftp-follow-cd <=> root.sftp-follow-cd;
+                editor-embedded <=> root.editor-embedded;
+                download-dir: root.download-dir;
+                download-always-ask <=> root.download-always-ask;
+                sync-upload-enabled <=> root.sync-upload-enabled;
+                set-sftp-follow-cd(v) => { root.set-sftp-follow-cd(v); }
+                set-editor-embedded(v) => { root.set-editor-embedded(v); }
+                pick-download-dir => { root.pick-download-dir(); }
+                open-download-dir => { root.open-download-dir(); }
+                set-download-always-ask(v) => { root.set-download-always-ask(v); }
+                set-sync-upload-enabled(v) => { root.set-sync-upload-enabled(v); }
+            }
+
+            // --- Keyboard Shortcuts page -------------------------------
+            if root.is-shortcuts-page : sc-scope := FocusScope {
+                width: 100%;
+                focus-on-click: false;
+                key-pressed(ev) => {
+                    if (root.shortcut-recording != "") {
+                        root.shortcut-record(root.shortcut-recording, ev.text,
+                            ev.modifiers.control, ev.modifiers.meta,
+                            ev.modifiers.alt, ev.modifiers.shift);
+                        return accept;
+                    }
+                    reject
+                }
+                VerticalLayout {
+                    padding-left: 28px;
+                    padding-right: 28px;
+                    padding-top: 20px;
+                    padding-bottom: 28px;
+                    spacing: 0;
+                    alignment: start;
+
                     HorizontalLayout {
-                        SectionHeader { text: "下载镜像"; height: 24px; horizontal-stretch: 1; }
+                        alignment: space-between;
+                        height: 32px;
+                        SectionHeader {
+                            text: root.lang-en ? "KEYBOARD SHORTCUTS" : "键盘快捷键";
+                            height: 32px;
+                        }
                         GhostButton {
-                            text: root.update-mirrors-testing ? "测速中…" : "重新测速";
-                            clicked => { if (!root.update-mirrors-testing) { root.test-update-mirrors(); } }
+                            text: root.lang-en ? "Reset all" : "全部恢复默认";
+                            clicked => {
+                                root.shortcut-recording = "";
+                                root.shortcut-status = "";
+                                root.shortcut-reset-all();
+                            }
                         }
                     }
                     Text {
-                        text: root.update-china-tz
-                            ? "一键更新优先使用选中的下载源，失败时依次换用其他源。所有下载均按 GitHub 发布的 SHA-256 校验。"
-                            : "当前系统时区不在中国大陆，镜像不会启用，更新将直接从 GitHub 下载。";
-                        color: Theme.text-muted;
-                        font-size: Theme.fs-sm;
-                        wrap: word-wrap;
+                        text: root.shortcut-status != ""
+                            ? root.shortcut-status
+                            : (root.lang-en
+                                ? "Click a shortcut badge, then press the new key combination (Esc to cancel)."
+                                : "点击右侧快捷键徽章后直接按下新的组合键即可修改（按 Esc 取消）。");
+                        color: root.shortcut-status != ""
+                            ? (root.shortcut-status-error ? Theme.danger : Theme.accent)
+                            : Theme.text-muted;
+                        font-size: 12px * Theme.panel-font;
+                        height: 28px;
+                        vertical-alignment: center;
                     }
-                    SettingRow {
-                        label: "自动选择最快的下载源";
-                        desc: root.update-mirror-auto
-                            ? "每次更新前重新测速并使用最快的源。点击下方任一行可改为固定使用该源。"
-                            : "已固定使用选中的源，失败时再依次换用其他源。打开此开关恢复自动选择。";
-                        show-divider: false;
-                        Switch {
-                            on: root.update-mirror-auto;
-                            toggled(v) => { root.set-update-mirror-auto(v); }
+                    Rectangle { height: 6px; }
+
+                    for item[idx] in root.shortcut-bindings : VerticalLayout {
+                        spacing: 0;
+                        if item.header != "" && idx > 0 : Rectangle { height: 14px; }
+                        if item.header != "" : SectionHeader {
+                            text: item.header;
+                            height: 24px;
                         }
-                    }
-                    for mirror in root.update-mirrors : Rectangle {
-                        height: 30px;
-                        border-radius: Theme.radius-sm;
-                        background: mirror-row-ta.has-hover && !mirror.selected
-                            ? Theme.bg-hover.brighter(0.15) : Theme.bg-hover;
-                        border-width: mirror.selected ? 1px : 0px;
-                        border-color: Theme.accent;
-                        // Whole row selects; the ✕ button below sits on top of it.
-                        mirror-row-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.select-update-mirror(mirror.key); }
-                        }
-                        HorizontalLayout {
-                            padding-left: 10px; padding-right: 4px; spacing: 8px;
-                            // Radio dot.
+                        Rectangle {
+                            height: 44px;
                             Rectangle {
-                                width: 14px; height: 14px;
-                                y: (parent.height - self.height) / 2;
-                                border-radius: 7px;
-                                border-width: 1.5px;
-                                border-color: mirror.selected ? Theme.accent : Theme.text-muted;
-                                Rectangle {
-                                    width: 6px; height: 6px;
-                                    border-radius: 3px;
-                                    background: Theme.accent;
-                                    visible: mirror.selected;
-                                }
+                                y: parent.height - 1px;
+                                width: 100%;
+                                height: 1px;
+                                background: Theme.border-subtle;
                             }
-                            Text {
-                                text: mirror.removable ? mirror.url : mirror.url + "（官方源）";
-                                color: mirror.removable ? Theme.text-primary : Theme.text-secondary;
-                                font-size: Theme.fs-sm;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                overflow: elide;
-                            }
-                            if mirror.fastest : Text {
-                                text: "最快";
-                                color: #4caf50;
-                                font-size: Theme.fs-xs;
-                                vertical-alignment: center;
-                            }
-                            Text {
-                                min-width: 64px;
-                                text: mirror.ping;
-                                color: mirror.level == 1 ? #4caf50
-                                     : mirror.level == 2 ? #e0a040
-                                     : mirror.level >= 3 ? #e57373
-                                     : Theme.text-muted;
-                                font-size: Theme.fs-sm;
-                                horizontal-alignment: right;
-                                vertical-alignment: center;
-                            }
-                            // Keeps the ping column aligned on the GitHub row.
-                            if !mirror.removable : Rectangle { width: 22px; }
-                            if mirror.removable : Rectangle {
-                                width: 22px; height: 22px;
-                                y: (parent.height - self.height) / 2;
-                                border-radius: Theme.radius-sm;
-                                background: mirror-del-ta.has-hover ? Theme.bg-root : transparent;
-                                mirror-del-ta := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.remove-update-mirror(mirror.url); }
-                                }
+                            HorizontalLayout {
+                                padding-top: 6px;
+                                padding-bottom: 6px;
+                                spacing: 10px;
                                 Text {
-                                    text: "\u{E5CD}";   // close
-                                    font-family: "Material Icons";
-                                    color: mirror-del-ta.has-hover ? #e57373 : Theme.text-muted;
-                                    font-size: Theme.fs-sm;
-                                    horizontal-alignment: center;
+                                    text: item.desc;
+                                    color: Theme.text-primary;
+                                    font-size: 14px * Theme.panel-font;
                                     vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Rectangle {
+                                    property <bool> rec: root.shortcut-recording == item.id;
+                                    width: 156px;
+                                    height: 30px;
+                                    border-radius: 6px;
+                                    background: self.rec ? Theme.bg-active
+                                              : key-ta.has-hover ? Theme.bg-hover : Theme.bg-panel;
+                                    border-width: 1px;
+                                    border-color: self.rec ? Theme.accent : Theme.border-subtle;
+                                    key-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.shortcut-status = "";
+                                            root.shortcut-recording = parent.rec ? "" : item.id;
+                                            sc-scope.focus();
+                                        }
+                                    }
+                                    Text {
+                                        text: parent.rec
+                                            ? (root.lang-en ? "Press keys…" : "请按键…")
+                                            : item.keys;
+                                        color: parent.rec ? Theme.accent : Theme.text-primary;
+                                        font-family: Theme.ui-font-family;
+                                        font-size: 12px * Theme.panel-font;
+                                        font-weight: 500;
+                                        width: 100%;
+                                        height: 100%;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                Rectangle {
+                                    width: 48px;
+                                    height: 30px;
+                                    border-radius: 6px;
+                                    background: !item.is-default
+                                        ? (rst-ta.has-hover ? Theme.bg-hover : transparent)
+                                        : transparent;
+                                    rst-ta := TouchArea {
+                                        enabled: !item.is-default;
+                                        mouse-cursor: !item.is-default ? pointer : default;
+                                        clicked => {
+                                            root.shortcut-recording = "";
+                                            root.shortcut-status = "";
+                                            root.shortcut-reset(item.id);
+                                        }
+                                    }
+                                    Text {
+                                        text: !item.is-default ? (root.lang-en ? "Reset" : "重置") : "";
+                                        color: Theme.text-secondary;
+                                        font-size: 12px * Theme.panel-font;
+                                        width: 100%;
+                                        height: 100%;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
                                 }
                             }
-                        }
-                    }
-                    LabeledInput {
-                        label: "添加镜像（加在 GitHub 下载地址前的前缀）";
-                        placeholder: "https://v4.gh-proxy.org/";
-                        value <=> root.new-mirror;
-                        accepted => {
-                            root.add-update-mirror(root.new-mirror);
-                            if (root.update-mirror-error == "") { root.new-mirror = ""; }
-                        }
-                    }
-                    if root.update-mirror-error != "" : Text {
-                        text: root.update-mirror-error;
-                        color: #e57373;
-                        font-size: Theme.fs-sm;
-                        wrap: word-wrap;
-                    }
-                    HorizontalLayout {
-                        spacing: 10px;
-                        alignment: start;
-                        PrimaryButton {
-                            text: "添加";
-                            disabled: root.new-mirror == "";
-                            clicked => {
-                                root.add-update-mirror(root.new-mirror);
-                                if (root.update-mirror-error == "") { root.new-mirror = ""; }
-                            }
-                        }
-                        GhostButton {
-                            text: "恢复默认";
-                            clicked => { root.reset-update-mirrors(); }
                         }
                     }
                 }
+            }
+
+            // --- AI & Agents page (AI Agents + MCP + WSL on Windows) ---
+            if root.is-agents-page : AgentsSettingsPage {
+                lang-en: root.lang-en;
+                is-windows: root.is-windows;
+                custom-agents: root.custom-agents;
+                agent-new-name <=> root.agent-new-name;
+                agent-new-command <=> root.agent-new-command;
+                agent-new-directory <=> root.agent-new-directory;
+                mcp-enabled <=> root.mcp-enabled;
+                mcp-use-saved-credentials <=> root.mcp-use-saved-credentials;
+                mcp-allow-commands <=> root.mcp-allow-commands;
+                mcp-allow-file-transfers <=> root.mcp-allow-file-transfers;
+                mcp-config-json: root.mcp-config-json;
+                mcp-json-copied <=> root.mcp-json-copied;
+                wsl-profiles: root.wsl-profiles;
+                wsl-new-name <=> root.wsl-new-name;
+                wsl-new-distribution <=> root.wsl-new-distribution;
+                wsl-new-directory <=> root.wsl-new-directory;
+                pick-agent-directory => { root.pick-agent-directory(); }
+                add-custom-agent(n, c, d) => { root.add-custom-agent(n, c, d); }
+                remove-custom-agent(id) => { root.remove-custom-agent(id); }
+                set-mcp-permissions(en, cred, cmd, ft) => { root.set-mcp-permissions(en, cred, cmd, ft); }
+                copy-text(s) => { root.copy-text(s); }
+                pick-wsl-directory => { root.pick-wsl-directory(); }
+                add-wsl-profile(n, dist, dir) => { root.add-wsl-profile(n, dist, dir); }
+                remove-wsl-profile(id) => { root.remove-wsl-profile(id); }
+            }
+
+            // --- Updates page ------------------------------------------
+            if root.is-update-page : UpdatesSettingsPage {
+                lang-en: root.lang-en;
+                update-check-enabled <=> root.update-check-enabled;
+                update-version: root.update-version;
+                update-busy: root.update-busy;
+                update-error: root.update-error;
+                update-install-supported: root.update-install-supported;
+                update-via-terminal: root.update-via-terminal;
+                update-status: root.update-status;
+                update-action-label: root.update-action-label;
+                update-mirrors: root.update-mirrors;
+                update-mirrors-testing: root.update-mirrors-testing;
+                update-china-tz: root.update-china-tz;
+                update-mirror-error: root.update-mirror-error;
+                update-mirror-auto: root.update-mirror-auto;
+                new-mirror <=> root.new-mirror;
+                set-update-check-enabled(v) => { root.set-update-check-enabled(v); }
+                check-for-updates => { root.check-for-updates(); }
+                update-action => { root.update-action(); }
+                open-update-url => { root.open-update-url(); }
+                test-update-mirrors => { root.test-update-mirrors(); }
+                set-update-mirror-auto(v) => { root.set-update-mirror-auto(v); }
+                select-update-mirror(k) => { root.select-update-mirror(k); }
+                remove-update-mirror(u) => { root.remove-update-mirror(u); }
+                add-update-mirror(u) => { root.add-update-mirror(u); }
+                reset-update-mirrors => { root.reset-update-mirrors(); }
+            }
+
+            // --- About page --------------------------------------------
+            if root.is-about-page : AboutSettingsPage {
+                lang-en: root.lang-en;
+                app-version: root.app-version;
+                open-repo => { root.open-repo(); }
             }
 
                 }

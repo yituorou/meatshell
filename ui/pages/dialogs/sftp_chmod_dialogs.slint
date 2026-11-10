@@ -1,0 +1,259 @@
+import { Theme } from "../../theme.slint";
+import { PrimaryButton, GhostButton } from "../../widgets.slint";
+import { ModalLayer, ModalKind } from "../../modal.slint";
+import { LineEdit, Button, CheckBox } from "std-widgets.slint";
+
+export component SftpPromptDialog inherits ModalLayer {
+    in-out property <bool> sftp-prompt-open: false;
+    in property <ModalKind> active-modal: ModalKind.sftp-prompt;
+    in property <bool> lang-en: false;
+    in property <string> sftp-prompt-kind: "";
+    in property <string> sftp-prompt-tab: "";
+    in property <string> sftp-prompt-target: "";
+    in-out property <string> sftp-prompt-value: "";
+
+    callback sftp-prompt-submit(string, string, string, string);
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.sftp-prompt;
+    cancel-requested => { root.sftp-prompt-open = false; }
+    background: #00000080;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 340px;
+        height: 178px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}   // swallow inside clicks
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: root.sftp-prompt-kind == "rename"
+                    ? @tr("Rename")
+                    : (root.sftp-prompt-kind == "chmod"
+                        ? @tr("Permissions")
+                        : (root.sftp-prompt-kind == "mkdir"
+                            ? @tr("New folder") : @tr("New file")));
+                color: Theme.text-primary;
+                font-size: Theme.fs-lg;
+                font-weight: 700;
+            }
+            Text {
+                text: root.sftp-prompt-kind == "chmod"
+                    ? @tr("Octal mode, e.g. 755")
+                    : (root.sftp-prompt-kind == "rename"
+                        ? @tr("New name") : @tr("Name"));
+                color: Theme.text-secondary;
+                font-size: Theme.fs-sm;
+            }
+            sp-input := LineEdit {
+                text <=> root.sftp-prompt-value;
+                font-family: Theme.ui-font-family; // CJK-capable (#54)
+                placeholder-text: root.sftp-prompt-kind == "chmod" ? "755" : "";
+                accepted => {
+                    if (root.sftp-prompt-value != "") {
+                        root.sftp-prompt-submit(
+                            root.sftp-prompt-tab, root.sftp-prompt-kind,
+                            root.sftp-prompt-target, root.sftp-prompt-value);
+                        root.sftp-prompt-open = false;
+                    }
+                }
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Button {
+                    text: root.lang-en ? "Cancel" : "取消";
+                    clicked => { root.sftp-prompt-open = false; }
+                }
+                Button {
+                    text: root.lang-en ? "OK" : "确定";
+                    primary: true;
+                    enabled: root.sftp-prompt-value != "";
+                    clicked => {
+                        root.sftp-prompt-submit(
+                            root.sftp-prompt-tab, root.sftp-prompt-kind,
+                            root.sftp-prompt-target, root.sftp-prompt-value);
+                        root.sftp-prompt-open = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component ConfirmCloseDialog inherits ModalLayer {
+    in-out property <bool> confirm-close-open: false;
+    in property <ModalKind> active-modal: ModalKind.exit-confirm;
+    in property <bool> lang-en: false;
+
+    callback confirm-close-yes();
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.exit-confirm;
+    cancel-requested => { root.confirm-close-open = false; }
+    background: #00000088;
+    dismiss-on-backdrop: true;
+    // Keep the existing explicit Enter/Space confirmation opt-in (#140-3).
+    confirm-on-enter: true;
+    confirm-on-space: true;
+    confirm-requested => { root.confirm-close-yes(); }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 340px;
+        height: 168px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 12px;
+            Text {
+                text: root.lang-en ? "Close meatshell?" : "确定关闭 meatshell?";
+                color: Theme.text-primary; font-size: Theme.fs-lg; font-weight: 700;
+            }
+            Text {
+                text: root.lang-en
+                    ? "There are active sessions. Closing will disconnect them."
+                    : "当前有活动会话,关闭将断开它们。";
+                color: Theme.text-secondary; font-size: Theme.fs-sm; wrap: word-wrap;
+            }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                GhostButton {
+                    text: root.lang-en ? "Cancel" : "取消";
+                    clicked => { root.confirm-close-open = false; }
+                }
+                PrimaryButton {
+                    text: root.lang-en ? "Close" : "关闭";
+                    clicked => { root.confirm-close-yes(); }
+                }
+            }
+        }
+    }
+}
+
+export component ChmodDialog inherits ModalLayer {
+    in-out property <bool> chmod-open: false;
+    in property <ModalKind> active-modal: ModalKind.permissions;
+    in property <bool> lang-en: false;
+    in property <string> chmod-name: "";
+    in-out property <bool> chmod-or: false;
+    in-out property <bool> chmod-ow: false;
+    in-out property <bool> chmod-ox: false;
+    in-out property <bool> chmod-gr: false;
+    in-out property <bool> chmod-gw: false;
+    in-out property <bool> chmod-gx: false;
+    in-out property <bool> chmod-tr: false;
+    in-out property <bool> chmod-tw: false;
+    in-out property <bool> chmod-tx: false;
+
+    callback sftp-chmod-apply();
+
+    is-open: true;
+    covered: root.active-modal != ModalKind.permissions;
+    cancel-requested => { root.chmod-open = false; }
+    background: #00000080;
+    dismiss-on-backdrop: true;
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 320px;
+        height: 270px;
+        background: Theme.popup-bg;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #000000a0;
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 18px;
+            spacing: 10px;
+            Text {
+                text: root.lang-en ? "Permissions" : "修改文件权限";
+                color: Theme.text-primary; font-size: Theme.fs-lg; font-weight: 700;
+            }
+            Text {
+                text: root.chmod-name;
+                color: Theme.text-secondary; font-size: Theme.fs-sm;
+                font-family: Theme.ui-font-family; overflow: elide;
+            }
+
+            for grp in [
+                { lbl: root.lang-en ? "Owner" : "所有者", g: 0 },
+                { lbl: root.lang-en ? "Group" : "组",     g: 1 },
+                { lbl: root.lang-en ? "Other" : "其他",   g: 2 },
+            ] : VerticalLayout {
+                spacing: 2px;
+                Text { text: grp.lbl; color: Theme.text-secondary; font-size: Theme.fs-xs; }
+                HorizontalLayout {
+                    spacing: 14px;
+                    CheckBox {
+                        text: root.lang-en ? "Read" : "读取";
+                        checked: grp.g == 0 ? root.chmod-or : (grp.g == 1 ? root.chmod-gr : root.chmod-tr);
+                        toggled => {
+                            if (grp.g == 0) { root.chmod-or = self.checked; }
+                            else if (grp.g == 1) { root.chmod-gr = self.checked; }
+                            else { root.chmod-tr = self.checked; }
+                        }
+                    }
+                    CheckBox {
+                        text: root.lang-en ? "Write" : "写入";
+                        checked: grp.g == 0 ? root.chmod-ow : (grp.g == 1 ? root.chmod-gw : root.chmod-tw);
+                        toggled => {
+                            if (grp.g == 0) { root.chmod-ow = self.checked; }
+                            else if (grp.g == 1) { root.chmod-gw = self.checked; }
+                            else { root.chmod-tw = self.checked; }
+                        }
+                    }
+                    CheckBox {
+                        text: root.lang-en ? "Execute" : "执行";
+                        checked: grp.g == 0 ? root.chmod-ox : (grp.g == 1 ? root.chmod-gx : root.chmod-tx);
+                        toggled => {
+                            if (grp.g == 0) { root.chmod-ox = self.checked; }
+                            else if (grp.g == 1) { root.chmod-gx = self.checked; }
+                            else { root.chmod-tx = self.checked; }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Button {
+                    text: root.lang-en ? "Cancel" : "取消";
+                    clicked => { root.chmod-open = false; }
+                }
+                Button {
+                    text: root.lang-en ? "OK" : "确定";
+                    primary: true;
+                    clicked => { root.sftp-chmod-apply(); root.chmod-open = false; }
+                }
+            }
+        }
+    }
+}

@@ -120,6 +120,9 @@ fn build_ui(
     let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
     slint::platform::set_platform(Box::new(Backend(window.clone()))).unwrap();
     let ui = AppWindow::new().unwrap();
+    ui.on_sftp_entry_matches(|name, file_type, query| {
+        crate::app::sftp_ui::sftp_entry_matches_query(name.as_str(), file_type.as_str(), query.as_str())
+    });
 
     ui.set_terminals(ModelRc::from(Rc::new(VecModel::from(vec![terminal(
         dual,
@@ -824,6 +827,814 @@ fn delete_key_deletes_checked_entries_or_the_highlighted_row() {
         assert!(ui.get_confirm_delete_open());
         assert!(!ui.get_confirm_delete_batch());
         assert_eq!(ui.get_confirm_delete_path().as_str(), "/nginx.conf");
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn round5_sftp_overhaul_visual_and_functional_verification() {
+    use crate::app::sftp_ui::{friendly_file_type, sftp_entry_matches_query, sort_sftp_entries};
+    use crate::ui::TransferInfo;
+
+    // 1. Verify descriptive file type classification and real-time filtering.
+    assert_eq!(friendly_file_type("src", true, "folder"), "文件夹");
+    assert_eq!(friendly_file_type("release-v0.8.2.tar.gz", false, "file"), "TAR.GZ 压缩包");
+    assert_eq!(friendly_file_type("deploy.sh", false, "file"), "SH 文件");
+    assert_eq!(friendly_file_type("config.json", false, "file"), "JSON 文件");
+    assert_eq!(friendly_file_type("README.md", false, "file"), "MD 文件");
+    assert!(sftp_entry_matches_query("release-v0.8.2.tar.gz", "TAR.GZ 压缩包", "tar.gz"));
+    assert!(sftp_entry_matches_query("release-v0.8.2.tar.gz", "TAR.GZ 压缩包", "压缩包"));
+    assert!(!sftp_entry_matches_query("release-v0.8.2.tar.gz", "TAR.GZ 压缩包", "nginx"));
+
+    // Round 6: Verify hidden dotfile filtering (`__hide_dot__:`) and subfolder autocomplete (`__sub__:`).
+    assert!(!sftp_entry_matches_query(".agents", "文件夹", "__hide_dot__:"));
+    assert!(!sftp_entry_matches_query(".docker", "文件夹", "__hide_dot__:doc"));
+    assert!(sftp_entry_matches_query(".docker", "文件夹", "doc"));
+    assert!(sftp_entry_matches_query("workspace", "文件夹", "__hide_dot__:work"));
+    assert!(sftp_entry_matches_query("workspace", "文件夹", "__sub__:/Users/huangpj\n/Users/huangpj"));
+    assert!(sftp_entry_matches_query("workspace", "文件夹", "__sub__:/Users/huangpj\n/Users/huangpj/wo"));
+    assert!(!sftp_entry_matches_query("downloads", "文件夹", "__sub__:/Users/huangpj\n/Users/huangpj/wo"));
+    assert!(!sftp_entry_matches_query(".agents", "文件夹", "__hide_dot__:__sub__:/Users/huangpj\n/Users/huangpj"));
+    assert!(sftp_entry_matches_query(".agents", "文件夹", "__sub__:/Users/huangpj\n/Users/huangpj/.a"));
+
+    // 2. Verify multi-column sorting (name, size, type, modified) keeps directories on top.
+    let mut sample = vec![
+        SftpEntry {
+            name: "z-script.sh".into(),
+            full_path: "/root/z-script.sh".into(),
+            is_dir: false,
+            size: "4.2 KB".into(),
+            size_bytes: 4300.0,
+            modified: "2026-11-08 14:20".into(),
+            modified_ts: 100.0,
+            mode: 0o100755,
+            file_type: friendly_file_type("z-script.sh", false, "file").into(),
+            permissions: "rwxr-xr-x".into(),
+            permissions_mode: 0o755,
+            owner: "root".into(),
+            group: "root".into(),
+            selected: false,
+        },
+        SftpEntry {
+            name: "a-config.json".into(),
+            full_path: "/root/a-config.json".into(),
+            is_dir: false,
+            size: "128.0 KB".into(),
+            size_bytes: 131072.0,
+            modified: "2026-11-09 09:15".into(),
+            modified_ts: 200.0,
+            mode: 0o100644,
+            file_type: friendly_file_type("a-config.json", false, "file").into(),
+            permissions: "rw-r--r--".into(),
+            permissions_mode: 0o644,
+            owner: "www".into(),
+            group: "www".into(),
+            selected: false,
+        },
+        SftpEntry {
+            name: "logs".into(),
+            full_path: "/root/logs".into(),
+            is_dir: true,
+            size: "".into(),
+            size_bytes: 0.0,
+            modified: "2026-11-09 10:00".into(),
+            modified_ts: 300.0,
+            mode: 0o040755,
+            file_type: friendly_file_type("logs", true, "folder").into(),
+            permissions: "rwxr-xr-x".into(),
+            permissions_mode: 0o755,
+            owner: "root".into(),
+            group: "root".into(),
+            selected: false,
+        },
+    ];
+    sort_sftp_entries(&mut sample, "size", -1);
+    assert_eq!(sample[0].name.as_str(), "logs");
+    assert_eq!(sample[1].name.as_str(), "a-config.json");
+    assert_eq!(sample[2].name.as_str(), "z-script.sh");
+
+    sort_sftp_entries(&mut sample, "type", 1);
+    assert_eq!(sample[0].name.as_str(), "logs");
+    assert_eq!(sample[1].name.as_str(), "a-config.json"); // JSON 配置 < Shell 脚本
+
+    // 3. Render real Slint UI frames for Light & Dark modes and save QA screenshots.
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(true, 420.0, 0.0, 1440, 900, "bottom");
+        ui.set_sftp_panel_height(420.0);
+
+        let mut local_entries: Vec<SftpEntry> = (0..35)
+            .map(|idx| SftpEntry {
+                name: format!(".hidden-cache-{idx:02}").into(),
+                full_path: format!("/Users/huangpj/.hidden-cache-{idx:02}").into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-07-15 22:13".into(),
+                modified_ts: 100.0,
+                mode: 0,
+                file_type: "文件夹".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            })
+            .collect();
+        local_entries.extend(vec![
+            SftpEntry {
+                name: "workspace".into(),
+                full_path: "/Users/huangpj/workspace".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-09 19:30".into(),
+                modified_ts: 500.0,
+                mode: 0,
+                file_type: "文件夹".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "downloads".into(),
+                full_path: "/Users/huangpj/downloads".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-09 18:10".into(),
+                modified_ts: 450.0,
+                mode: 0,
+                file_type: "文件夹".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "documents".into(),
+                full_path: "/Users/huangpj/documents".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-09 16:05".into(),
+                modified_ts: 420.0,
+                mode: 0,
+                file_type: "文件夹".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "release-v0.8.2.tar.gz".into(),
+                full_path: "/Users/huangpj/release-v0.8.2.tar.gz".into(),
+                is_dir: false,
+                size: "48.6 MB".into(),
+                size_bytes: 50_960_793.0,
+                modified: "2026-11-09 20:15".into(),
+                modified_ts: 600.0,
+                mode: 0,
+                file_type: "TAR.GZ 压缩包".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: true,
+            },
+            SftpEntry {
+                name: "deploy-prod.sh".into(),
+                full_path: "/Users/huangpj/deploy-prod.sh".into(),
+                is_dir: false,
+                size: "6.4 KB".into(),
+                size_bytes: 6553.0,
+                modified: "2026-11-09 17:42".into(),
+                modified_ts: 400.0,
+                mode: 0,
+                file_type: "SH 文件".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "docker-compose.yml".into(),
+                full_path: "/Users/huangpj/docker-compose.yml".into(),
+                is_dir: false,
+                size: "3.1 KB".into(),
+                size_bytes: 3174.0,
+                modified: "2026-11-08 22:05".into(),
+                modified_ts: 300.0,
+                mode: 0,
+                file_type: "YML 文件".into(),
+                permissions: "".into(),
+                permissions_mode: 0,
+                owner: "".into(),
+                group: "".into(),
+                selected: false,
+            },
+        ]);
+
+        let remote_entries = vec![
+            SftpEntry {
+                name: ".docker".into(),
+                full_path: "/root/.docker".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2024-11-11 14:49".into(),
+                modified_ts: 100.0,
+                mode: 0o040755,
+                file_type: "文件夹".into(),
+                permissions: "rwxr-xr-x".into(),
+                permissions_mode: 0o755,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "app-cluster".into(),
+                full_path: "/root/app-cluster".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-09 20:00".into(),
+                modified_ts: 600.0,
+                mode: 0o040755,
+                file_type: "文件夹".into(),
+                permissions: "rwxr-xr-x".into(),
+                permissions_mode: 0o755,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "backups".into(),
+                full_path: "/root/backups".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-09 12:30".into(),
+                modified_ts: 500.0,
+                mode: 0o040750,
+                file_type: "文件夹".into(),
+                permissions: "rwxr-x---".into(),
+                permissions_mode: 0o750,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "redis-recovery-2026-11-01".into(),
+                full_path: "/root/redis-recovery-2026-11-01".into(),
+                is_dir: true,
+                size: "".into(),
+                size_bytes: 0.0,
+                modified: "2026-11-01 16:58".into(),
+                modified_ts: 490.0,
+                mode: 0o040755,
+                file_type: "文件夹".into(),
+                permissions: "rwxr-xr-x".into(),
+                permissions_mode: 0o755,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "nginx.conf".into(),
+                full_path: "/root/nginx.conf".into(),
+                is_dir: false,
+                size: "8.2 KB".into(),
+                size_bytes: 8396.0,
+                modified: "2026-11-09 19:45".into(),
+                modified_ts: 580.0,
+                mode: 0o100644,
+                file_type: "CONF 文件".into(),
+                permissions: "rw-r--r--".into(),
+                permissions_mode: 0o644,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "settings.json".into(),
+                full_path: "/root/settings.json".into(),
+                is_dir: false,
+                size: "2.4 KB".into(),
+                size_bytes: 2457.0,
+                modified: "2026-11-09 16:20".into(),
+                modified_ts: 480.0,
+                mode: 0o100644,
+                file_type: "JSON 文件".into(),
+                permissions: "rw-r--r--".into(),
+                permissions_mode: 0o644,
+                owner: "root".into(),
+                group: "root".into(),
+                selected: false,
+            },
+            SftpEntry {
+                name: "server-metrics.db".into(),
+                full_path: "/root/server-metrics.db".into(),
+                is_dir: false,
+                size: "142.8 MB".into(),
+                size_bytes: 149_736_652.0,
+                modified: "2026-11-09 20:40".into(),
+                modified_ts: 620.0,
+                mode: 0o100640,
+                file_type: "DB 文件".into(),
+                permissions: "rw-r-----".into(),
+                permissions_mode: 0o640,
+                owner: "postgres".into(),
+                group: "postgres".into(),
+                selected: false,
+            },
+        ];
+
+        let transfers = vec![
+            TransferInfo {
+                id: "1".into(),
+                name: "release-v0.8.2.tar.gz".into(),
+                detail: "33.0 MB / 48.6 MB · 18.4 MB/s".into(),
+                percent: 0.68,
+                state: 0,
+                is_upload: true,
+            },
+            TransferInfo {
+                id: "2".into(),
+                name: "nginx.conf".into(),
+                detail: "8.2 KB · 已完成".into(),
+                percent: 1.0,
+                state: 1,
+                is_upload: false,
+            },
+        ];
+        ui.set_transfers(ModelRc::from(Rc::new(VecModel::from(transfers))));
+        ui.set_has_active_transfers(true);
+
+        let mut term = terminal(true, local_entries, remote_entries, 420.0, 0.0);
+        term.sftp_path = "/root".into();
+        term.sftp_local_path = "/Users/huangpj".into();
+        term.sftp_panel_height = 420.0;
+        term.sftp_sort_key = "name".into();
+        term.sftp_sort_dir = 1;
+        term.sftp_bookmarked = true;
+        term.sftp_bookmarks = ModelRc::from(Rc::new(VecModel::from(vec![
+            SharedString::from("/root"),
+            SharedString::from("/etc/nginx"),
+            SharedString::from("/var/www/html"),
+            SharedString::from("/opt/meatshell"),
+        ])));
+        term.sftp_recent = ModelRc::from(Rc::new(VecModel::from(vec![
+            SharedString::from("/var/log"),
+            SharedString::from("/tmp"),
+        ])));
+        ui.set_terminals(ModelRc::from(Rc::new(VecModel::from(vec![term]))));
+
+        crate::i18n::set_language("zh");
+        crate::i18n::apply_to_slint();
+        // Switch to Light mode first to match the user's screenshot.
+        ui.set_dark_mode(false);
+
+        let save_shot = |name: &str, pixels: &[Rgb8Pixel]| {
+            let dir = std::path::Path::new(
+                "/Users/huangpj/.gemini/antigravity/brain/bd90a851-25a6-47de-a257-4eaf6fbd0a5f/screenshots",
+            );
+            if dir.parent().map(|p| p.exists()).unwrap_or(false) {
+                let _ = std::fs::create_dir_all(dir);
+                let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+                let _ = image::save_buffer(
+                    dir.join(name),
+                    &bytes,
+                    1440,
+                    900,
+                    image::ColorType::Rgb8,
+                );
+            }
+        };
+
+        // Shot 1 (Round 6): Split View (双栏) in Light Mode with Dedicated Path Row,
+        // Dock/Fullscreen switcher, hidden dotfiles filtered out by default,
+        // exclusive column sorting indicators, and root-level Tooltip active via hover.
+        // Render once so layout positions are computed, then hover over the fullscreen button (x=1396, y=531).
+        let _ = render_frame(&window, 1440, 900);
+        move_to(&window, 1396.0, 531.0);
+        let f1 = render_frame(&window, 1440, 900);
+        save_shot("r6_01_sftp_dual_dedicated_path_light.png", &f1);
+
+        // Shot 2 (Round 6): Subfolder Quick Autocomplete Dropdown open in both Local and Remote panes.
+        // Click inside the Local path input (x=250, y=596) so it gains focus AND opens the dropdown,
+        // and click the `▾` trigger inside the Remote path bar (x=1346, y=596).
+        move_to(&window, 250.0, 596.0);
+        press(&window, 250.0, 596.0);
+        release(&window, 250.0, 596.0);
+        move_to(&window, 1346.0, 596.0);
+        press(&window, 1346.0, 596.0);
+        release(&window, 1346.0, 596.0);
+        let f2 = render_frame(&window, 1440, 900);
+        save_shot("r6_02_sftp_subfolder_autocomplete_light.png", &f2);
+
+        // Close the Local autocomplete dropdown by clicking its `×` close button (x=690, y=629)
+        // to verify the `×` button closes it even when path-input had focus!
+        move_to(&window, 690.0, 629.0);
+        press(&window, 690.0, 629.0);
+        release(&window, 690.0, 629.0);
+        // Close the Remote autocomplete dropdown by clicking its `×` close button (x=1412, y=629)
+        move_to(&window, 1412.0, 629.0);
+        press(&window, 1412.0, 629.0);
+        release(&window, 1412.0, 629.0);
+
+        // Shot 3 (Round 6): Fullscreen SFTP Mode in Dark Mode
+        ui.set_dark_mode(true);
+        // Click the maximize/fullscreen button in SftpPanel's top mode bar (x=1396, y=531)
+        move_to(&window, 1396.0, 531.0);
+        press(&window, 1396.0, 531.0);
+        release(&window, 1396.0, 531.0);
+        let _ = render_frame(&window, 1440, 900);
+        // Hover over the fullscreen restore button in the top mode bar (x=1396, y=125) to show its tooltip
+        move_to(&window, 1396.0, 125.0);
+        let f3 = render_frame(&window, 1440, 900);
+        save_shot("r6_03_sftp_fullscreen_dark.png", &f3);
+
+        // Exit fullscreen & return to Light Mode for Round 7 QA screenshots
+        press(&window, 1396.0, 125.0);
+        release(&window, 1396.0, 125.0);
+        move_to(&window, 10.0, 10.0);
+        ui.set_dark_mode(false);
+        ui.set_download_dir("/Users/huangpj/Downloads".into());
+
+        // Shot 4 (Round 7): Transfer Manager Popover — Empty State (compact height, centered empty card, full untruncated path)
+        let saved_transfers = ui.get_transfers();
+        ui.set_transfers(ModelRc::from(Rc::new(VecModel::<TransferInfo>::default())));
+        ui.set_has_active_transfers(false);
+        ui.set_download_open(true);
+        let f4 = render_frame(&window, 1440, 900);
+        save_shot("r7_01_transfer_manager_empty_light.png", &f4);
+
+        // Shot 5 (Round 7): Transfer Manager Popover — Populated State (active upload + completed download with open-folder button)
+        ui.set_transfers(saved_transfers);
+        ui.set_has_active_transfers(true);
+        let f5 = render_frame(&window, 1440, 900);
+        save_shot("r7_02_transfer_manager_populated_light.png", &f5);
+        ui.set_download_open(false);
+
+        // Shot 6 (Round 7): Server Resource Monitor Sidebar with 35 Docker/veth Network Interfaces & Scrollable Bounded NIC Dropdown
+        ui.set_is_local_mode(false);
+        ui.set_conn_state(1);
+        ui.set_status_heading("服务器监控".into());
+        ui.set_connection_state("root@10.0.0.51".into());
+        ui.set_conn_host("root@10.0.0.51".into());
+        ui.set_resource_title("核心负载".into());
+        ui.set_metrics_available(true);
+        ui.set_system_info_available(true);
+        ui.set_proc_available(true);
+        ui.set_cpu_percent(0.14);
+        ui.set_mem_percent(0.38);
+        ui.set_mem_detail("23.7G/62.8G".into());
+        ui.set_swap_percent(0.01);
+        ui.set_swap_detail("0.0G/4.0G".into());
+        ui.set_net_top_up("24.3 MB/s".into());
+        ui.set_net_top_down("17.6 MB/s".into());
+        ui.set_net_show_selector(true);
+        ui.set_net_selected("ens32".into());
+        let mut many_ifaces: Vec<SharedString> = vec![
+            "ens32".into(),
+            "docker_gwbridge".into(),
+            "docker0".into(),
+            "br-2d369e3fa075".into(),
+            "br-e18579c1b0c6".into(),
+        ];
+        for idx in 0..30 {
+            many_ifaces.push(format!("veth{:07x}", 0x95aec00 + idx).into());
+        }
+        ui.set_net_ifaces(ModelRc::from(Rc::new(VecModel::from(many_ifaces))));
+        ui.set_dock_panels(ModelRc::from(Rc::new(VecModel::from(vec![
+            crate::ui::PanelGeomInfo {
+                kind: "sidebar".into(),
+                edge: "left".into(),
+                x: 48.0,
+                y: 0.0,
+                w: 280.0,
+                h: 868.0,
+            },
+        ]))));
+        ui.set_dock_central_x(328.0);
+        ui.set_dock_central_w(1112.0);
+        let _ = render_frame(&window, 1440, 900);
+        // Click the NIC selector button inside NetBlock (x=266, y=395) to open the bounded scrollable PopupWindow!
+        move_to(&window, 266.0, 395.0);
+        press(&window, 266.0, 395.0);
+        release(&window, 266.0, 395.0);
+        let f6 = render_frame(&window, 1440, 900);
+        save_shot("r7_03_nic_dropdown_scrollable_35_ifaces_light.png", &f6);
+
+        // Close the NIC popup by clicking outside
+        press(&window, 600.0, 200.0);
+        release(&window, 600.0, 200.0);
+
+        // Shot 7 (Round 8): Quick Commands Sidebar (`QuickDockPanel`) with Grouped Command Cards & Hover Actions
+        let quick_cmds = vec![
+            crate::ui::QuickCmd {
+                name: "列出详细目录 (ls)".into(),
+                command: "ls -la --color=auto".into(),
+                group: "default".into(),
+                group_header: "default".into(),
+                collapsed: false,
+                orig_index: 0,
+                send_enter: true,
+                command_preview: "ls -la --color=auto".into(),
+            },
+            crate::ui::QuickCmd {
+                name: "排查端口占用".into(),
+                command: "lsof -i :8080".into(),
+                group: "default".into(),
+                group_header: "".into(),
+                collapsed: false,
+                orig_index: 1,
+                send_enter: false,
+                command_preview: "lsof -i :8080".into(),
+            },
+            crate::ui::QuickCmd {
+                name: "查看运行容器状态".into(),
+                command: "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'".into(),
+                group: "Docker 运维".into(),
+                group_header: "Docker 运维".into(),
+                collapsed: false,
+                orig_index: 2,
+                send_enter: true,
+                command_preview: "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'".into(),
+            },
+            crate::ui::QuickCmd {
+                name: "实时追踪容器日志".into(),
+                command: "docker logs -f --tail 200 app-server".into(),
+                group: "Docker 运维".into(),
+                group_header: "".into(),
+                collapsed: false,
+                orig_index: 3,
+                send_enter: false,
+                command_preview: "docker logs -f --tail 200 app-server".into(),
+            },
+        ];
+        ui.set_quick_commands(ModelRc::from(Rc::new(VecModel::from(quick_cmds))));
+        ui.set_quick_panel_open(true);
+        ui.set_quick_panel_collapsed(false);
+        ui.set_quick_panel_dock("left".into());
+        ui.set_dock_panels(ModelRc::from(Rc::new(VecModel::from(vec![
+            crate::ui::PanelGeomInfo {
+                kind: "quick".into(),
+                edge: "left".into(),
+                x: 48.0,
+                y: 0.0,
+                w: 280.0,
+                h: 868.0,
+            },
+        ]))));
+        let _ = render_frame(&window, 1440, 900);
+        // Hover over the second command card in QuickDockPanel (x=180, y=225) to show Run / Fill / Edit micro-buttons
+        move_to(&window, 180.0, 225.0);
+        let f7 = render_frame(&window, 1440, 900);
+        save_shot("r8_01_quick_commands_sidebar_light.png", &f7);
+
+        // Shot 8 (Round 8): Quick Commands Management / Add & Edit Modal in Light Mode
+        move_to(&window, 10.0, 10.0);
+        ui.set_qcm_edit_index(-1);
+        ui.set_qcm_name("查看 Nginx 错误日志".into());
+        ui.set_qcm_group("Docker 运维".into());
+        ui.set_qcm_command("tail -n 100 -f /var/log/nginx/error.log".into());
+        ui.set_qcm_send_enter(true);
+        ui.set_quick_cmd_manage_open(true);
+        let f8 = render_frame(&window, 1440, 900);
+        save_shot("r8_02_quick_commands_modal_light.png", &f8);
+
+        // Shot 9 (Round 8): Quick Commands Sidebar + Modal in Dark Mode (Editing mode preview)
+        ui.set_dark_mode(true);
+        ui.set_qcm_edit_index(1);
+        ui.set_qcm_name("排查端口占用".into());
+        ui.set_qcm_group("".into());
+        ui.set_qcm_command("lsof -i :8080".into());
+        ui.set_qcm_send_enter(false);
+        let f9 = render_frame(&window, 1440, 900);
+        save_shot("r8_03_quick_commands_modal_dark.png", &f9);
+        ui.set_quick_cmd_manage_open(false);
+        ui.set_dark_mode(false);
+
+        // Shot 10 (Round 9): Settings › Terminal with iTerm2-Color-Schemes Theme Manager (Light Mode)
+        {
+            let mgr = crate::terminal_theme::ThemeManager::new(
+                "default".into(),
+                vec!["dracula".into(), "catppuccin-mocha".into()],
+                Vec::new(),
+                false,
+            );
+            let total = mgr.all_themes().len() as i32;
+            let to_c = |(r, g, b): (u8, u8, u8)| slint::Color::from_rgb_u8(r, g, b);
+            let to_item = |t: &crate::terminal_theme::TerminalTheme, fav: bool| -> crate::ui::TerminalSchemeItem {
+                let p = t.to_resolved_palette();
+                let name = if t.theme_id == "default" {
+                    "默认配色 (跟随工作台明暗)".to_string()
+                } else {
+                    t.name.clone()
+                };
+                crate::ui::TerminalSchemeItem {
+                    id: t.theme_id.clone().into(),
+                    name: name.into(),
+                    author: t.author.clone().into(),
+                    is_dark: p.is_dark,
+                    is_favorite: fav,
+                    is_custom: false,
+                    bg: to_c(p.background),
+                    fg: to_c(p.foreground),
+                    cursor: to_c(p.cursor),
+                    cursor_text: to_c(p.cursor_text),
+                    selection: to_c(p.selection),
+                    selection_text: to_c(p.selection_text),
+                    c0: to_c(p.ansi[0]),
+                    c1: to_c(p.ansi[1]),
+                    c2: to_c(p.ansi[2]),
+                    c3: to_c(p.ansi[3]),
+                    c4: to_c(p.ansi[4]),
+                    c5: to_c(p.ansi[5]),
+                    c6: to_c(p.ansi[6]),
+                    c7: to_c(p.ansi[7]),
+                    c8: to_c(p.ansi[8]),
+                    c9: to_c(p.ansi[9]),
+                    c10: to_c(p.ansi[10]),
+                    c11: to_c(p.ansi[11]),
+                    c12: to_c(p.ansi[12]),
+                    c13: to_c(p.ansi[13]),
+                    c14: to_c(p.ansi[14]),
+                    c15: to_c(p.ansi[15]),
+                }
+            };
+            let featured_ids = [
+                "default",
+                "dracula",
+                "catppuccin-mocha",
+                "catppuccin-latte",
+                "tokyonight",
+                "tokyonight-day",
+                "iterm2-solarized-dark",
+                "iterm2-solarized-light",
+                "gruvbox-dark",
+                "nord",
+                "one-half-dark",
+                "atom-one-light",
+            ];
+            let scheme_items: Vec<crate::ui::TerminalSchemeItem> = featured_ids
+                .iter()
+                .filter_map(|id| mgr.get_theme(id).map(|t| to_item(&t, *id == "dracula" || *id == "catppuccin-mocha")))
+                .collect();
+            ui.set_terminal_schemes_total(total);
+            ui.set_terminal_schemes_has_more(true);
+            ui.set_terminal_schemes(ModelRc::from(Rc::new(VecModel::from(scheme_items.clone()))));
+            let def_theme = mgr.current_theme();
+            ui.set_terminal_scheme_id("default".into());
+            ui.set_active_terminal_scheme(to_item(&def_theme, false));
+            ui.set_interface_start_page("terminal".into());
+            ui.set_interface_open(true);
+            let f10 = render_frame(&window, 1440, 900);
+            save_shot("r9_01_terminal_themes_settings_light.png", &f10);
+
+            // Shot 11 (Round 9): Settings › Terminal with Dracula Selected & Previewed (Dark Mode)
+            ui.set_dark_mode(true);
+            let dracula = mgr.get_theme("dracula").expect("dracula exists");
+            let dp = dracula.to_resolved_palette();
+            ui.set_terminal_scheme_id("dracula".into());
+            ui.set_active_terminal_scheme(to_item(&dracula, true));
+            ui.set_term_scheme_active(true);
+            ui.set_term_scheme_is_dark(dp.is_dark);
+            ui.set_term_scheme_bg(to_c(dp.background));
+            ui.set_term_scheme_fg(to_c(dp.foreground));
+            ui.set_term_scheme_cursor(to_c(dp.cursor));
+            ui.set_term_scheme_cursor_text(to_c(dp.cursor_text));
+            ui.set_term_scheme_selection(to_c(dp.selection));
+            ui.set_term_scheme_selection_text(to_c(dp.selection_text));
+            ui.set_term_scheme_accent(to_c(dp.ansi[4]));
+            ui.set_term_cursor_color(to_c(dp.cursor));
+            let f11 = render_frame(&window, 1440, 900);
+            save_shot("r9_02_terminal_themes_settings_dracula_dark.png", &f11);
+
+            // Shot 12 (Round 9): Active Terminal Rendered Live with Dracula Palette (ANSI 16 + TrueColor + Selection)
+            ui.set_interface_open(false);
+            ui.set_sftp_collapsed(true);
+            ui.set_dock_central_h(868.0);
+            let spans = vec![
+                crate::ui::TermSpan {
+                    text: "root@prod-cluster".into(),
+                    row: 0,
+                    col: 0,
+                    cells: 17,
+                    fg: to_c(dp.ansi[10]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    bold: true,
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: ":".into(),
+                    row: 0,
+                    col: 17,
+                    cells: 1,
+                    fg: to_c(dp.foreground),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "~/meatshell".into(),
+                    row: 0,
+                    col: 18,
+                    cells: 11,
+                    fg: to_c(dp.ansi[12]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    bold: true,
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: " (main*) $ cargo test --locked".into(),
+                    row: 0,
+                    col: 29,
+                    cells: 30,
+                    fg: to_c(dp.ansi[13]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "   Compiling meatshell v0.8.2 (iTerm2-Color-Schemes: 915 community themes loaded)".into(),
+                    row: 1,
+                    col: 0,
+                    cells: 81,
+                    fg: to_c(dp.ansi[6]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    bold: true,
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "test terminal_theme::tests::all_915_builtin_themes_load ... ".into(),
+                    row: 2,
+                    col: 0,
+                    cells: 60,
+                    fg: to_c(dp.foreground),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "ok".into(),
+                    row: 2,
+                    col: 60,
+                    cells: 2,
+                    fg: to_c(dp.ansi[2]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    bold: true,
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "WARN: High memory pressure on node-03 (87.4%)".into(),
+                    row: 3,
+                    col: 0,
+                    cells: 45,
+                    fg: to_c(dp.ansi[3]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: "ERROR: Connection timeout on replica-02 (retrying in 2s)".into(),
+                    row: 4,
+                    col: 0,
+                    cells: 56,
+                    fg: to_c(dp.ansi[1]),
+                    bg: slint::Color::from_argb_u8(0, 0, 0, 0),
+                    bold: true,
+                    ..Default::default()
+                },
+                crate::ui::TermSpan {
+                    text: " TRUECOLOR 24-BIT RGB ".into(),
+                    row: 5,
+                    col: 0,
+                    cells: 22,
+                    fg: slint::Color::from_rgb_u8(255, 255, 255),
+                    bg: slint::Color::from_rgb_u8(139, 92, 246),
+                    bold: true,
+                    ..Default::default()
+                },
+            ];
+            let mut term_item = terminal(false, vec![], vec![], 300.0, 300.0);
+            term_item.spans = ModelRc::from(Rc::new(VecModel::from(spans)));
+            term_item.cursor_row = 6;
+            term_item.cursor_col = 0;
+            term_item.rows_used = 7;
+            term_item.sftp_collapsed = true;
+            term_item.selection = ModelRc::from(Rc::new(VecModel::from(vec![crate::ui::TermMatch {
+                row: 2,
+                col: 5,
+                len: 50,
+            }])));
+            ui.set_terminals(ModelRc::from(Rc::new(VecModel::from(vec![term_item]))));
+            let f12 = render_frame(&window, 1440, 900);
+            save_shot("r9_03_terminal_live_dracula.png", &f12);
+        }
     })
     .join()
     .unwrap();

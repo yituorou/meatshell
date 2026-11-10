@@ -1,0 +1,342 @@
+import { Theme, TooltipState } from "../../theme.slint";
+import { OutlineIcon } from "../../widgets.slint";
+
+// --- TerminalStatusStrip ---------------------------------------------------
+// Top status strip of a TerminalView: connection dot, host copy pill, status line,
+// ALT-screen indicator, Find toggle, Resource Monitor toggle, Processes, System Info, and SFTP toggle.
+export component TerminalStatusStrip inherits Rectangle {
+    in property <bool> zen-mode: false;
+    in property <string> status-line: @tr("Not connected");
+    in property <int> conn-state: 1;
+    in property <bool> is-local-mode: true;
+    in property <string> conn-host: "";
+    in property <bool> is-alt-screen: false;
+    in property <bool> find-active: false;
+    in property <bool> monitor-active: false;
+    in property <bool> metrics-available: true;
+    in property <bool> lang-en: false;
+    in property <float> cpu-percent: 0.0;
+    in property <float> mem-percent: 0.0;
+    in property <bool> proc-available: false;
+    in property <bool> system-info-available: false;
+    in property <bool> sftp-available: true;
+    in property <bool> sftp-collapsed: false;
+    callback copy-host(string);
+    callback toggle-find();
+    callback toggle-monitor();
+    callback show-processes();
+    callback show-system-info();
+    callback toggle-sftp();
+
+    visible: !root.zen-mode;
+    height: root.zen-mode ? 0px : 32px * Theme.ui-scale;
+    background: Theme.term-bar-bg;
+
+    Rectangle {
+        x: 0;
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.term-border-subtle;
+    }
+
+    HorizontalLayout {
+        padding-left: 12px * Theme.ui-scale;
+        padding-right: 10px * Theme.ui-scale;
+        spacing: 8px * Theme.ui-scale;
+
+        // Connection status dot
+        if root.status-line != "" : Rectangle {
+            width: 7px * Theme.ui-scale;
+            height: 7px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: self.width / 2;
+            background: root.conn-state == 1
+                ? Theme.success
+                : (root.conn-state == 2 ? Theme.danger : Theme.warning);
+        }
+
+        // Local shell badge
+        if root.is-local-mode : Rectangle {
+            width: local-badge-txt.preferred-width + 12px * Theme.ui-scale;
+            height: 22px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: Theme.term-bar-elevated;
+            border-width: 1px;
+            border-color: Theme.term-border-subtle;
+            local-badge-txt := Text {
+                text: root.lang-en ? "Local" : "本机";
+                color: Theme.term-text-secondary;
+                font-size: Theme.fs-xs;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Clickable host/IP copy pill when connected to a remote host
+        if !root.is-local-mode && root.conn-host != "" : Rectangle {
+            width: host-pill-row.preferred-width + 12px * Theme.ui-scale;
+            height: 22px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: host-pill-ta.has-hover ? Theme.term-bar-hover : Theme.term-bar-elevated;
+            border-width: 1px;
+            border-color: host-pill-ta.has-hover ? Theme.term-border-strong : Theme.term-border-subtle;
+            host-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("Click to copy host IP"));
+                    root.copy-host(root.conn-host);
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("Click to copy host IP"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("Click to copy host IP"));
+                    }
+                }
+            }
+            host-pill-row := HorizontalLayout {
+                padding-left: 6px * Theme.ui-scale;
+                padding-right: 6px * Theme.ui-scale;
+                spacing: 4px * Theme.ui-scale;
+                alignment: center;
+                Text {
+                    text: root.conn-host;
+                    color: Theme.term-text-primary;
+                    font-size: Theme.fs-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "copy";
+                        color: host-pill-ta.has-hover ? Theme.term-accent : Theme.term-text-muted;
+                        icon-size: 12px * Theme.ui-scale;
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: root.status-line;
+            color: Theme.term-text-secondary;
+            font-size: Theme.fs-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        // Alt-screen indicator only.
+        if root.is-alt-screen : Text {
+            text: "ALT";
+            color: Theme.success;
+            font-size: Theme.fs-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        // Find in terminal toggle button
+        Rectangle {
+            width: 26px * Theme.ui-scale;
+            height: 24px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: root.find-active
+                ? Theme.term-bar-active
+                : (find-pill-ta.has-hover ? Theme.term-bar-hover : transparent);
+            find-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("Find in terminal"));
+                    root.toggle-find();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("Find in terminal"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("Find in terminal"));
+                    }
+                }
+            }
+            OutlineIcon {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                name: "search";
+                color: root.find-active ? Theme.term-text-primary : (find-pill-ta.has-hover ? Theme.term-text-primary : Theme.term-text-secondary);
+                icon-size: 14px * Theme.ui-scale;
+            }
+        }
+
+        // Live metrics summary / Resource Monitor toggle pill
+        Rectangle {
+            width: mon-pill-row.preferred-width + 4px * Theme.ui-scale;
+            height: 24px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: root.monitor-active
+                ? Theme.term-border-strong
+                : (mon-pill-ta.has-hover ? Theme.term-border-strong : Theme.term-border-subtle);
+            background: root.monitor-active
+                ? Theme.term-bar-active
+                : (mon-pill-ta.has-hover ? Theme.term-bar-hover : Theme.term-bar-elevated);
+            mon-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("Toggle resource monitor sidebar"));
+                    root.toggle-monitor();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("Toggle resource monitor sidebar"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("Toggle resource monitor sidebar"));
+                    }
+                }
+            }
+            mon-pill-row := HorizontalLayout {
+                padding-left: 8px * Theme.ui-scale;
+                padding-right: 8px * Theme.ui-scale;
+                spacing: 5px * Theme.ui-scale;
+                alignment: center;
+                VerticalLayout {
+                    alignment: center;
+                    OutlineIcon {
+                        name: "monitor";
+                        color: root.monitor-active ? Theme.term-text-primary : Theme.term-text-secondary;
+                        icon-size: 14px * Theme.ui-scale;
+                    }
+                }
+                Text {
+                    text: !root.metrics-available
+                        ? (root.lang-en ? "Monitor" : "监控")
+                        : root.is-local-mode
+                            ? ((root.lang-en ? "Local CPU " : "本机 CPU ")
+                                + round(root.cpu-percent * 100) + "% · MEM " + round(root.mem-percent * 100) + "%")
+                            : ("CPU " + round(root.cpu-percent * 100) + "% · MEM " + round(root.mem-percent * 100) + "%");
+                    color: root.monitor-active ? Theme.term-text-primary : Theme.term-text-secondary;
+                    font-size: Theme.fs-xs;
+                    font-weight: root.monitor-active ? 600 : 500;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Quick action: Processes
+        if root.proc-available : Rectangle {
+            width: proc-pill-txt.preferred-width + 16px * Theme.ui-scale;
+            height: 24px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: proc-pill-ta.has-hover ? Theme.term-border-strong : Theme.term-border-subtle;
+            background: proc-pill-ta.has-hover ? Theme.term-bar-hover : Theme.term-bar-elevated;
+            proc-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("View running processes"));
+                    root.show-processes();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("View running processes"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("View running processes"));
+                    }
+                }
+            }
+            proc-pill-txt := Text {
+                text: @tr("Processes");
+                color: proc-pill-ta.has-hover ? Theme.term-text-primary : Theme.term-text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Quick action: System info
+        if root.system-info-available : Rectangle {
+            width: sys-pill-txt.preferred-width + 16px * Theme.ui-scale;
+            height: 24px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: sys-pill-ta.has-hover ? Theme.term-border-strong : Theme.term-border-subtle;
+            background: sys-pill-ta.has-hover ? Theme.term-bar-hover : Theme.term-bar-elevated;
+            sys-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("View server hardware & OS details"));
+                    root.show-system-info();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("View server hardware & OS details"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("View server hardware & OS details"));
+                    }
+                }
+            }
+            sys-pill-txt := Text {
+                text: @tr("System info");
+                color: sys-pill-ta.has-hover ? Theme.term-text-primary : Theme.term-text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Quick action: SFTP drawer toggle
+        if root.sftp-available : Rectangle {
+            width: sftp-pill-row.preferred-width + 14px * Theme.ui-scale;
+            height: 24px * Theme.ui-scale;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: !root.sftp-collapsed
+                ? Theme.term-border-strong
+                : (sftp-pill-ta.has-hover ? Theme.term-border-strong : Theme.term-border-subtle);
+            background: !root.sftp-collapsed
+                ? Theme.term-bar-active
+                : (sftp-pill-ta.has-hover ? Theme.term-bar-hover : Theme.term-bar-elevated);
+            sftp-pill-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    TooltipState.hide(@tr("Toggle SFTP file manager panel"));
+                    root.toggle-sftp();
+                }
+                changed has-hover => {
+                    if (self.has-hover) {
+                        TooltipState.show(@tr("Toggle SFTP file manager panel"), parent.absolute-position.x, parent.absolute-position.y, parent.width, parent.height);
+                    } else {
+                        TooltipState.hide(@tr("Toggle SFTP file manager panel"));
+                    }
+                }
+            }
+            sftp-pill-row := HorizontalLayout {
+                padding-left: 7px * Theme.ui-scale;
+                padding-right: 7px * Theme.ui-scale;
+                spacing: 4px * Theme.ui-scale;
+                alignment: center;
+                Text {
+                    text: "\u{E2C7}";
+                    font-family: "Material Icons";
+                    color: !root.sftp-collapsed ? Theme.term-text-primary : Theme.term-text-secondary;
+                    font-size: 15px * Theme.ui-scale;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "SFTP";
+                    color: !root.sftp-collapsed ? Theme.term-text-primary : Theme.term-text-secondary;
+                    font-size: Theme.fs-xs;
+                    font-weight: !root.sftp-collapsed ? 600 : 500;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

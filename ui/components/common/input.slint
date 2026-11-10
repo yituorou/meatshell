@@ -1,0 +1,112 @@
+import { Theme } from "../../theme.slint";
+import { IconButton } from "icon_button.slint";
+
+// --- LabeledInput ----------------------------------------------------------
+export component LabeledInput inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+    in property <bool> password: false;
+    in property <bool> reveal-enabled: false;
+    in-out property <bool> revealed: false;
+    callback reveal() -> string;
+    changed reveal-enabled => { if !root.reveal-enabled { root.revealed = false; } }
+    in property <bool> auto-focus: false;   // grab focus when shown (dialog fields)
+    in property <brush> input-background: Theme.bg-root;
+    in property <brush> idle-border: Theme.border-subtle;
+    callback accepted();   // Enter pressed in the field
+    callback canceled();   // Esc pressed in the field (#140-3)
+    spacing: 4px;
+    property <bool> focus-pending: false;
+    public function focus-input() { input.focus(); }
+
+    // A LabeledInput is often created inside a conditional dialog. Focusing its
+    // TextInput during `init` asks Slint for IME geometry while the surrounding
+    // layout binding is still being evaluated, which trips the runtime's
+    // recursion guard. Defer focus until the next event-loop turn, after layout.
+    init => { root.focus-pending = root.auto-focus; }
+    focus-timer := Timer {
+        interval: 0ms;
+        running: root.focus-pending;
+        triggered => {
+            root.focus-pending = false;
+            if (root.auto-focus) { input.focus(); }
+        }
+    }
+
+    Text {
+        text: label;
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+
+    Rectangle {
+        height: 32px;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: input.has-focus ? Theme.accent : root.idle-border;
+        background: root.input-background;
+
+        // Hide on focus: IME preedit is visible before value is committed.
+        if root.value == "" && !input.has-focus : Text {
+            x: 10px;
+            y: 0px;
+            width: parent.width - 20px;
+            height: parent.height;
+            overflow: elide;
+            text: placeholder;
+            color: Theme.text-muted;
+            font-family: Theme.ui-font-family;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+        }
+
+        viewport := Rectangle {
+            x: 10px;
+            width: parent.width - (root.password && root.reveal-enabled ? 48px : 20px);
+            height: parent.height;
+            clip: true;
+            input := TextInput {
+                property <length> scroll-x: 0px;
+                x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll-x));
+                width: max(parent.width - self.text-cursor-width, self.preferred-width);
+                height: parent.height;
+                text <=> root.value;
+                color: Theme.text-primary;
+                // A CJK-capable family — TextInput doesn't glyph-fallback reliably
+                // across machines, so typed Chinese (incl. punctuation like 、) can
+                // render as tofu without an explicit font (#54).
+                font-family: Theme.ui-font-family;
+                font-size: Theme.fs-md;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: root.password && !root.revealed ? InputType.password : InputType.text;
+                // Keep the selection's active end inside the clipped viewport,
+                // including when a mouse drag extends beyond either edge.
+                cursor-position-changed(pos) => {
+                    if pos.x + self.scroll-x < 0px {
+                        self.scroll-x = -pos.x;
+                    } else if pos.x + self.scroll-x > parent.width - self.text-cursor-width {
+                        self.scroll-x = parent.width - pos.x - self.text-cursor-width;
+                    }
+                }
+                accepted => { root.accepted(); }
+                key-pressed(e) => {
+                    if (e.text == Key.Escape) { root.canceled(); accept }
+                    else { reject }   // let TextInput handle normal typing
+                }
+            }
+        }
+        if root.password && root.reveal-enabled : IconButton {
+            x: parent.width - 34px;
+            y: 2px;
+            glyph: root.revealed ? "\u{E8F4}" : "\u{E8F5}";
+            font-family: "Material Icons";
+            tooltip: root.revealed ? @tr("Hide secret") : @tr("Show secret");
+            clicked => {
+                if !root.revealed && root.value == "" { root.value = root.reveal(); }
+                root.revealed = !root.revealed;
+            }
+        }
+    }
+}

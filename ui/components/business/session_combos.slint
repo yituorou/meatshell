@@ -1,0 +1,302 @@
+import { Theme } from "../../theme.slint";
+
+// Group field with an editable text box + a dropdown of existing groups (#179).
+// Type to create a new group, or click the ▾ to pick one already in use.
+export component GroupCombo inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+    in property <[string]> groups;       // existing group names
+    spacing: 4px;
+
+    Text {
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+
+    Rectangle {
+        height: 32px;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: ginput.has-focus ? Theme.accent : Theme.border-strong;
+        background: Theme.bg-elevated;
+
+        // Hide on focus: IME preedit is visible before value is committed.
+        if root.value == "" && !ginput.has-focus : Text {
+            x: 10px;
+            width: parent.width - 44px;
+            height: parent.height;
+            overflow: elide;
+            text: root.placeholder;
+            color: Theme.text-muted;
+            font-family: Theme.ui-font-family;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+        }
+
+        ginput := TextInput {
+            x: 10px;
+            width: parent.width - 44px;     // room for the ▾ button
+            height: parent.height;
+            text <=> root.value;
+            color: Theme.text-primary;
+            font-family: Theme.ui-font-family;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+            single-line: true;
+        }
+
+        // ▾ — opens the existing-groups list (no-op when there are none).
+        drop-ta := TouchArea {
+            x: parent.width - 36px;
+            width: 36px;
+            height: parent.height;
+            mouse-cursor: root.groups.length > 0 ? pointer : default;
+            clicked => { if (root.groups.length > 0) { groups-popup.show(); } }
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: (drop-ta.has-hover && root.groups.length > 0) ? Theme.bg-hover : transparent;
+                Text {
+                    text: "▼";
+                    color: root.groups.length > 0 ? Theme.text-secondary : Theme.border-strong;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        groups-popup := PopupWindow {
+            x: 0;
+            y: parent.height + 3px;
+            width: parent.width;
+            Rectangle {
+                background: Theme.popup-bg-alt;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 1px;
+                    for g in root.groups : Rectangle {
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: g-ta.has-hover ? Theme.bg-hover : transparent;
+                        g-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.value = g; groups-popup.close(); }
+                        }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: g;
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-md;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Read-only dropdown picking an SSH jump host from a fixed list of saved
+// sessions (#211). Index-based: `choices[0]` is the unselected entry, and
+// `selected-index` maps into the parallel `ids` list held by the caller.
+export component JumpCombo inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> choices;      // display labels; index 0 = unselected
+    in-out property <int> selected-index: 0;
+    callback selected(int);
+    spacing: 4px;
+
+    Text {
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+
+    Rectangle {
+        height: 32px;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: jump-ta.has-hover ? Theme.accent : Theme.border-strong;
+        background: Theme.bg-elevated;
+
+        jump-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { jump-popup.show(); }
+        }
+
+        Text {
+            x: 10px;
+            width: parent.width - 44px;
+            height: parent.height;
+            text: (root.selected-index >= 0 && root.selected-index < root.choices.length)
+                ? root.choices[root.selected-index] : "";
+            color: root.selected-index > 0 ? Theme.text-primary : Theme.text-muted;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Rectangle {
+            x: parent.width - 36px;
+            width: 28px;
+            height: 28px;
+            border-radius: Theme.radius-sm;
+            background: jump-ta.has-hover ? Theme.bg-hover : transparent;
+            Text {
+                text: "▼";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        jump-popup := PopupWindow {
+            x: 0;
+            y: parent.height + 3px;
+            width: parent.width;
+            Rectangle {
+                background: Theme.popup-bg-alt;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 1px;
+                    for c[idx] in root.choices : Rectangle {
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: c-ta.has-hover ? Theme.bg-hover : transparent;
+                        c-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.selected-index = idx; root.selected(idx); jump-popup.close(); }
+                        }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: c;
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-md;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// SerialPort field with an editable text box + a dropdown of existing serial ports.
+// Type to input a serial port, or click the ▾ to pick one already in use.
+export component SerialPortCombo inherits VerticalLayout {
+    in property <string> label;
+    in property <string> placeholder;
+    in-out property <string> value;
+    in property <[string]> serial-ports;       // existing serial_port names
+    spacing: 4px;
+
+    Text {
+        text: root.label;
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+    }
+
+    Rectangle {
+        height: 32px;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: ginput.has-focus ? Theme.accent : Theme.border-strong;
+        background: Theme.bg-elevated;
+
+        // Hide on focus: IME preedit is visible before value is committed.
+        if root.value == "" && !ginput.has-focus : Text {
+            x: 10px;
+            width: parent.width - 44px;
+            height: parent.height;
+            overflow: elide;
+            text: root.placeholder;
+            color: Theme.text-muted;
+            font-family: Theme.ui-font-family;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+        }
+
+        ginput := TextInput {
+            x: 10px;
+            width: parent.width - 44px;     // room for the ▾ button
+            height: parent.height;
+            text <=> root.value;
+            color: Theme.text-primary;
+            font-family: Theme.ui-font-family;
+            font-size: Theme.fs-md;
+            vertical-alignment: center;
+            single-line: true;
+        }
+
+        // ▾ — opens the existing-serial-ports list (no-op when there are none).
+        drop-ta := TouchArea {
+            x: parent.width - 36px;
+            width: 36px;
+            height: parent.height;
+            mouse-cursor: root.serial-ports.length > 0 ? pointer : default;
+            clicked => { if (root.serial-ports.length > 0) { serial-ports-popup.show(); } }
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: (drop-ta.has-hover && root.serial-ports.length > 0) ? Theme.bg-hover : transparent;
+                Text {
+                    text: "▼";
+                    color: root.serial-ports.length > 0 ? Theme.text-secondary : Theme.border-strong;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        serial-ports-popup := PopupWindow {
+            x: 0;
+            y: parent.height + 3px;
+            width: parent.width;
+            Rectangle {
+                background: Theme.popup-bg-alt;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 1px;
+                    for g in root.serial-ports : Rectangle {
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: g-ta.has-hover ? Theme.bg-hover : transparent;
+                        g-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.value = g; serial-ports-popup.close(); }
+                        }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: g;
+                            color: Theme.text-primary;
+                            font-size: Theme.fs-md;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

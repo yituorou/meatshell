@@ -29,17 +29,6 @@ pub(super) fn output_highlight_rule_model(store: &ConfigStore) -> ModelRc<Output
     ModelRc::from(Rc::new(VecModel::from(rows)))
 }
 
-pub(super) fn parse_hex_color(value: &str) -> Option<slint::Color> {
-    let digits = value.trim().strip_prefix('#').unwrap_or(value.trim());
-    if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let red = u8::from_str_radix(&digits[0..2], 16).ok()?;
-    let green = u8::from_str_radix(&digits[2..4], 16).ok()?;
-    let blue = u8::from_str_radix(&digits[4..6], 16).ok()?;
-    Some(slint::Color::from_rgb_u8(red, green, blue))
-}
-
 pub(super) fn validate_output_highlight_rule(
     pattern: &str,
     is_regex: bool,
@@ -405,13 +394,252 @@ pub(super) fn apply_dark_mode(window: &AppWindow, bufs: &TermBuffers, dark: bool
     {
         let handles: Vec<_> = bufs.lock().unwrap().values().cloned().collect();
         for h in handles {
-            h.lock().unwrap().is_dark = dark;
+            let mut b = h.lock().unwrap();
+            if b.term_palette.explicit_scheme {
+                b.is_dark = b.term_palette.is_dark;
+            } else {
+                b.is_dark = dark;
+                b.term_palette =
+                    crate::terminal_theme::ResolvedTerminalPalette::default_for_mode(dark);
+            }
         }
     }
     let tab_ids: Vec<String> = bufs.lock().unwrap().keys().cloned().collect();
     for tid in tab_ids {
         rebuild_tab_display(window, bufs, &tid);
     }
+}
+
+pub(super) const TERMINAL_SCHEME_PAGE_STEP: usize = 60;
+
+const FEATURED_SCHEME_IDS: &[&str] = &[
+    "dracula",
+    "catppuccin-mocha",
+    "catppuccin-macchiato",
+    "catppuccin-frappe",
+    "catppuccin-latte",
+    "tokyonight",
+    "tokyonight-storm",
+    "tokyonight-day",
+    "solarized-dark-higher-contrast",
+    "iterm2-solarized-dark",
+    "iterm2-solarized-light",
+    "gruvbox-dark",
+    "gruvbox-light",
+    "nord",
+    "one-half-dark",
+    "one-half-light",
+    "atom-one-dark",
+    "atom-one-light",
+    "ayu-mirage",
+    "ayu-light",
+    "monokai-remastered",
+    "github-dark",
+    "github",
+    "rose-pine",
+    "rose-pine-dawn",
+    "snazzy",
+    "kanagawa-wave",
+    "night-owlish-light",
+];
+
+pub(super) fn terminal_scheme_to_slint(
+    theme: &crate::terminal_theme::TerminalTheme,
+    is_favorite: bool,
+    is_custom: bool,
+    lang_en: bool,
+) -> TerminalSchemeItem {
+    let resolved = theme.to_resolved_palette();
+    let to_c = |(r, g, b): (u8, u8, u8)| slint::Color::from_rgb_u8(r, g, b);
+    let display_name = if theme.theme_id == crate::terminal_theme::DEFAULT_THEME_ID {
+        if lang_en {
+            "Default (Follow Workbench)".to_string()
+        } else {
+            "默认配色 (跟随工作台明暗)".to_string()
+        }
+    } else {
+        theme.name.clone()
+    };
+    TerminalSchemeItem {
+        id: theme.theme_id.clone().into(),
+        name: display_name.into(),
+        author: theme.author.clone().into(),
+        is_dark: resolved.is_dark,
+        is_favorite,
+        is_custom,
+        bg: to_c(resolved.background),
+        fg: to_c(resolved.foreground),
+        cursor: to_c(resolved.cursor),
+        cursor_text: to_c(resolved.cursor_text),
+        selection: to_c(resolved.selection),
+        selection_text: to_c(resolved.selection_text),
+        c0: to_c(resolved.ansi[0]),
+        c1: to_c(resolved.ansi[1]),
+        c2: to_c(resolved.ansi[2]),
+        c3: to_c(resolved.ansi[3]),
+        c4: to_c(resolved.ansi[4]),
+        c5: to_c(resolved.ansi[5]),
+        c6: to_c(resolved.ansi[6]),
+        c7: to_c(resolved.ansi[7]),
+        c8: to_c(resolved.ansi[8]),
+        c9: to_c(resolved.ansi[9]),
+        c10: to_c(resolved.ansi[10]),
+        c11: to_c(resolved.ansi[11]),
+        c12: to_c(resolved.ansi[12]),
+        c13: to_c(resolved.ansi[13]),
+        c14: to_c(resolved.ansi[14]),
+        c15: to_c(resolved.ansi[15]),
+    }
+}
+
+/// Apply the current terminal color scheme from `store` to `window` and all
+/// open `TermBuffer`s at runtime without restarting PTYs or disconnecting SSH.
+pub(super) fn apply_terminal_color_scheme(
+    window: &AppWindow,
+    store: &ConfigStore,
+    bufs: &TermBuffers,
+) {
+    let is_dark = window.get_dark_mode();
+    let lang_en = window.get_lang_en();
+    let mgr = store.terminal_theme_manager(is_dark);
+    let active = mgr.current_theme();
+    let resolved = active.to_resolved_palette();
+    let to_c = |(r, g, b): (u8, u8, u8)| slint::Color::from_rgb_u8(r, g, b);
+
+    let bg_lum = crate::terminal_theme::relative_luminance(
+        resolved.background.0,
+        resolved.background.1,
+        resolved.background.2,
+    );
+    let fg_lum = crate::terminal_theme::relative_luminance(
+        resolved.foreground.0,
+        resolved.foreground.1,
+        resolved.foreground.2,
+    );
+    let sel_lum = crate::terminal_theme::relative_luminance(
+        resolved.selection.0,
+        resolved.selection.1,
+        resolved.selection.2,
+    );
+    let overlay_selection = if (sel_lum - bg_lum).abs() < 0.06 || (sel_lum - fg_lum).abs() < 0.08 {
+        let a4 = resolved.ansi[4];
+        (
+            ((resolved.selection.0 as u16 + a4.0 as u16) / 2) as u8,
+            ((resolved.selection.1 as u16 + a4.1 as u16) / 2) as u8,
+            ((resolved.selection.2 as u16 + a4.2 as u16) / 2) as u8,
+        )
+    } else {
+        resolved.selection
+    };
+    let a4_lum = crate::terminal_theme::relative_luminance(
+        resolved.ansi[4].0,
+        resolved.ansi[4].1,
+        resolved.ansi[4].2,
+    );
+    let accent_rgb = if (a4_lum - bg_lum).abs() >= 0.12 {
+        resolved.ansi[4]
+    } else {
+        resolved.ansi[12]
+    };
+
+    window.set_terminal_scheme_id(active.theme_id.clone().into());
+    window.set_active_terminal_scheme(terminal_scheme_to_slint(
+        &active,
+        mgr.is_favorite(&active.theme_id),
+        mgr.is_custom(&active.theme_id),
+        lang_en,
+    ));
+    window.set_term_scheme_active(resolved.explicit_scheme);
+    window.set_term_scheme_is_dark(resolved.is_dark);
+    window.set_term_scheme_bg(to_c(resolved.background));
+    window.set_term_scheme_fg(to_c(resolved.foreground));
+    window.set_term_scheme_cursor(to_c(resolved.cursor));
+    window.set_term_scheme_cursor_text(to_c(resolved.cursor_text));
+    window.set_term_scheme_selection(to_c(overlay_selection));
+    window.set_term_scheme_selection_text(to_c(resolved.selection_text));
+    window.set_term_scheme_accent(to_c(accent_rgb));
+    window.set_term_cursor_color(to_c(resolved.cursor));
+
+    {
+        let handles: Vec<_> = bufs.lock().unwrap().values().cloned().collect();
+        for h in handles {
+            let mut b = h.lock().unwrap();
+            b.is_dark = resolved.is_dark;
+            b.term_palette = resolved;
+        }
+    }
+    let tab_ids: Vec<String> = bufs.lock().unwrap().keys().cloned().collect();
+    for tid in tab_ids {
+        rebuild_tab_display(window, bufs, &tid);
+    }
+}
+
+/// Refresh the filtered/searched terminal scheme model in Settings › Terminal.
+pub(super) fn refresh_terminal_scheme_list(
+    window: &AppWindow,
+    store: &ConfigStore,
+    limit: usize,
+) {
+    let is_dark = window.get_dark_mode();
+    let lang_en = window.get_lang_en();
+    let query = window.get_terminal_scheme_search().to_string();
+    let category_str = window.get_terminal_scheme_category().to_string();
+    let category = crate::terminal_theme::ThemeCategory::from_id(&category_str);
+    let mgr = store.terminal_theme_manager(is_dark);
+    let current_id = mgr.current_theme().theme_id;
+
+    let mut matched = mgr.filter(&query, category);
+    if query.trim().is_empty() {
+        // Put default, currently active theme, favorites, custom themes, and popular
+        // community themes at the top of the gallery when browsing without a query.
+        matched.sort_by(|a, b| {
+            let rank = |t: &crate::terminal_theme::TerminalTheme| -> (u8, usize) {
+                if t.theme_id == crate::terminal_theme::DEFAULT_THEME_ID {
+                    (0, 0)
+                } else if t.theme_id == current_id {
+                    (1, 0)
+                } else if mgr.is_favorite(&t.theme_id) {
+                    (2, 0)
+                } else if mgr.is_custom(&t.theme_id) {
+                    (3, 0)
+                } else if let Some(idx) = FEATURED_SCHEME_IDS
+                    .iter()
+                    .position(|&fid| fid == t.theme_id)
+                {
+                    (4, idx)
+                } else {
+                    (5, 0)
+                }
+            };
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        });
+    }
+
+    let total = matched.len();
+    let shown_count = limit.max(TERMINAL_SCHEME_PAGE_STEP).min(total);
+    let items: Vec<TerminalSchemeItem> = matched
+        .into_iter()
+        .take(shown_count)
+        .map(|t| {
+            let fav = mgr.is_favorite(&t.theme_id);
+            let cust = mgr.is_custom(&t.theme_id);
+            terminal_scheme_to_slint(&t, fav, cust, lang_en)
+        })
+        .collect();
+
+    window.set_terminal_schemes_total(total as i32);
+    window.set_terminal_schemes_has_more(total > shown_count);
+    window.set_terminal_schemes(ModelRc::from(Rc::new(VecModel::from(items))));
+
+    let active = mgr.current_theme();
+    window.set_active_terminal_scheme(terminal_scheme_to_slint(
+        &active,
+        mgr.is_favorite(&active.theme_id),
+        mgr.is_custom(&active.theme_id),
+        lang_en,
+    ));
 }
 
 pub(super) fn apply_output_highlight(

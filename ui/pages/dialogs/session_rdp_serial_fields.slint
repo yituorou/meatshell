@@ -1,0 +1,260 @@
+import { Theme } from "../../theme.slint";
+import { ComboBox, CheckBox } from "std-widgets.slint";
+import { LabeledInput, GhostButton } from "../../widgets.slint";
+import { SegOption } from "../../components/business/session_types.slint";
+import { SerialPortCombo } from "../../components/business/session_combos.slint";
+
+export component SessionRdpFields inherits VerticalLayout {
+    in property <bool> is-editing: false;
+    in property <bool> allow-secret-reveal: false;
+    in-out property <bool> password-revealed: false;
+    in-out property <string> draft-user;
+    in-out property <string> draft-password;
+    in-out property <string> draft-rdp-domain;
+    in-out property <string> draft-rdp-resolution: "1280x720";
+    in-out property <string> draft-rdp-width: "1280";
+    in-out property <string> draft-rdp-height: "720";
+    in-out property <bool> draft-rdp-legacy-tls: false;
+    in-out property <bool> draft-rdp-admin: false;
+    in-out property <bool> draft-rdp-smart-sizing: false;
+    in-out property <string> draft-rdp-cert-policy: "ignore";
+    in-out property <string> draft-rdp-network: "auto";
+    in-out property <bool> draft-rdp-sound: false;
+    in-out property <bool> draft-rdp-clipboard: true;
+    in-out property <bool> draft-rdp-gfx: false;
+    in-out property <string> draft-rdp-extra-args: "";
+    in-out property <bool> show-rdp-advanced: false;
+    in-out property <string> rdp-preview: "";
+    callback reveal-password() -> string;
+    callback trigger-preview();
+
+    spacing: 12px;
+
+    LabeledInput {
+        input-background: Theme.bg-elevated;
+        idle-border: Theme.border-strong;
+        label: @tr("Username");
+        placeholder: @tr("DOMAIN\\user or user@domain");
+        value <=> root.draft-user;
+    }
+
+    LabeledInput {
+        input-background: Theme.bg-elevated;
+        idle-border: Theme.border-strong;
+        label: @tr("Password");
+        placeholder: root.is-editing
+            ? (root.allow-secret-reveal ? @tr("Enter a new password") : @tr("Leave blank to keep the current password"))
+            : "••••••••";
+        password: true;
+        reveal-enabled: root.allow-secret-reveal;
+        revealed <=> root.password-revealed;
+        reveal => { root.reveal-password() }
+        value <=> root.draft-password;
+    }
+
+    LabeledInput {
+        input-background: Theme.bg-elevated;
+        idle-border: Theme.border-strong;
+        label: @tr("Domain (optional)");
+        placeholder: "CONTOSO";
+        value <=> root.draft-rdp-domain;
+    }
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: @tr("Resolution");
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+        }
+        ComboBox {
+            model: [@tr("Full screen"), "1280x720", "1366x768", "1440x900",
+                    "1600x900", "1920x1080", "2560x1440", "3840x2160",
+                    @tr("Custom")];
+            current-value: root.draft-rdp-resolution == "fullscreen"
+                ? @tr("Full screen")
+                : root.draft-rdp-resolution == "custom"
+                    ? @tr("Custom")
+                    : root.draft-rdp-resolution;
+            selected(value) => {
+                root.draft-rdp-resolution = value == @tr("Full screen")
+                    ? "fullscreen"
+                    : value == @tr("Custom") ? "custom" : value;
+            }
+        }
+        Text {
+            text: @tr("Remote desktop size. In full screen, Ctrl+Alt+Enter switches back to a window.");
+            color: Theme.text-muted;
+            font-size: Theme.fs-xs;
+        }
+    }
+
+    if root.draft-rdp-resolution == "custom" : HorizontalLayout {
+        spacing: 10px;
+        LabeledInput {
+            input-background: Theme.bg-elevated;
+            idle-border: Theme.border-strong;
+            label: @tr("Width");
+            placeholder: "1920";
+            value <=> root.draft-rdp-width;
+            horizontal-stretch: 1;
+        }
+        LabeledInput {
+            input-background: Theme.bg-elevated;
+            idle-border: Theme.border-strong;
+            label: @tr("Height");
+            placeholder: "1080";
+            value <=> root.draft-rdp-height;
+            horizontal-stretch: 1;
+        }
+    }
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: @tr("FreeRDP server compatibility (Linux / macOS)");
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+        }
+        CheckBox {
+            text: @tr("Legacy TLS (security level 0; less secure)");
+            checked <=> root.draft-rdp-legacy-tls;
+        }
+        CheckBox {
+            text: @tr("Administrative session (/admin)");
+            checked <=> root.draft-rdp-admin;
+        }
+        CheckBox {
+            text: @tr("Smart sizing (scale fixed resolution)");
+            checked <=> root.draft-rdp-smart-sizing;
+        }
+        Text { text: @tr("Certificate policy"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+        ComboBox {
+            model: [@tr("Ignore certificate (less secure)"), @tr("Trust on first use"), @tr("Reject untrusted")];
+            current-value: root.draft-rdp-cert-policy == "tofu" ? @tr("Trust on first use")
+                : root.draft-rdp-cert-policy == "deny" ? @tr("Reject untrusted")
+                : @tr("Ignore certificate (less secure)");
+            selected(value) => {
+                root.draft-rdp-cert-policy = value == @tr("Trust on first use") ? "tofu"
+                    : value == @tr("Reject untrusted") ? "deny" : "ignore";
+            }
+        }
+        Text { text: @tr("Network profile"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+        ComboBox {
+            model: [@tr("Automatic"), "LAN", "WAN", @tr("Fast broadband"), @tr("Slow broadband")];
+            current-value: root.draft-rdp-network == "lan" ? "LAN"
+                : root.draft-rdp-network == "wan" ? "WAN"
+                : root.draft-rdp-network == "broadband-high" ? @tr("Fast broadband")
+                : root.draft-rdp-network == "broadband-low" ? @tr("Slow broadband") : @tr("Automatic");
+            selected(value) => {
+                root.draft-rdp-network = value == "LAN" ? "lan" : value == "WAN" ? "wan"
+                    : value == @tr("Fast broadband") ? "broadband-high"
+                    : value == @tr("Slow broadband") ? "broadband-low" : "auto";
+            }
+        }
+        CheckBox { text: @tr("Redirect sound"); checked <=> root.draft-rdp-sound; }
+        CheckBox { text: @tr("Clipboard sharing"); checked <=> root.draft-rdp-clipboard; }
+        CheckBox { text: @tr("Graphics acceleration (GFX)"); checked <=> root.draft-rdp-gfx; }
+        CheckBox { text: @tr("Advanced FreeRDP arguments"); checked <=> root.show-rdp-advanced; }
+        if root.show-rdp-advanced : VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: @tr("One argument per line. Chinese aliases or native English FreeRDP options.");
+                color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+            }
+            Rectangle {
+                height: 92px; horizontal-stretch: 1; clip: true;
+                border-radius: Theme.radius-sm; border-width: 1px; border-color: Theme.border-strong;
+                background: Theme.bg-elevated;
+                rdp-args-input := TextInput {
+                    x: 8px; y: 6px; width: parent.width - 16px; height: parent.height - 12px;
+                    text <=> root.draft-rdp-extra-args; single-line: false; wrap: word-wrap;
+                    color: Theme.text-primary; font-family: Theme.font-mono; font-size: Theme.fs-sm;
+                }
+            }
+            Text {
+                text: @tr("Examples: 网络=局域网, 音频=开, /bpp:24, /drive:资料,/tmp/中文路径");
+                color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+            }
+            Text {
+                text: @tr("Aliases: network/网络, sound/音频, microphone/麦克风, printer/打印机, bpp/色深, drive/共享目录");
+                color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+            }
+            Text {
+                text: @tr("Do not put passwords or tokens in advanced arguments. They are stored and visible in the process list.");
+                color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
+            }
+        }
+        GhostButton {
+            text: @tr("Preview FreeRDP arguments");
+            clicked => { root.trigger-preview(); }
+        }
+        if root.rdp-preview != "" : Text {
+            text: root.rdp-preview; color: Theme.text-muted;
+            font-family: Theme.font-mono; font-size: Theme.fs-xs; wrap: word-wrap;
+        }
+    }
+}
+
+export component SessionSerialFields inherits VerticalLayout {
+    in-out property <string> draft-serial-port;
+    in property <[string]> session-serial-ports;
+    in-out property <string> draft-baud: "115200";
+    in-out property <string> draft-data-bits: "8";
+    in-out property <string> draft-stop-bits: "1";
+    in-out property <string> draft-parity: "none";
+    in-out property <string> draft-flow: "none";
+
+    spacing: 12px;
+
+    SerialPortCombo {
+        label: @tr("Serial port");
+        placeholder: "COM3  /  /dev/ttyUSB0";
+        value <=> root.draft-serial-port;
+        serial-ports: root.session-serial-ports;
+    }
+
+    LabeledInput {
+        input-background: Theme.bg-elevated;
+        idle-border: Theme.border-strong;
+        label: @tr("Baud rate");
+        placeholder: "115200";
+        value <=> root.draft-baud;
+    }
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: @tr("Data bits / Stop bits / Parity");
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            SegOption { label: "7"; active: root.draft-data-bits == "7"; clicked => { root.draft-data-bits = "7"; } }
+            SegOption { label: "8"; active: root.draft-data-bits == "8"; clicked => { root.draft-data-bits = "8"; } }
+            Rectangle { width: 8px; }
+            SegOption { label: "1"; active: root.draft-stop-bits == "1"; clicked => { root.draft-stop-bits = "1"; } }
+            SegOption { label: "2"; active: root.draft-stop-bits == "2"; clicked => { root.draft-stop-bits = "2"; } }
+            Rectangle { width: 8px; }
+            SegOption { label: "N"; active: root.draft-parity == "none"; clicked => { root.draft-parity = "none"; } }
+            SegOption { label: "O"; active: root.draft-parity == "odd"; clicked => { root.draft-parity = "odd"; } }
+            SegOption { label: "E"; active: root.draft-parity == "even"; clicked => { root.draft-parity = "even"; } }
+        }
+    }
+
+    VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: @tr("Flow control");
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            SegOption { label: @tr("None"); active: root.draft-flow == "none"; clicked => { root.draft-flow = "none"; } }
+            SegOption { label: @tr("Hardware"); active: root.draft-flow == "hardware"; clicked => { root.draft-flow = "hardware"; } }
+            SegOption { label: @tr("Software"); active: root.draft-flow == "software"; clicked => { root.draft-flow = "software"; } }
+        }
+    }
+}

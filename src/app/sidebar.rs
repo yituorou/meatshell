@@ -5,7 +5,8 @@ fn dynamic_sidebar_visible(active: bool, collapsed: bool) -> bool {
 }
 
 pub(super) fn sidebar_updates_visible(win: &AppWindow) -> bool {
-    dynamic_sidebar_visible(win.get_dynamic_ui_active(), win.get_sidebar_collapsed())
+    let collapsed = win.get_effective_sidebar_collapsed() && win.get_terminals().row_count() == 0;
+    dynamic_sidebar_visible(win.get_dynamic_ui_active(), collapsed)
 }
 
 pub(super) fn refresh_process_model(win: &AppWindow, statuses: &TabStatuses) {
@@ -58,13 +59,19 @@ pub(super) fn refresh_sidebar(
         }
     };
     let snap = local.lock().unwrap().clone();
+    let sidebar_expanded = !win.get_effective_sidebar_collapsed();
 
     // --- Bottom network graph: always the local machine --------------------
-    win.set_net_bot_up(format_bytes_per_sec(snap.net_tx_per_sec).into());
-    win.set_net_bot_down(format_bytes_per_sec(snap.net_rx_per_sec).into());
-    win.set_net_bot_history(normalized_model(&local_net_hist.lock().unwrap()));
+    if sidebar_expanded {
+        win.set_net_bot_up(format_bytes_per_sec(snap.net_tx_per_sec).into());
+        win.set_net_bot_down(format_bytes_per_sec(snap.net_rx_per_sec).into());
+        win.set_net_bot_history(normalized_model(&local_net_hist.lock().unwrap()));
+    }
 
     let set_top_local = |win: &AppWindow| {
+        if !sidebar_expanded {
+            return;
+        }
         win.set_net_top_up(format_bytes_per_sec(snap.net_tx_per_sec).into());
         win.set_net_top_down(format_bytes_per_sec(snap.net_rx_per_sec).into());
         win.set_net_top_history(normalized_model(&local_net_hist.lock().unwrap()));
@@ -79,8 +86,10 @@ pub(super) fn refresh_sidebar(
         win.set_cpu_percent(snap.cpu_percent);
         win.set_mem_percent(snap.mem_percent);
         win.set_swap_percent(snap.swap_percent);
-        win.set_mem_detail(format_mem(snap.mem_used_mib, snap.mem_total_mib).into());
-        win.set_swap_detail(format_mem(snap.swap_used_mib, snap.swap_total_mib).into());
+        if sidebar_expanded {
+            win.set_mem_detail(format_mem(snap.mem_used_mib, snap.mem_total_mib).into());
+            win.set_swap_detail(format_mem(snap.swap_used_mib, snap.swap_total_mib).into());
+        }
     };
     let clear_stats = |win: &AppWindow| {
         win.set_cpu_percent(0.0);
@@ -88,6 +97,18 @@ pub(super) fn refresh_sidebar(
         win.set_swap_percent(0.0);
         win.set_mem_detail("".into());
         win.set_swap_detail("".into());
+    };
+    let clear_remote_top = |win: &AppWindow| {
+        if !sidebar_expanded {
+            return;
+        }
+        win.set_net_top_up("—".into());
+        win.set_net_top_down("—".into());
+        win.set_net_top_history(normalized_model(&vec![0.0; NET_HISTORY_LEN]));
+        win.set_net_show_selector(false);
+        win.set_net_selected("".into());
+        win.set_net_ifaces(ModelRc::from(Rc::new(VecModel::<SharedString>::default())));
+        win.set_disks(ModelRc::from(Rc::new(VecModel::<DiskInfo>::default())));
     };
 
     // Process monitor (#23) lives in a shared model (the AppWindow and the
@@ -198,6 +219,9 @@ pub(super) fn refresh_sidebar(
         }
     };
     let show_local_system_models = |win: &AppWindow| {
+        if !win.get_system_info_window_open() {
+            return;
+        }
         set_system_models(
             win,
             snap.cpu_percent,
@@ -229,6 +253,9 @@ pub(super) fn refresh_sidebar(
         // Local shell tabs: keep the connection status line, but show the local
         // machine's resources (their TabStatus carries no remote CPU/mem stats).
         Some(st) if st.is_local => {
+            win.set_is_local_mode(true);
+            win.set_metrics_available(true);
+            win.set_status_heading(t("本机概览", "Local overview").into());
             win.set_conn_state(if st.state == 1 {
                 1
             } else if st.state == 2 {
@@ -237,7 +264,7 @@ pub(super) fn refresh_sidebar(
                 0
             });
             win.set_connection_state(if st.state == 1 {
-                st.host.clone()
+                format!("{} · {}", t("本机终端", "Local shell"), st.host)
             } else if st.state == 2 {
                 format!("{} {}", st.host, t("已断开", "disconnected"))
             } else {
@@ -251,6 +278,9 @@ pub(super) fn refresh_sidebar(
         }
         // A live remote session tab → remote resources + remote NIC on top.
         Some(st) if st.state == 1 => {
+            win.set_is_local_mode(false);
+            win.set_metrics_available(true);
+            win.set_status_heading(t("服务器资源", "Server resources").into());
             win.set_conn_state(1);
             win.set_connection_state(st.host.clone().into());
             win.set_conn_host(conn_ip(&st.host).into());
@@ -258,42 +288,54 @@ pub(super) fn refresh_sidebar(
             win.set_cpu_percent(st.cpu);
             win.set_mem_percent(pct(st.mem_used_kib, st.mem_total_kib));
             win.set_swap_percent(pct(st.swap_used_kib, st.swap_total_kib));
-            win.set_mem_detail(format_mem(st.mem_used_kib / 1024, st.mem_total_kib / 1024).into());
-            win.set_swap_detail(
-                format_mem(st.swap_used_kib / 1024, st.swap_total_kib / 1024).into(),
-            );
-            let (name, rx, tx) = selected_iface(&st);
-            win.set_net_top_up(format_bytes_per_sec(tx).into());
-            win.set_net_top_down(format_bytes_per_sec(rx).into());
-            win.set_net_top_history(normalized_model(&st.net_hist));
-            win.set_net_show_selector(!st.net.is_empty());
-            win.set_net_selected(name.into());
-            let ifaces: Vec<SharedString> = st.net.iter().map(|e| e.0.clone().into()).collect();
-            win.set_net_ifaces(ModelRc::from(Rc::new(VecModel::from(ifaces))));
-            win.set_disks(disk_model(&st.disks));
+            if sidebar_expanded {
+                win.set_mem_detail(
+                    format_mem(st.mem_used_kib / 1024, st.mem_total_kib / 1024).into(),
+                );
+                win.set_swap_detail(
+                    format_mem(st.swap_used_kib / 1024, st.swap_total_kib / 1024).into(),
+                );
+                let (name, rx, tx) = selected_iface(&st);
+                win.set_net_top_up(format_bytes_per_sec(tx).into());
+                win.set_net_top_down(format_bytes_per_sec(rx).into());
+                win.set_net_top_history(normalized_model(&st.net_hist));
+                win.set_net_show_selector(!st.net.is_empty());
+                win.set_net_selected(name.into());
+                let ifaces: Vec<SharedString> = st.net.iter().map(|e| e.0.clone().into()).collect();
+                win.set_net_ifaces(ModelRc::from(Rc::new(VecModel::from(ifaces))));
+                win.set_disks(disk_model(&st.disks));
+            }
             win.set_proc_available(true);
             win.set_system_info_available(true);
             set_procs(win, &st.procs, &st.user, &active);
-            set_system_models(
-                win,
-                st.cpu,
-                pct(st.mem_used_kib, st.mem_total_kib),
-                pct(st.swap_used_kib, st.swap_total_kib),
-                format_mem(st.mem_used_kib / 1024, st.mem_total_kib / 1024).into(),
-                format_mem(st.swap_used_kib / 1024, st.swap_total_kib / 1024).into(),
-                net_rows(&st.net),
-                disk_rows(&st.disks),
-                st.sys.clone(),
-            );
+            if win.get_system_info_window_open() {
+                set_system_models(
+                    win,
+                    st.cpu,
+                    pct(st.mem_used_kib, st.mem_total_kib),
+                    pct(st.swap_used_kib, st.swap_total_kib),
+                    format_mem(st.mem_used_kib / 1024, st.mem_total_kib / 1024).into(),
+                    format_mem(st.swap_used_kib / 1024, st.swap_total_kib / 1024).into(),
+                    net_rows(&st.net),
+                    disk_rows(&st.disks),
+                    st.sys.clone(),
+                );
+            }
         }
-        // Disconnected / timed-out session.
+        // Disconnected / timed-out session: never fall back to local disks/network
+        // pretending to be server metrics.
         Some(st) if st.state == 2 => {
+            win.set_is_local_mode(false);
+            win.set_metrics_available(false);
+            win.set_status_heading(t("连接已断开", "Disconnected").into());
             win.set_conn_state(2);
-            win.set_connection_state(format!("{} {}", st.host, t("已断开", "disconnected")).into());
+            win.set_connection_state(
+                format!("{} · {}", st.host, t("重连后恢复采集", "Reconnect to resume metrics")).into(),
+            );
             win.set_conn_host(conn_ip(&st.host).into());
             win.set_resource_title(t("服务器资源", "Server resources").into());
             clear_stats(win);
-            set_top_local(win);
+            clear_remote_top(win);
             set_system_models(
                 win,
                 0.0,
@@ -306,14 +348,17 @@ pub(super) fn refresh_sidebar(
                 SystemDetails::default(),
             );
         }
-        // Still connecting.
+        // Still connecting: never fall back to local disks/network pretending to be server metrics.
         Some(st) => {
+            win.set_is_local_mode(false);
+            win.set_metrics_available(false);
+            win.set_status_heading(t("正在连接", "Connecting").into());
             win.set_conn_state(0);
             win.set_connection_state(format!("{} {}", t("连接中", "Connecting"), st.host).into());
             win.set_conn_host(conn_ip(&st.host).into());
             win.set_resource_title(t("服务器资源", "Server resources").into());
             clear_stats(win);
-            set_top_local(win);
+            clear_remote_top(win);
             set_system_models(
                 win,
                 0.0,
@@ -326,10 +371,13 @@ pub(super) fn refresh_sidebar(
                 SystemDetails::default(),
             );
         }
-        // Welcome tab (or unknown) → local machine top + bottom.
+        // Welcome / startup screen (no active session) → Local overview (never "Not connected").
         None => {
-            win.set_conn_state(0);
-            win.set_connection_state(t("未连接", "Not connected").into());
+            win.set_is_local_mode(true);
+            win.set_metrics_available(true);
+            win.set_status_heading(t("本机概览", "Local overview").into());
+            win.set_conn_state(1);
+            win.set_connection_state(t("本机系统资源实时概览", "Real-time local system resources").into());
             win.set_conn_host("".into());
             show_local_res(win);
             set_top_local(win);
@@ -398,6 +446,7 @@ pub(super) fn wire_sidebar_refresh_and_theme(
             if let Some(w) = weak.upgrade() {
                 w.set_lang_en(crate::i18n::is_en());
                 w.invoke_refresh_sidebar();
+                w.invoke_shortcuts_refresh();
             }
         });
     }
@@ -417,6 +466,8 @@ pub(super) fn wire_sidebar_refresh_and_theme(
             let next_dark = !w.get_dark_mode();
             // Flip theme + every terminal buffer + re-render (shared with wallpaper).
             apply_dark_mode(&w, &bufs_theme, next_dark);
+            apply_terminal_color_scheme(&w, &store.borrow(), &bufs_theme);
+            refresh_terminal_scheme_list(&w, &store.borrow(), TERMINAL_SCHEME_PAGE_STEP);
             // Mirror the flip onto the detached process window (its Theme global
             // is a separate instance) so an open process window follows.
             if let Some(p) = proc_weak.upgrade() {

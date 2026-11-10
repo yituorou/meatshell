@@ -87,6 +87,97 @@ pub(super) fn sort_sftp_entries(entries: &mut [SftpEntry], key: &str, dir: i32) 
     });
 }
 
+pub(super) fn friendly_file_type(name: &str, is_dir: bool, raw_kind: &str) -> SharedString {
+    match raw_kind {
+        "directory" => return crate::i18n::t("文件夹", "Folder").into(),
+        "symlink" => return crate::i18n::t("符号链接", "Symbolic link").into(),
+        "socket" => return crate::i18n::t("套接字", "Socket").into(),
+        "block-device" => return crate::i18n::t("块设备", "Block device").into(),
+        "character-device" => return crate::i18n::t("字符设备", "Character device").into(),
+        "fifo" => return crate::i18n::t("管道", "FIFO").into(),
+        _ if is_dir => return crate::i18n::t("文件夹", "Folder").into(),
+        _ => {}
+    }
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        return crate::i18n::t("TAR.GZ 压缩包", "TAR.GZ Archive").into();
+    }
+    if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
+        return crate::i18n::t("TAR.XZ 压缩包", "TAR.XZ Archive").into();
+    }
+    let trimmed = name.strip_prefix('.').unwrap_or(name);
+    if let Some((_, ext)) = trimmed.rsplit_once('.') {
+        let ext = ext.trim();
+        if !ext.is_empty() && ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            let up = ext.to_ascii_uppercase();
+            return format!("{} {}", up, crate::i18n::t("文件", "File")).into();
+        }
+    }
+    if name.starts_with('.') && name.len() > 1 {
+        return crate::i18n::t("配置文件", "Dotfile").into();
+    }
+    crate::i18n::t("文件", "File").into()
+}
+
+pub(super) fn sftp_subfolder_matches(
+    current_dir: &str,
+    typed_path: &str,
+    folder_name: &str,
+    show_hidden: bool,
+) -> bool {
+    let cur = current_dir.trim().trim_end_matches(['/', '\\']);
+    let typed = typed_path.trim();
+    let prefix = if typed.is_empty() || typed.trim_end_matches(['/', '\\']) == cur {
+        ""
+    } else if !cur.is_empty() && typed.starts_with(cur) {
+        let rest = &typed[cur.len()..];
+        let Some(after_sep) = rest.strip_prefix('/').or_else(|| rest.strip_prefix('\\')) else {
+            return false;
+        };
+        if after_sep.contains('/') || after_sep.contains('\\') {
+            return false;
+        }
+        after_sep
+    } else if cur.is_empty() && (typed.starts_with('/') || typed.starts_with('\\')) {
+        let after_sep = typed.trim_start_matches(['/', '\\']);
+        if after_sep.contains('/') || after_sep.contains('\\') {
+            return false;
+        }
+        after_sep
+    } else if !typed.contains('/') && !typed.contains('\\') {
+        typed
+    } else {
+        return false;
+    };
+
+    if !show_hidden && folder_name.starts_with('.') && !prefix.starts_with('.') {
+        return false;
+    }
+    if prefix.is_empty() {
+        return true;
+    }
+    folder_name.to_lowercase().contains(&prefix.to_lowercase())
+}
+
+pub(super) fn sftp_entry_matches_query(name: &str, file_type: &str, query: &str) -> bool {
+    let (hide_dot, raw_q) = match query.strip_prefix("__hide_dot__:") {
+        Some(rest) => (true, rest),
+        None => (false, query),
+    };
+    if let Some(rest) = raw_q.strip_prefix("__sub__:") {
+        let (cur_dir, typed) = rest.split_once('\n').unwrap_or((rest, ""));
+        return sftp_subfolder_matches(cur_dir, typed, name, !hide_dot);
+    }
+    if hide_dot && name.starts_with('.') {
+        return false;
+    }
+    let q = raw_q.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    name.to_lowercase().contains(&q) || file_type.to_lowercase().contains(&q)
+}
+
 pub(super) fn natural_name_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     natural_ascii_cmp(&a.to_lowercase(), &b.to_lowercase()).then_with(|| a.cmp(b))
 }

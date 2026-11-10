@@ -240,6 +240,7 @@ fn restore_user_backup_if_needed(primary_dir: &Path, backup_dir: &Path) {
     }
 }
 
+#[cfg(test)]
 fn normalize_hex_color(value: &str) -> Option<String> {
     let digits = value.trim().strip_prefix('#').unwrap_or(value.trim());
     if digits.len() != 6 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -959,6 +960,7 @@ impl ConfigStore {
         };
     }
 
+    #[cfg(test)]
     pub fn terminal_cursor_color(&self) -> &str {
         if normalize_hex_color(&self.cache.terminal_cursor_color).is_some() {
             &self.cache.terminal_cursor_color
@@ -967,6 +969,7 @@ impl ConfigStore {
         }
     }
 
+    #[cfg(test)]
     pub fn set_terminal_cursor_color(&mut self, color: &str) -> bool {
         let Some(normalized) = normalize_hex_color(color) else {
             return false;
@@ -2100,6 +2103,73 @@ impl ConfigStore {
         let (raw, count) = self.export_json()?;
         fs::write(path, raw).with_context(|| format!("failed to write {}", path.display()))?;
         Ok(count)
+    }
+
+    // ── Terminal Color Schemes (iTerm2-Color-Schemes + custom) ────────────
+
+    /// Active terminal color scheme ID (`"default"` when unset).
+    pub fn terminal_color_scheme(&self) -> &str {
+        let id = self.cache.terminal_color_scheme.trim();
+        if id.is_empty() {
+            crate::terminal_theme::DEFAULT_THEME_ID
+        } else {
+            id
+        }
+    }
+
+    pub fn set_terminal_color_scheme(&mut self, id: &str) {
+        let trimmed = id.trim();
+        if trimmed.is_empty() || trimmed == crate::terminal_theme::DEFAULT_THEME_ID {
+            self.cache.terminal_color_scheme.clear();
+        } else {
+            self.cache.terminal_color_scheme = trimmed.to_string();
+        }
+    }
+
+    pub fn toggle_favorite_terminal_scheme(&mut self, id: &str) -> bool {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if let Some(pos) = self
+            .cache
+            .favorite_terminal_schemes
+            .iter()
+            .position(|x| x == trimmed)
+        {
+            self.cache.favorite_terminal_schemes.remove(pos);
+            false
+        } else {
+            self.cache
+                .favorite_terminal_schemes
+                .push(trimmed.to_string());
+            true
+        }
+    }
+
+    pub fn custom_terminal_schemes(&self) -> &[crate::terminal_theme::TerminalTheme] {
+        &self.cache.custom_terminal_schemes
+    }
+
+    pub fn set_custom_terminal_schemes(
+        &mut self,
+        schemes: Vec<crate::terminal_theme::TerminalTheme>,
+    ) {
+        self.cache.custom_terminal_schemes = schemes;
+    }
+
+    /// Construct a [`crate::terminal_theme::ThemeManager`] reflecting the current
+    /// persisted state and workbench dark/light mode.
+    pub fn terminal_theme_manager(
+        &self,
+        workbench_is_dark: bool,
+    ) -> crate::terminal_theme::ThemeManager {
+        crate::terminal_theme::ThemeManager::new(
+            self.terminal_color_scheme().to_string(),
+            self.cache.favorite_terminal_schemes.clone(),
+            self.cache.custom_terminal_schemes.clone(),
+            workbench_is_dark,
+        )
     }
 }
 

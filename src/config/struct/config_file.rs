@@ -129,6 +129,16 @@ pub struct ConfigFile {
     /// Custom terminal cursor colour as #RRGGBB. Empty follows the theme (#275).
     #[serde(default)]
     pub terminal_cursor_color: String,
+    /// Selected terminal color scheme ID from iTerm2-Color-Schemes or user custom themes.
+    /// Empty or "default" = built-in adaptive terminal palette.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub terminal_color_scheme: String,
+    /// Favorited terminal color scheme IDs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub favorite_terminal_schemes: Vec<String>,
+    /// User-imported or custom-defined terminal color schemes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_terminal_schemes: Vec<crate::terminal_theme::TerminalTheme>,
     /// Stored inverted so missing/legacy config keeps the automatic plain-text
     /// output highlighter enabled by default.
     #[serde(default)]

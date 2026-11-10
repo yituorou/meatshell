@@ -1,0 +1,218 @@
+import { Theme } from "../../theme.slint";
+import { IconButton } from "../../widgets.slint";
+import { PortFwd, TriggerDraft, JumpHop, SegOption, MiniInput } from "session_types.slint";
+import { JumpCombo } from "session_combos.slint";
+
+// Every forwarding rule stays editable in-place. "Add" creates another row
+// of this same form instead of converting the current form into a summary (#277).
+export component PortForwardRow inherits VerticalLayout {
+    in property <PortFwd> forward;
+    in property <int> index;
+    callback updated(int, PortFwd);
+    callback remove(int);
+
+    property <string> kind: forward.kind;
+    property <bool> auto-start: forward.auto-start;
+    property <string> name: forward.name;
+    property <string> bind-addr: forward.bind-addr;
+    property <string> bind-port: forward.bind-port;
+    property <string> host: forward.host;
+    property <string> host-port: forward.host-port;
+
+    function notify-updated() {
+        root.updated(root.index, {
+            id: root.forward.id,
+            kind: root.kind,
+            auto-start: root.auto-start,
+            name: root.name,
+            bind-addr: root.bind-addr,
+            bind-port: root.bind-port,
+            host: root.host,
+            host-port: root.host-port,
+        });
+    }
+
+    spacing: 6px;
+    padding: 8px;
+
+    HorizontalLayout {
+        spacing: 6px;
+        SegOption { label: @tr("Local (-L)"); active: root.kind == "local"; clicked => { root.kind = "local"; root.notify-updated(); } }
+        SegOption { label: @tr("Remote (-R)"); active: root.kind == "remote"; clicked => { root.kind = "remote"; root.notify-updated(); } }
+        SegOption { label: @tr("Dynamic (-D)"); active: root.kind == "dynamic"; clicked => { root.kind = "dynamic"; root.notify-updated(); } }
+        Rectangle {
+            width: 30px;
+            height: 30px;
+            border-radius: Theme.radius-sm;
+            background: remove-area.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
+            remove-area := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.remove(root.index); }
+            }
+            Text {
+                text: "\u{E5CD}";
+                font-family: "Material Icons";
+                color: Theme.danger;
+                font-size: Theme.fs-sm;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 6px;
+        Rectangle {
+            width: 16px; height: 16px; border-radius: 3px;
+            border-width: 1px; border-color: Theme.border-subtle;
+            background: root.auto-start ? Theme.accent : Theme.bg-root;
+            TouchArea { clicked => { root.auto-start = !root.auto-start; root.notify-updated(); } }
+            Text { text: root.auto-start ? "X" : ""; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { text: @tr("Start automatically when connecting"); color: Theme.text-secondary; font-size: Theme.fs-sm; }
+    }
+    MiniInput {
+        placeholder: @tr("Name (optional)");
+        value <=> root.name;
+        edited(value) => { root.name = value; root.notify-updated(); }
+    }
+    HorizontalLayout {
+        spacing: 6px;
+        MiniInput {
+            placeholder: "127.0.0.1";
+            value <=> root.bind-addr;
+            edited(value) => { root.bind-addr = value; root.notify-updated(); }
+        }
+        MiniInput {
+            placeholder: @tr("Listen port");
+            value <=> root.bind-port;
+            edited(value) => { root.bind-port = value; root.notify-updated(); }
+        }
+    }
+    if root.kind != "dynamic" : HorizontalLayout {
+        spacing: 6px;
+        MiniInput {
+            placeholder: @tr("Target host");
+            value <=> root.host;
+            edited(value) => { root.host = value; root.notify-updated(); }
+        }
+        MiniInput {
+            placeholder: @tr("Target port");
+            value <=> root.host-port;
+            edited(value) => { root.host-port = value; root.notify-updated(); }
+        }
+    }
+}
+
+export component TriggerRow inherits VerticalLayout {
+    in property <TriggerDraft> trigger;
+    in property <int> index;
+    callback updated(int, TriggerDraft);
+    callback remove(int);
+
+    property <string> expect: trigger.expect;
+    property <string> response: trigger.response;
+    property <bool> append-enter: trigger.append-enter;
+    property <bool> repeat: trigger.repeat;
+
+    function notify-updated() {
+        root.updated(root.index, {
+            expect: root.expect,
+            response: root.response,
+            append-enter: root.append-enter,
+            repeat: root.repeat,
+        });
+    }
+
+    spacing: 6px;
+    padding: 8px;
+    HorizontalLayout {
+        spacing: 6px;
+        MiniInput {
+            placeholder: @tr("Expected output");
+            value <=> root.expect;
+            edited(value) => { root.expect = value; root.notify-updated(); }
+        }
+        Rectangle {
+            width: 30px; height: 30px;
+            border-radius: Theme.radius-sm;
+            background: trigger-remove.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
+            trigger-remove := TouchArea { mouse-cursor: pointer; clicked => { root.remove(root.index); } }
+            Text {
+                text: "\u{E5CD}"; font-family: "Material Icons"; color: Theme.danger;
+                font-size: Theme.fs-sm; horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+    }
+    MiniInput {
+        placeholder: @tr("Response (leave blank to keep saved value)");
+        value <=> root.response;
+        edited(value) => { root.response = value; root.notify-updated(); }
+    }
+    HorizontalLayout {
+        spacing: 14px;
+        SegOption {
+            label: @tr("Send Enter"); active: root.append-enter;
+            clicked => { root.append-enter = !root.append-enter; root.notify-updated(); }
+        }
+        SegOption {
+            label: @tr("Repeat"); active: root.repeat;
+            clicked => { root.repeat = !root.repeat; root.notify-updated(); }
+        }
+    }
+}
+
+// A fixed-height row keeps the drop position independent of text length.
+export component JumpRow inherits Rectangle {
+    in property <JumpHop> hop;
+    in property <int> index;
+    in property <int> count;
+    in property <[string]> choices;
+    callback selected(int);
+    callback remove();
+    callback move(int);
+    property <length> grab-y;
+    property <int> drop-index: root.index;
+    height: 58px;
+    border-radius: Theme.radius-sm;
+    background: handle.pressed ? Theme.bg-active : transparent;
+    HorizontalLayout {
+        spacing: 6px;
+        Rectangle {
+            width: 26px;
+            Text {
+                text: "≡"; color: Theme.text-secondary;
+                vertical-alignment: center; horizontal-alignment: center;
+            }
+            handle := TouchArea {
+                mouse-cursor: MouseCursor.move;
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                        root.grab-y = self.mouse-y;
+                        root.drop-index = root.index;
+                    } else if e.kind == PointerEventKind.up && e.button == PointerEventButton.left {
+                        if root.drop-index != root.index { root.move(root.drop-index); }
+                    } else if e.kind == PointerEventKind.cancel { root.drop-index = root.index; }
+                }
+                moved => {
+                    if self.pressed {
+                        root.drop-index = clamp(root.index + round((self.mouse-y - root.grab-y) / 64px), 0, root.count - 1);
+                    }
+                }
+            }
+        }
+        JumpCombo {
+            horizontal-stretch: 1;
+            label: handle.pressed && root.drop-index != root.index
+                ? @tr("Move to hop") + " " + (root.drop-index + 1)
+                : @tr("Hop") + " " + (root.index + 1)
+                    + (root.hop.choice == 0 && root.hop.id != "" ? " (" + @tr("Unavailable") + ")" : "");
+            choices: root.choices;
+            selected-index: root.hop.choice;
+            selected(choice) => { root.selected(choice); }
+        }
+        VerticalLayout {
+            padding-top: 22px;
+            IconButton { glyph: "×"; fg: Theme.danger; clicked => { root.remove(); } }
+        }
+    }
+}

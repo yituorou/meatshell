@@ -1,0 +1,255 @@
+import { Theme } from "../../theme.slint";
+import { TabInfo } from "../../tabs.slint";
+import { TermSpan, TermMatch } from "../../terminal_view.slint";
+import { SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "../../sftp_panel.slint";
+
+// --- TerminalState ---------------------------------------------------------
+// Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
+// TerminalState carries the streaming log + status line. Kept as a parallel
+// model so opening/closing tabs doesn't churn the log strings.
+// ProcRow now lives in proc_window.slint (the detachable process window).
+
+export struct TerminalState {
+    id: string,
+    status: string,
+    spans: [TermSpan],     // coloured runs of the visible terminal screen
+    cursor-row: int,       // cursor cell on the grid
+    cursor-col: int,
+    rows-used: int,        // content rows, for viewport sizing
+    scroll-max: int,       // scrollback depth (max offset) — terminal scrollbar (#103)
+    scroll-offset: int,    // current scrollback offset (0 = live bottom)
+    is-alt-screen: bool,
+    mouse-tracked: bool,     // remote app wants mouse events (btop/htop/mc)
+    find-matches: [TermMatch], // search-highlight rectangles
+    find-current: TermMatch,   // the current find match on screen; len 0 = none (#535)
+    selection: [TermMatch],    // drag-selection highlight rectangles
+
+    // SFTP panel state
+    sftp-path: string,
+    sftp-entries: [SftpEntry],
+    sftp-status: string,
+    sftp-loading: bool,
+    sftp-tree-nodes: [SftpTreeNode],
+    sftp-selected-count: int,   // checked entries in the SFTP panel (#100)
+    sftp-sort-key: string,      // ""|"name"|"size"|"modified" (#248)
+    sftp-sort-dir: int,         // 0 default / 1 asc / -1 desc (#248)
+    sftp-available: bool,       // false for local/serial/telnet sessions
+    sftp-bookmarks: [string],   // this session's bookmarked folders (#500)
+    sftp-recent: [string],      // recently visited folders, newest first (#500)
+    sftp-bookmarked: bool,      // current sftp-path is bookmarked (#500)
+    // Split view (dual pane): the left half browses this machine's filesystem,
+    // the right half keeps the remote listing. Local state lives per tab so
+    // switching tabs returns to the folder you left.
+    sftp-dual: bool,
+    sftp-local-path: string,
+    sftp-local-entries: [SftpEntry],
+    sftp-local-status: string,
+    sftp-local-loading: bool,
+    sftp-local-selected-count: int,
+    sftp-local-pane-width: length,   // 0 = even split; set by dragging the divider
+    sftp-local-quick-places: [SftpLocalPlace],
+    sftp-local-drive-places: [SftpLocalPlace],
+    sftp-local-bookmarks: [string],
+    sftp-local-recent: [string],
+    sftp-local-bookmarked: bool,
+    font-size: int,             // per-session zoom override in px (0 = follow window)
+    tunnels: [TunnelInfo],      // runtime SSH tunnels (#206)
+    sftp-collapsed: bool,       // SFTP panel minimised — per session (#v0.5)
+    sftp-panel-height: length,  // SFTP panel extent (bottom dock) — per session
+    sftp-panel-width: length,   // SFTP panel extent (side dock) — per session
+    sftp-saved-height: length,  // height to restore on un-collapse — per session
+}
+
+// One leaf pane of the split layout (v0.5). Geometry (x/y/w/h) is computed in Rust
+// from the split tree; `tabs` is the pane's own tab group and `active-id` the tab
+// it currently shows. `reserve-right` keeps room for the top-right toolbar icons on
+// whichever pane touches the top-right corner.
+export struct PaneInfo {
+    id: int,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    active-id: string,
+    focused: bool,
+    reserve-right: length,
+    tabs: [TabInfo],
+}
+
+// A draggable splitter between two regions of the split layout (v0.5).
+export struct SplitterInfo {
+    split-id: int,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    vertical: bool,   // true = vertical handle (drag left/right)
+}
+
+// A docked panel placed absolutely by the Rust dock-geometry engine
+// (#dock-stack). `kind` selects which panel component to render; `edge` is
+// the dock edge it sits on so the UI can draw the in-edge resize handle.
+export struct PanelGeomInfo {
+    kind: string,
+    edge: string,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+}
+
+// A draggable divider between two stacked docked panels (#dock-stack).
+// `edge` + `index` identify the boundary so Rust can update the ratio;
+// `edge` is the dock edge ("left|right|top|bottom") and `index` is the slot
+// *before* the boundary.
+export struct DividerGeomInfo {
+    edge: string,
+    index: int,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    vertical: bool,   // true = vertical handle (drag up/down)
+}
+
+// A Windows-style window-control button (minimize / maximize / close) for the
+// custom title bar (#119). `danger` gives the close button its red hover.
+export component WinBtn inherits Rectangle {
+    in property <string> icon;
+    in property <bool> danger: false;
+    callback clicked();
+    width: 46px;
+    background: ta.has-hover ? (root.danger ? #e81123 : Theme.bg-hover) : transparent;
+    animate background { duration: 90ms; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.icon;
+        font-family: "Material Icons";
+        color: (root.danger && ta.has-hover) ? white : Theme.text-secondary;
+        font-size: 16px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// One row in the keyboard-shortcuts dialog: a key chip + a description (#103).
+export component ShortcutRow inherits Rectangle {
+    in property <string> keys;
+    in property <string> desc;
+    height: 28px;
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            width: 116px;
+            chip := Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width, kt.preferred-width + 16px);
+                height: 20px;
+                background: Theme.bg-root;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Theme.border-strong;
+                kt := Text {
+                    text: root.keys;
+                    color: Theme.text-primary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+        }
+        Text {
+            text: root.desc;
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// A rebindable row in the Shortcuts dialog: click the chip to record a new
+// chord; customised entries show their chip in the accent colour plus a
+// per-row reset button.
+export component EditableShortcutRow inherits Rectangle {
+    in property <string> keys;
+    in property <string> desc;
+    in property <bool> recording;
+    in property <bool> is-default;
+    in property <bool> lang-en;
+    callback start-record();
+    callback reset();
+    height: 28px;
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle {
+            width: 132px;
+            chip := Rectangle {
+                x: 0;
+                y: (parent.height - self.height) / 2;
+                width: min(parent.width, ekt.preferred-width + 16px);
+                height: 20px;
+                background: root.recording ? Theme.bg-active
+                    : (chip-ta.has-hover ? Theme.bg-hover : Theme.bg-root);
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: root.recording || chip-ta.has-hover || !root.is-default
+                    ? Theme.accent : Theme.border-strong;
+                ekt := Text {
+                    text: root.recording
+                        ? (root.lang-en ? "Press keys…" : "按下快捷键…")
+                        : root.keys;
+                    color: root.recording ? Theme.text-secondary
+                        : (root.is-default ? Theme.text-primary : Theme.accent);
+                    font-family: Theme.font-mono;
+                    font-size: Theme.fs-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+                chip-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.start-record(); }
+                }
+            }
+        }
+        Text {
+            text: root.desc;
+            color: Theme.text-secondary;
+            font-size: Theme.fs-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        // Reset to default — only for customised rows.
+        Rectangle {
+            width: 22px;
+            if !root.is-default : Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: 22px; height: 22px;
+                border-radius: Theme.radius-sm;
+                background: rst-ta.has-hover ? Theme.bg-hover : transparent;
+                rst-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.reset(); }
+                }
+                Text {
+                    text: "\u{E166}"; // undo
+                    font-family: "Material Icons";
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

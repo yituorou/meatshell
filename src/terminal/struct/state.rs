@@ -19,6 +19,7 @@ pub(crate) struct TermBuffer {
     /// (#535). Combined rows keep their index as output scrolls into history.
     pub(crate) find_cursor: Option<(usize, usize)>,
     pub(crate) is_dark: bool,
+    pub(crate) term_palette: crate::terminal_theme::ResolvedTerminalPalette,
     pub(crate) output_highlight: OutputHighlightPreset,
     pub(crate) custom_highlight_rules: Vec<CompiledOutputRule>,
     pub(crate) json_format_output: bool,
