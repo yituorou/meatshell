@@ -575,7 +575,9 @@ export component AppWindow inherits Window {
     // just left of the three 46px window controls, so the tab row keeps its full
     // width and docked sidebars no longer shift them.
     property <length> toolbar-x-off:
-        root.custom-titlebar ? 3 * 46px + 4px : root.dock-right-gap + 4px;
+        // 16px gap before the window controls (like JetBrains IDEs) so the
+        // Settings gear isn't mistaken for / mis-clicked as Minimize.
+        root.custom-titlebar ? 3 * 46px + 16px : root.dock-right-gap + 4px;
     property <length> toolbar-y-off:
         root.custom-titlebar ? 0px : root.dock-top-gap;
     property <length> toolbar-y:
