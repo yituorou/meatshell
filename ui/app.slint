@@ -831,6 +831,8 @@ export component AppWindow inherits Window {
     callback reset-session-log-dir();
     callback open-session-log-dir();
     in-out property <bool> paste-confirm-enabled: true;
+    in-out property <bool> right-click-copy: false;
+    callback set-right-click-copy(bool);
     callback set-paste-confirm-enabled(bool);
     in-out property <bool> extra-paste-shortcuts-enabled: true;
     callback set-extra-paste-shortcuts-enabled(bool);
@@ -1460,6 +1462,7 @@ export component AppWindow inherits Window {
     callback paste-from-clipboard(string /* tab-id */);
     // Copy the current terminal screen buffer to the clipboard.
     callback copy-terminal-text(string /* tab-id */);
+    callback right-click-copy-selection(string /* tab-id */) -> bool;
     // Clear a session's terminal buffer (its visible screen + scrollback).
     callback clear-terminal(string /* tab-id */);
     // Recompute search highlights for a session's visible screen.
@@ -2273,6 +2276,7 @@ export component AppWindow inherits Window {
                         cursor-color: root.term-cursor-color;
                         terminal-line-spacing: root.terminal-line-spacing;
                         extra-paste-shortcuts-enabled: root.extra-paste-shortcuts-enabled;
+                        right-click-copy: root.right-click-copy;
                         rows-used: term.rows-used;
                         scroll-max: term.scroll-max;
                         scroll-offset: term.scroll-offset;
@@ -2508,6 +2512,7 @@ export component AppWindow inherits Window {
                         }
                         paste-from-clipboard() => { root.paste-from-clipboard(term.id); }
                         copy-terminal-text() => { root.copy-terminal-text(term.id); }
+                        right-click-copy-selection() => { root.right-click-copy-selection(term.id) }
                         clear-terminal() => { root.clear-terminal(term.id); }
                         find-query-changed(q) => { root.find-query-changed(term.id, q); }
                         output-hover(h) => { root.terminal-output-hover(term.id, h); }
@@ -5363,6 +5368,7 @@ export component AppWindow inherits Window {
                     session-log-dir: root.session-log-dir;
                     session-log-dir-custom: root.session-log-dir-custom;
                     paste-confirm-enabled <=> root.paste-confirm-enabled;
+                    right-click-copy <=> root.right-click-copy;
                     extra-paste-shortcuts-enabled <=> root.extra-paste-shortcuts-enabled;
                     ssh-keepalive-enabled <=> root.ssh-keepalive-enabled;
                     ssh-keepalive-interval <=> root.ssh-keepalive-interval;
@@ -5456,6 +5462,7 @@ export component AppWindow inherits Window {
                     reset-session-log-dir => { root.reset-session-log-dir(); }
                     open-session-log-dir => { root.open-session-log-dir(); }
                     set-paste-confirm-enabled(v) => { root.set-paste-confirm-enabled(v); }
+                    set-right-click-copy(v) => { root.set-right-click-copy(v); }
                     set-extra-paste-shortcuts-enabled(v) => { root.set-extra-paste-shortcuts-enabled(v); }
                     set-ssh-keepalive(on, interval, max) => { root.set-ssh-keepalive(on, interval, max); }
                     set-zen-mode(v) => { root.set-zen-mode(v); }
