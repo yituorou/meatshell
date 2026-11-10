@@ -428,6 +428,18 @@ impl TermBuffer {
             .any(|(anchor, focus)| anchor != focus)
     }
 
+    /// `None` requests paste; `Some("")` is still a selection and must not paste.
+    pub(crate) fn take_right_click_selection(&mut self) -> Option<String> {
+        if !self.selection_has_extent() {
+            return None;
+        }
+        let text = self.extract_selection_text();
+        self.sel_anchor = None;
+        self.sel_focus = None;
+        self.sel_ranges.clear();
+        Some(text)
+    }
+
     pub(crate) fn extract_selection_text(&self) -> String {
         let ranges = if self.sel_ranges.is_empty() {
             match (self.sel_anchor, self.sel_focus) {

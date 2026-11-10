@@ -858,3 +858,10 @@ msgstr "Stop session log"
 
 msgid "Start session log..."
 msgstr "Start session log..."
+
+
+msgid "Right-click copy or paste"
+msgstr "Right-click copy or paste"
+
+msgid "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."
+msgstr "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."

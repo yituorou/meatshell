@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn right_click_without_a_selection_requests_paste() {
+    let mut buffer = make_buf(2, 20, &[], &["one"], 0);
+    assert_eq!(buffer.take_right_click_selection(), None);
+    buffer.sel_anchor = Some((0, 1));
+    buffer.sel_focus = Some((0, 1));
+    assert_eq!(buffer.take_right_click_selection(), None);
+}
+
+#[test]
+fn right_click_copies_selection_and_clears_it() {
+    let mut buffer = make_buf(2, 20, &[], &["one two"], 0);
+    buffer.sel_anchor = Some((0, 0));
+    buffer.sel_focus = Some((0, 2));
+    buffer.sel_ranges.push(((0, 0), (0, 2)));
+    assert_eq!(buffer.take_right_click_selection(), Some("one".into()));
+    assert!(buffer.sel_anchor.is_none());
+    assert!(buffer.sel_focus.is_none());
+    assert!(buffer.sel_ranges.is_empty());
+    assert_eq!(buffer.take_right_click_selection(), None);
+}
+
+#[test]
+fn right_click_on_blank_selection_does_not_request_paste() {
+    let mut buffer = make_buf(2, 20, &[], &[""], 0);
+    buffer.sel_anchor = Some((0, 0));
+    buffer.sel_focus = Some((0, 2));
+    assert_eq!(buffer.take_right_click_selection(), Some(String::new()));
+}
+
+#[test]
 fn plain_click_has_no_selection_extent() {
     let mut buffer = make_buf(2, 20, &[], &["one"], 0);
     buffer.sel_anchor = Some((0, 1));

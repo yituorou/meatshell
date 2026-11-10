@@ -276,6 +276,8 @@ export component TerminalView inherits Rectangle {
     in property <bool> zen-mode: false;
     in property <float> terminal-line-spacing: 1.0;
     in property <bool> extra-paste-shortcuts-enabled: true;
+    in property <bool> right-click-copy: false;
+    callback right-click-copy-selection() -> bool;
     in property <bool> quick-sidebar-enabled: false;
     in property <bool> quick-panel-docked: false;
     in property <string> quick-external-command;
@@ -837,9 +839,13 @@ export component TerminalView inherits Rectangle {
                                     // Any button press re-takes keyboard focus.
                                     ime-input.focus();
                                     if (ev.button == PointerEventButton.right) {
-                                        root.ctx-x = self.mouse-x;
-                                        root.ctx-y = self.mouse-y;
-                                        ctx-menu.show();
+                                        if root.right-click-copy && !ev.modifiers.shift {
+                                            if !root.right-click-copy-selection() { root.paste-from-clipboard(); }
+                                        } else {
+                                            root.ctx-x = self.mouse-x;
+                                            root.ctx-y = self.mouse-y;
+                                            ctx-menu.show();
+                                        }
                                     } else if (ev.button == PointerEventButton.left
                                             && root.mouse-tracked && !ev.modifiers.shift) {
                                         root.mouse-press-pending = true;
@@ -1081,9 +1087,13 @@ export component TerminalView inherits Rectangle {
                                 if (ev.kind == PointerEventKind.down) {
                                     ime-input.focus();
                                     if (ev.button == PointerEventButton.right) {
-                                        root.ctx-x = self.mouse-x;
-                                        root.ctx-y = self.mouse-y;
-                                        ctx-menu.show();
+                                        if root.right-click-copy && !ev.modifiers.shift {
+                                            if !root.right-click-copy-selection() { root.paste-from-clipboard(); }
+                                        } else {
+                                            root.ctx-x = self.mouse-x;
+                                            root.ctx-y = self.mouse-y;
+                                            ctx-menu.show();
+                                        }
                                     } else if (ev.button == PointerEventButton.left
                                             && root.mouse-tracked && !ev.modifiers.shift) {
                                         // Mouse-tracking TUI (btop/htop/mc): forward the

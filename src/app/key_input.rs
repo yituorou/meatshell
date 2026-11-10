@@ -861,8 +861,30 @@ pub(super) fn wire_key_input(
         });
     }
 
+    // Opt-in right-click copy; false lets the UI use the normal paste handler.
+    {
+        let bufs = bufs.clone();
+        let weak = window.as_weak();
+        window.on_right_click_copy_selection(move |tab_id: SharedString| {
+            let text = term_buf(&bufs, tab_id.as_str()).and_then(|buffer| {
+                buffer.lock().unwrap().take_right_click_selection()
+            });
+            // An empty selected region must not fall through to paste or
+            // trigger the existing "copy whole screen" fallback.
+            if let Some(text) = text {
+                if let Some(window) = weak.upgrade() {
+                    rebuild_tab_display(&window, &bufs, tab_id.as_str());
+                }
+                if !text.is_empty() {
+                    std::thread::spawn(move || clipboard_set_text(text));
+                }
+                true
+            } else {
+                false
+            }
+        });
+    }
     // Middle-click / Ctrl+Shift+V: paste clipboard text into PTY.
-    //
     // Full clipboard payload for an open multi-line review dialog lives only
     // in `pending_paste` (not in a Slint string property): the software
     // renderer panics when a huge Text layout overflows i16 coordinates
@@ -1482,3 +1504,7 @@ pub(super) fn should_drop_macos_bare_ctrl_marker(key: &str, ctrl: bool, is_macos
             ['\u{0008}'] | ['\u{0017}']
         )
 }
+
+#[cfg(test)]
+#[path = "../../tests/app/right_click_copy.rs"]
+mod right_click_copy_tests;

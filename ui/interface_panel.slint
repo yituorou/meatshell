@@ -542,6 +542,7 @@ export component InterfacePanel inherits Rectangle {
     in property <string> session-log-dir;
     in property <bool> session-log-dir-custom;
     in-out property <bool> paste-confirm-enabled: true;
+    in-out property <bool> right-click-copy: false;
     in-out property <bool> extra-paste-shortcuts-enabled: true;
     // SSH keepalive (Settings › Connection, #515).
     in-out property <bool> ssh-keepalive-enabled: true;
@@ -645,6 +646,7 @@ export component InterfacePanel inherits Rectangle {
     callback reset-session-log-dir();
     callback open-session-log-dir();
     callback set-paste-confirm-enabled(bool);
+    callback set-right-click-copy(bool);
     callback set-extra-paste-shortcuts-enabled(bool);
     callback set-ssh-keepalive(bool /* enabled */, int /* interval s */, int /* max missed */);
     callback set-zen-mode(bool);
@@ -921,6 +923,14 @@ export component InterfacePanel inherits Rectangle {
                 alignment: start;
 
                 SectionHeader { text: root.lang-en ? "INPUT" : "输入"; height: 24px; }
+                SettingRow {
+                    label: @tr("Right-click copy or paste");
+                    desc: @tr("Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies.");
+                    Switch {
+                        on: root.right-click-copy;
+                        toggled(v) => { root.right-click-copy = v; root.set-right-click-copy(v); }
+                    }
+                }
                 SettingRow {
                     label: root.lang-en ? "Confirm multiline paste" : "确认多行粘贴";
                     desc: root.lang-en ? "Show a review dialog before sending multiline content."

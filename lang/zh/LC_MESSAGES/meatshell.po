@@ -860,3 +860,10 @@ msgid "Filter names"
 msgstr "筛选名称"
 msgid "Open in file manager"
 msgstr "打开所在文件夹"
+
+
+msgid "Right-click copy or paste"
+msgstr "右键复制或粘贴"
+
+msgid "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."
+msgstr "有选区时复制，否则粘贴；Shift+右键打开菜单。多行粘贴仍需按设置确认。"
