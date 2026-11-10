@@ -86,6 +86,11 @@ fn terminal(
         sftp_local_bookmarks: ModelRc::from(Rc::new(VecModel::default())),
         sftp_local_recent: ModelRc::from(Rc::new(VecModel::default())),
         sftp_local_bookmarked: false,
+        sftp_local_show_hidden: false,
+        sftp_local_sort_key: "".into(),
+        sftp_local_sort_dir: 0,
+        sftp_local_filter: "".into(),
+        sftp_local_all_entries: ModelRc::from(Rc::new(VecModel::default())),
         font_size: 0,
         tunnels: ModelRc::from(Rc::new(VecModel::default())),
         sftp_collapsed: false,
@@ -1518,10 +1523,21 @@ fn round5_sftp_overhaul_visual_and_functional_verification() {
             let f11 = render_frame(&window, 1440, 900);
             save_shot("r9_02_terminal_themes_settings_dracula_dark.png", &f11);
 
-            // Shot 12 (Round 9): Active Terminal Rendered Live with Dracula Palette (ANSI 16 + TrueColor + Selection)
+            // Shot 12 (Round 9): Active Terminal Rendered Live with Dracula Palette (ANSI 16 + TrueColor + Selection + CommandBar)
             ui.set_interface_open(false);
             ui.set_sftp_collapsed(true);
             ui.set_dock_central_h(868.0);
+            ui.set_panes(ModelRc::from(Rc::new(VecModel::from(vec![PaneInfo {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+                w: 1112.0,
+                h: 868.0,
+                active_id: "t1".into(),
+                focused: true,
+                reserve_right: 0.0,
+                tabs: ModelRc::from(Rc::new(VecModel::from(vec![tab("t1")]))),
+            }]))));
             let spans = vec![
                 crate::ui::TermSpan {
                     text: "root@prod-cluster".into(),
@@ -1634,6 +1650,30 @@ fn round5_sftp_overhaul_visual_and_functional_verification() {
             ui.set_terminals(ModelRc::from(Rc::new(VecModel::from(vec![term_item]))));
             let f12 = render_frame(&window, 1440, 900);
             save_shot("r9_03_terminal_live_dracula.png", &f12);
+
+            // Shot 13: CommandBar floating Quick Commands Popup open in Dracula Terminal
+            ui.set_quick_panel_open(false);
+            ui.set_dock_panels(ModelRc::from(Rc::new(VecModel::<crate::ui::PanelGeomInfo>::default())));
+            ui.set_dock_central_x(48.0);
+            ui.set_dock_central_w(1392.0);
+            ui.set_panes(ModelRc::from(Rc::new(VecModel::from(vec![PaneInfo {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+                w: 1392.0,
+                h: 868.0,
+                active_id: "t1".into(),
+                focused: true,
+                reserve_right: 0.0,
+                tabs: ModelRc::from(Rc::new(VecModel::from(vec![tab("t1")]))),
+            }]))));
+            let _ = render_frame(&window, 1440, 900);
+            // Click the `⚡ 快捷 ⌃` pill on CommandBar (x=82, y=881) to open the Quick Commands popup
+            move_to(&window, 82.0, 881.0);
+            press(&window, 82.0, 881.0);
+            release(&window, 82.0, 881.0);
+            let f13 = render_frame(&window, 1440, 900);
+            save_shot("r9_04_command_bar_quick_popup_dracula.png", &f13);
         }
     })
     .join()

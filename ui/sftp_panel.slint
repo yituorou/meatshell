@@ -58,6 +58,11 @@ export component SftpPanel inherits Rectangle {
     in property <bool> local-loading: false;
     in property <int> local-selected-count: 0;
     in property <[SftpLocalPlace]> local-quick-places;
+    // Local list options (#532 follow-up).
+    in-out property <bool> local-show-hidden: false;
+    in property <string> local-sort-key;
+    in property <int> local-sort-dir: 0;
+    in property <string> local-filter;
     in property <[SftpLocalPlace]> local-drive-places;
     in property <[string]> local-bookmarks;
     in property <[string]> local-recent;
@@ -218,6 +223,12 @@ export component SftpPanel inherits Rectangle {
     callback local-toggle-bookmark();
     callback local-remove-bookmark(string /* path */);
     callback local-clear-recent();
+    callback local-toggle-hidden();
+    callback local-sort(string /* column */);
+    callback local-set-filter(string /* text */);
+    callback local-remove-recent(string /* path */);
+    callback local-move-bookmark(string /* path */, int /* -1 up, +1 down */);
+    callback local-reveal();
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
     callback local-select-range(int /* from */, int /* to */);
@@ -779,8 +790,11 @@ export component SftpPanel inherits Rectangle {
                 bookmarks: root.local-bookmarks;
                 recent: root.local-recent;
                 bookmarked: root.local-bookmarked;
-                show-hidden <=> root.show-hidden;
+                show-hidden <=> root.local-show-hidden;
                 sub-open <=> root.local-sub-open;
+                sort-key: root.local-sort-key;
+                sort-dir: root.local-sort-dir;
+                filter: root.local-filter;
                 navigate(path)        => { root.local-navigate(path); }
                 up()                  => { root.local-up(); }
                 home()                => { root.local-home(); }
@@ -789,6 +803,12 @@ export component SftpPanel inherits Rectangle {
                 toggle-bookmark()     => { root.local-toggle-bookmark(); }
                 remove-bookmark(path) => { root.local-remove-bookmark(path); }
                 clear-recent()        => { root.local-clear-recent(); }
+                toggle-hidden()       => { root.local-toggle-hidden(); }
+                sort(column)          => { root.local-sort(column); }
+                set-filter(text)      => { root.local-set-filter(text); }
+                remove-recent(path)   => { root.local-remove-recent(path); }
+                move-bookmark(path, delta) => { root.local-move-bookmark(path, delta); }
+                reveal()              => { root.local-reveal(); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
                 select-range(a, b)    => { root.local-select-range(a, b); }

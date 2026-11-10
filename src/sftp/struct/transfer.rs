@@ -47,11 +47,13 @@ pub enum SftpCommand {
     /// Cancel an in-progress transfer by its id (#100). The partial local file
     /// (and any remote temp archive) are cleaned up.
     CancelTransfer(String),
-    /// Upload a local file into a remote directory.
+    /// Upload a local file into a remote directory. `conflict` says what to do
+    /// when the name is already taken (only `Replace` truncates).
     Upload {
         local: PathBuf,
         remote_dir: String,
         cleanup_after: Option<PathBuf>,
+        conflict: UploadConflict,
     },
     /// Re-upload an externally edited temp file to its exact original path.
     /// The local name may include a host prefix, so deriving the remote name
@@ -170,6 +172,29 @@ pub enum DownloadConflict {
     KeepBoth,
 }
 
+/// What to do when an upload's target name already exists remotely. Mirrors
+/// [`DownloadConflict`] so both directions ask the same question.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadConflict {
+    /// Overwrite the existing remote file / merge into the existing folder.
+    Replace,
+    /// Upload under a free name instead (`name (1).ext`).
+    KeepBoth,
+}
+
+/// `name` with a ` (n)` suffix before its extension: `a.txt` + 1 → `a (1).txt`,
+/// `dir` + 2 → `dir (2)`. Used for "keep both" uploads.
+pub(crate) fn numbered_name(name: &str, n: u32) -> String {
+    match name.rfind('.') {
+        // A leading dot (`.bashrc`) and a trailing one (`a.`) are not
+        // extensions, so those names get the suffix at the very end.
+        Some(dot) if dot > 0 && dot + 1 < name.len() => {
+            format!("{} ({n}){}", &name[..dot], &name[dot..])
+        }
+        _ => format!("{name} ({n})"),
+    }
+}
+
 /// Handle retained by the UI to drive a running SFTP worker.
 pub struct SftpHandle {
     pub commands: UnboundedSender<SftpCommand>,
@@ -181,3 +206,19 @@ pub(crate) type SftpHandles = Arc<Mutex<HashMap<String, SftpHandle>>>;
 
 /// Last terminal cwd followed by each SFTP panel.
 pub(crate) type SftpLastCwd = Arc<Mutex<HashMap<String, String>>>;
+
+#[cfg(test)]
+mod tests {
+    use super::numbered_name;
+
+    #[test]
+    fn keep_both_names_go_before_the_extension() {
+        assert_eq!(numbered_name("a.txt", 1), "a (1).txt");
+        assert_eq!(numbered_name("a.tar.gz", 2), "a.tar (2).gz");
+        assert_eq!(numbered_name("dir", 1), "dir (1)");
+        // A leading dot is not an extension; neither is a trailing one.
+        assert_eq!(numbered_name(".bashrc", 3), ".bashrc (3)");
+        assert_eq!(numbered_name("a.", 1), "a. (1)");
+        assert_eq!(numbered_name("report (1).pdf", 1), "report (1) (1).pdf");
+    }
+}

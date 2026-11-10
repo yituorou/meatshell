@@ -1660,7 +1660,41 @@ impl ConfigStore {
     pub fn local_places(&self) -> crate::config::LocalPlaces {
         self.cache.local_places.normalized()
     }
-    /// Edit the local places; empty entries are dropped so the config only
+    /// Local pane: show entries the OS marks hidden / system.
+    pub fn sftp_local_show_hidden(&self) -> bool {
+        self.cache.sftp_local_show_hidden
+    }
+    pub fn set_sftp_local_show_hidden(&mut self, show: bool) {
+        self.cache.sftp_local_show_hidden = show;
+    }
+    /// Local pane sort column ("" = folders first, natural name order).
+    pub fn sftp_local_sort_key(&self) -> String {
+        let key = self.cache.sftp_local_sort_key.trim();
+        match key {
+            "name" | "size" | "modified" | "type" => key.to_string(),
+            _ => String::new(),
+        }
+    }
+    pub fn set_sftp_local_sort_key(&mut self, key: &str) {
+        self.cache.sftp_local_sort_key = match key.trim() {
+            "name" | "size" | "modified" | "type" => key.trim().to_string(),
+            _ => String::new(),
+        };
+        if self.cache.sftp_local_sort_key.is_empty() {
+            self.cache.sftp_local_sort_dir = 0;
+        }
+    }
+    /// 0 = default order, 1 = ascending, -1 = descending.
+    pub fn sftp_local_sort_dir(&self) -> i32 {
+        if self.sftp_local_sort_key().is_empty() {
+            0
+        } else {
+            self.cache.sftp_local_sort_dir.clamp(-1, 1)
+        }
+    }
+    pub fn set_sftp_local_sort_dir(&mut self, dir: i32) {
+        self.cache.sftp_local_sort_dir = dir.clamp(-1, 1);
+    }    /// Edit the local places; empty entries are dropped so the config only
     /// carries a `local_places` object when something is actually saved.
     pub fn update_local_places<R>(
         &mut self,
@@ -2269,8 +2303,7 @@ mod tests {
     }
 
     #[test]
-    fn local_places_are_machine_wide_and_validated() {
-        let mut store = temp_store();
+    fn local_places_are_machine_wide_and_validated() {        let mut store = temp_store();
         store.cache = serde_json::from_str("{}").unwrap();
         assert!(store.local_places().is_empty());
 
@@ -2298,6 +2331,41 @@ mod tests {
         assert!(!serde_json::to_string(&store.cache)
             .unwrap()
             .contains("local_places"));
+    }
+
+    #[test]
+    fn local_list_options_round_trip_and_validate() {
+        let mut store = temp_store();
+        store.cache = serde_json::from_str("{}").unwrap();
+        // Defaults: hidden entries stay hidden, folders first by name.
+        assert!(!store.sftp_local_show_hidden());
+        assert_eq!(store.sftp_local_sort_key(), "");
+        assert_eq!(store.sftp_local_sort_dir(), 0);
+
+        store.set_sftp_local_show_hidden(true);
+        store.set_sftp_local_sort_key("modified");
+        store.set_sftp_local_sort_dir(-1);
+        assert!(store.sftp_local_show_hidden());
+        assert_eq!(store.sftp_local_sort_key(), "modified");
+        assert_eq!(store.sftp_local_sort_dir(), -1);
+
+        // Unknown columns fall back to the default order, and a cleared column
+        // clears the direction too.
+        store.set_sftp_local_sort_key("permissions");
+        assert_eq!(store.sftp_local_sort_key(), "");
+        assert_eq!(store.sftp_local_sort_dir(), 0);
+        store.set_sftp_local_sort_dir(5);
+        assert_eq!(store.sftp_local_sort_dir(), 0);
+
+        store.set_sftp_local_sort_key("size");
+        store.set_sftp_local_sort_dir(7);
+        assert_eq!(store.sftp_local_sort_dir(), 1);
+
+        let json = serde_json::to_string(&store.cache).unwrap();
+        let back: ConfigFile = serde_json::from_str(&json).unwrap();
+        assert!(back.sftp_local_show_hidden);
+        assert_eq!(back.sftp_local_sort_key, "size");
+        assert_eq!(back.sftp_local_sort_dir, 1);
     }
 
     #[test]

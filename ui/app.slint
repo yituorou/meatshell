@@ -719,6 +719,10 @@ export component AppWindow inherits Window {
     // Local folder bookmarks + recently opened folders, machine-wide (#532).
     in-out property <[string]> local-bookmarks;
     in-out property <[string]> local-recent;
+    // Local pane display options (#532 follow-up): hidden files, sort column.
+    in-out property <bool> sftp-local-show-hidden: false;
+    in-out property <string> sftp-local-sort-key;
+    in-out property <int> sftp-local-sort-dir: 0;
     callback pick-download-dir();            // open a folder picker
     callback open-download-dir();            // reveal the folder in the OS
     callback clear-transfers();              // wipe the transfer history
@@ -1159,6 +1163,13 @@ export component AppWindow inherits Window {
     callback sftp-local-clear-recent(string /* tab-id */);
     callback sftp-local-sort-request(string /* tab-id */, string /* key */, int /* dir */);
     pure callback sftp-entry-matches(string /* name */, string /* file-type */, string /* query */) -> bool;
+    // Local list options (#532 follow-up).
+    callback sftp-local-toggle-hidden(string /* tab-id */);
+    callback sftp-local-sort(string /* tab-id */, string /* column */);
+    callback sftp-local-set-filter(string /* tab-id */, string /* text */);
+    callback sftp-local-remove-recent(string /* tab-id */, string /* path */);
+    callback sftp-local-move-bookmark(string /* tab-id */, string /* path */, int /* delta */);
+    callback sftp-local-reveal(string /* tab-id */);
 
     // Visual chmod dialog (#84). Rust decomposes the current mode into nine
     // bools when opening and recomposes on apply (Slint has no bitwise ops).
@@ -2287,6 +2298,10 @@ export component AppWindow inherits Window {
                         sftp-local-bookmarks: term.sftp-local-bookmarks;
                         sftp-local-recent: term.sftp-local-recent;
                         sftp-local-bookmarked: term.sftp-local-bookmarked;
+                        sftp-local-show-hidden: term.sftp-local-show-hidden;
+                        sftp-local-sort-key: term.sftp-local-sort-key;
+                        sftp-local-sort-dir: term.sftp-local-sort-dir;
+                        sftp-local-filter: term.sftp-local-filter;
                         sftp-local-split: root.sftp-local-split;
                         persist-sftp-local-pane-width(v) => {
                             root.persist-sftp-local-pane-width(term.id, v);
@@ -2299,6 +2314,24 @@ export component AppWindow inherits Window {
                         }
                         sftp-local-clear-recent() => {
                             root.sftp-local-clear-recent(term.id);
+                        }
+                        sftp-local-toggle-hidden() => {
+                            root.sftp-local-toggle-hidden(term.id);
+                        }
+                        sftp-local-sort(column) => {
+                            root.sftp-local-sort(term.id, column);
+                        }
+                        sftp-local-set-filter(text) => {
+                            root.sftp-local-set-filter(term.id, text);
+                        }
+                        sftp-local-remove-recent(path) => {
+                            root.sftp-local-remove-recent(term.id, path);
+                        }
+                        sftp-local-move-bookmark(path, delta) => {
+                            root.sftp-local-move-bookmark(term.id, path, delta);
+                        }
+                        sftp-local-reveal() => {
+                            root.sftp-local-reveal(term.id);
                         }
                         persist-sftp-split(v) => { root.persist-sftp-split(v); }
                         persist-sftp-local-split(v) => { root.persist-sftp-local-split(v); }

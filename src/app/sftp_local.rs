@@ -20,6 +20,53 @@ use std::path::{Component, Path, PathBuf};
 /// Slint list materialises every row, so cap what one directory shows.
 pub(super) const MAX_LOCAL_ENTRIES: usize = 5_000;
 
+/// How the local pane lists a folder (mirrors the remote list's knobs).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ListOptions {
+    /// Show entries the OS marks hidden / system (dotfiles on Unix).
+    pub show_hidden: bool,
+    /// Sort column: "" = folders first, then natural name order.
+    pub sort_key: String,
+    /// 0 = default order, 1 = ascending, -1 = descending.
+    pub sort_dir: i32,
+}
+
+/// The OS's idea of "hidden": the hidden/system attribute on Windows, a leading
+/// dot on Unix (where the listing already has the name).
+fn is_hidden(name: &str, path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let _ = name;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+        std::fs::symlink_metadata(path)
+            .map(|meta| {
+                let attributes = meta.file_attributes();
+                attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        name.starts_with('.')
+    }
+}
+
+/// Case-insensitive substring filter over the listing already in memory.
+pub(super) fn filter_entries(entries: &[SftpEntry], needle: &str) -> Vec<SftpEntry> {
+    let needle = needle.trim().to_lowercase();
+    if needle.is_empty() {
+        return entries.to_vec();
+    }
+    entries
+        .iter()
+        .filter(|entry| entry.name.to_lowercase().contains(&needle))
+        .cloned()
+        .collect()
+}
+
 /// One completed local directory read.
 #[derive(Debug, Default)]
 pub(super) struct LocalListing {
@@ -140,8 +187,9 @@ pub(super) fn same_dir(a: &str, b: &str) -> bool {
     normalize(a) == normalize(b)
 }
 
-/// Read one local directory into Slint rows (folders first, natural name order).
-pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
+/// Read one local directory into Slint rows, honouring `opts` (hidden files,
+/// sort column) and keeping folders first.
+pub(super) fn list_dir(dir: &Path, opts: &ListOptions) -> Result<LocalListing, String> {
     let read = std::fs::read_dir(dir).map_err(|e| {
         format!(
             "{} {}: {e}",
@@ -160,6 +208,9 @@ pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
         }
         let full = item.path();
         let name = item.file_name().to_string_lossy().to_string();
+        if !opts.show_hidden && is_hidden(&name, &full) {
+            continue;
+        }
         // `file_type` reports a symlink itself; `metadata` follows it, so a
         // link to a folder behaves like a folder when double-clicked.
         let is_link = item.file_type().map(|kind| kind.is_symlink()).unwrap_or(false);
@@ -196,7 +247,7 @@ pub(super) fn list_dir(dir: &Path) -> Result<LocalListing, String> {
             selected: false,
         });
     }
-    sort_sftp_entries(&mut entries, "", 0);
+    sort_sftp_entries(&mut entries, &opts.sort_key, opts.sort_dir);
     Ok(LocalListing {
         path: display_path(dir),
         entries,
@@ -233,12 +284,15 @@ fn publish_local_listing(
     } else {
         note.unwrap_or_default()
     };
-    let entries = ModelRc::from(Rc::new(VecModel::from(listing.entries)));
+    let all_entries = listing.entries;
+    let all = ModelRc::from(Rc::new(VecModel::from(all_entries.clone())));
     let shown = listing.path.clone();
     let bookmarked = bookmarked_in(&model_strings(&window.get_local_bookmarks()), &shown);
     update_terminal_row(model, tab_id, |row| {
+        let filtered = filter_entries(&all_entries, &row.sftp_local_filter.to_string());
         row.sftp_local_path = shown.clone().into();
-        row.sftp_local_entries = entries.clone();
+        row.sftp_local_entries = ModelRc::from(Rc::new(VecModel::from(filtered)));
+        row.sftp_local_all_entries = all.clone();
         row.sftp_local_loading = false;
         row.sftp_local_selected_count = 0;
         row.sftp_local_status = status.into();
@@ -249,6 +303,96 @@ fn publish_local_listing(
     window.set_sftp_last_local_dir(listing.path.into());
     // Most recent first, like the remote pane's history (#500).
     record_recent(window, &shown);
+}
+
+/// The listing options a tab currently wants (hidden files, sort column).
+pub(super) fn list_options(window: &AppWindow, tab_id: &str) -> ListOptions {
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return ListOptions::default();
+    };
+    for index in 0..model.row_count() {
+        let Some(row) = model.row_data(index) else {
+            continue;
+        };
+        if row.id.as_str() == tab_id {
+            return ListOptions {
+                show_hidden: row.sftp_local_show_hidden,
+                sort_key: row.sftp_local_sort_key.to_string(),
+                sort_dir: row.sftp_local_sort_dir,
+            };
+        }
+    }
+    ListOptions::default()
+}
+
+/// Click a local column header: ascending → descending → default order, exactly
+/// like the remote list.
+pub(super) fn sort_by(window: &AppWindow, tab_id: &str, key: &str) {
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return;
+    };
+    let mut chosen = (String::new(), 0);
+    update_terminal_row(model, tab_id, |row| {
+        let next_dir = if row.sftp_local_sort_key.as_str() != key || row.sftp_local_sort_dir == 0 {
+            1
+        } else if row.sftp_local_sort_dir > 0 {
+            -1
+        } else {
+            0
+        };
+        let next_key = if next_dir == 0 { String::new() } else { key.to_string() };
+        let mut entries: Vec<SftpEntry> = (0..row.sftp_local_all_entries.row_count())
+            .filter_map(|i| row.sftp_local_all_entries.row_data(i))
+            .collect();
+        sort_sftp_entries(&mut entries, &next_key, next_dir);
+        let filtered = filter_entries(&entries, &row.sftp_local_filter.to_string());
+        row.sftp_local_all_entries = ModelRc::from(Rc::new(VecModel::from(entries)));
+        row.sftp_local_entries = ModelRc::from(Rc::new(VecModel::from(filtered)));
+        row.sftp_local_sort_key = next_key.clone().into();
+        row.sftp_local_sort_dir = next_dir;
+        chosen = (next_key, next_dir);
+    });
+    // Remembered for new tabs / restarts.
+    window.set_sftp_local_sort_key(chosen.0.into());
+    window.set_sftp_local_sort_dir(chosen.1);
+}
+
+/// Toggle hidden / system entries and re-list the folder being shown.
+pub(super) fn toggle_hidden(window: &AppWindow, tab_id: &str) {
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return;
+    };
+    let mut show = false;
+    let mut dir = PathBuf::new();
+    update_terminal_row(model, tab_id, |row| {
+        show = !row.sftp_local_show_hidden;
+        row.sftp_local_show_hidden = show;
+        dir = PathBuf::from(row.sftp_local_path.to_string());
+    });
+    window.set_sftp_local_show_hidden(show);
+    if dir.as_os_str().is_empty() {
+        dir = home_dir();
+    }
+    load_dir(window, tab_id, dir);
+}
+
+/// Filter box edited: keep the full listing around and republish the matches.
+pub(super) fn set_filter(window: &AppWindow, tab_id: &str, text: &str) {
+    let terminals = window.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return;
+    };
+    update_terminal_row(model, tab_id, |row| {
+        let all: Vec<SftpEntry> = (0..row.sftp_local_all_entries.row_count())
+            .filter_map(|i| row.sftp_local_all_entries.row_data(i))
+            .collect();
+        let filtered = filter_entries(&all, text);
+        row.sftp_local_filter = text.to_string().into();
+        row.sftp_local_entries = ModelRc::from(Rc::new(VecModel::from(filtered)));
+    });
 }
 
 /// Read `dir` on a worker thread and publish it when it comes back.
@@ -278,8 +422,9 @@ pub(super) fn load_dir_with_status(
     }
     let weak = window.as_weak();
     let tab = tab_id.to_string();
+    let opts = list_options(window, tab_id);
     std::thread::spawn(move || {
-        let result = list_dir(&dir);
+        let result = list_dir(&dir, &opts);
         let _ = weak.upgrade_in_event_loop(move |window| match result {
             Ok(listing) => publish_local_listing(&window, &tab, listing, note),
             Err(message) => {
@@ -317,12 +462,13 @@ pub(super) fn load_dir_or_fallback(
     }
     let weak = window.as_weak();
     let tab = tab_id.to_string();
+    let opts = list_options(window, tab_id);
     std::thread::spawn(move || {
-        let (result, note) = match list_dir(&dir) {
+        let (result, note) = match list_dir(&dir, &opts) {
             Ok(listing) => (Ok(listing), None),
             Err(message) => {
                 if !same_dir(&display_path(&dir), &display_path(&fallback)) {
-                    match list_dir(&fallback) {
+                    match list_dir(&fallback, &opts) {
                         Ok(listing) => (
                             Ok(listing),
                             Some(format!(
@@ -624,6 +770,29 @@ pub(super) fn clear_recent(window: &AppWindow) {
     let mut places = places_from(window);
     places.clear_recent();
     write_places(window, &places);
+}
+
+/// Drop one folder from the recent list.
+pub(super) fn remove_recent(window: &AppWindow, path: &str) {
+    let mut places = places_from(window);
+    places.remove_recent(path);
+    write_places(window, &places);
+}
+
+/// Move a bookmark up (-1) or down (+1) in the places menu.
+pub(super) fn move_bookmark(window: &AppWindow, path: &str, delta: i32) {
+    let mut places = places_from(window);
+    if places.move_bookmark(path, delta) {
+        write_places(window, &places);
+    }
+}
+
+/// Show the folder the pane is showing in the OS file manager.
+pub(super) fn reveal_current(window: &AppWindow, tab_id: &str) {
+    let path = current_path(window, tab_id);
+    if !path.is_empty() {
+        crate::sftp::open_with_os(&path);
+    }
 }
 
 /// Record a folder at the top of the recent list (called when a listing lands).

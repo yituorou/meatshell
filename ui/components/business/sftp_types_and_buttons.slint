@@ -204,10 +204,14 @@ export component SftpPlaceRow inherits Rectangle {
     in property <string> icon;
     in property <bool> current;      // the folder the panel is showing
     in property <bool> removable;
+    // Reorderable (bookmarks): hover shows ↑ / ↓ next to the remove button.
+    in property <bool> movable: false;
     // Optional friendly name; falls back to the path when empty (remote rows).
     in property <string> label: "";
     callback go();
     callback remove();
+    callback move-up();
+    callback move-down();
     height: 28px;
     border-radius: 6px;
     background: root.current
@@ -235,6 +239,42 @@ export component SftpPlaceRow inherits Rectangle {
             font-weight: root.current ? 600 : 400;
             overflow: elide;
             vertical-alignment: center;
+        }
+        if root.movable && row-ta.has-hover : Rectangle {
+            width: 18px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: up-ta.has-hover ? Theme.bg-active : transparent;
+            up-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.move-up(); }
+            }
+            Text {
+                text: "↑";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        if root.movable && row-ta.has-hover : Rectangle {
+            width: 18px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 4px;
+            background: down-ta.has-hover ? Theme.bg-active : transparent;
+            down-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.move-down(); }
+            }
+            Text {
+                text: "↓";
+                color: Theme.text-secondary;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
         if root.removable && row-ta.has-hover : Rectangle {
             width: 20px;

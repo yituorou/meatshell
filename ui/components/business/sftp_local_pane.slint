@@ -18,6 +18,9 @@ export component LocalPane inherits Rectangle {
     in property <[string]> recent;
     in property <bool> bookmarked: false;
     in-out property <bool> show-hidden: false;
+    in-out property <string> sort-key: "name";
+    in-out property <int> sort-dir: 1;
+    in-out property <string> filter: "";
     in-out property <bool> sub-open: false;
 
     callback navigate(string);      // "..", "~" or a typed path
@@ -27,7 +30,13 @@ export component LocalPane inherits Rectangle {
     callback places-refresh();      // re-read drives / user folders
     callback toggle-bookmark();
     callback remove-bookmark(string);
+    callback remove-recent(string);
+    callback move-bookmark(string, int);
     callback clear-recent();
+    callback toggle-hidden();
+    callback sort(string);          // column clicked
+    callback set-filter(string);
+    callback reveal();
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
@@ -49,9 +58,8 @@ export component LocalPane inherits Rectangle {
     property <length> menu-y;
     property <string> menu-target;
     property <bool> menu-target-is-dir;
-    property <string> filter-text: "";
-    property <string> sort-key: "name";
-    property <int> sort-dir: 1;
+    property <string> effective-sort-key: root.sort-key == "" ? "name" : root.sort-key;
+    property <int> effective-sort-dir: root.sort-dir == 0 ? 1 : root.sort-dir;
     // Responsive columns for LocalPane: Name, Size, Type, Modified
     property <bool> show-size: root.width > 240px;
     property <bool> show-type: root.width > 340px;
@@ -59,12 +67,14 @@ export component LocalPane inherits Rectangle {
 
     // Exclusive single-column sorting: strictly toggles between ascending (1) and descending (-1).
     function trigger-sort(key: string) {
-        if (root.sort-key == key) {
-            root.sort-dir = root.sort-dir > 0 ? -1 : 1;
+        if (root.effective-sort-key == key) {
+            root.sort-dir = root.effective-sort-dir > 0 ? -1 : 1;
+            root.sort-key = key;
         } else {
             root.sort-key = key;
             root.sort-dir = 1;
         }
+        root.sort(key);
         root.sort-request(root.sort-key, root.sort-dir);
     }
 
@@ -211,7 +221,10 @@ export component LocalPane inherits Rectangle {
                     toggle-bookmark => { root.toggle-bookmark(); }
                     navigate(path) => { root.navigate(path); }
                     remove-bookmark(path) => { root.remove-bookmark(path); }
+                    remove-recent(path) => { root.remove-recent(path); }
+                    move-bookmark(path, delta) => { root.move-bookmark(path, delta); }
                     clear-recent() => { root.clear-recent(); }
+                    reveal() => { root.reveal(); }
                 }
             }
         }
@@ -235,26 +248,27 @@ export component LocalPane inherits Rectangle {
                     border-radius: 6px;
                     background: Theme.bg-root;
                     border-width: 1px;
-                    border-color: local-filter-input.has-focus || root.filter-text != "" ? Theme.accent : Theme.border-subtle;
+                    border-color: local-filter-input.has-focus || root.filter != "" ? Theme.accent : Theme.border-subtle;
                     OutlineIcon {
                         x: 6px;
                         y: (parent.height - self.height) / 2;
                         name: "search";
                         icon-size: 13px * Theme.ui-scale;
-                        color: root.filter-text != "" ? Theme.accent : Theme.text-muted;
+                        color: root.filter != "" ? Theme.accent : Theme.text-muted;
                     }
                     local-filter-input := TextInput {
                         x: 22px;
-                        width: max(20px, parent.width - (root.filter-text != "" ? 42px : 26px));
+                        width: max(20px, parent.width - (root.filter != "" ? 42px : 26px));
                         height: parent.height;
-                        text <=> root.filter-text;
+                        text <=> root.filter;
                         color: Theme.text-primary;
                         font-family: Theme.ui-font-family;
                         font-size: Theme.fs-xs;
                         vertical-alignment: center;
                         single-line: true;
+                        edited => { root.set-filter(self.text); }
                     }
-                    if root.filter-text == "" && !local-filter-input.has-focus : Text {
+                    if root.filter == "" && !local-filter-input.has-focus : Text {
                         x: 22px;
                         width: max(0px, parent.width - 26px);
                         height: parent.height;
@@ -264,7 +278,7 @@ export component LocalPane inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                     }
-                    if root.filter-text != "" : Rectangle {
+                    if root.filter != "" : Rectangle {
                         x: parent.width - 20px;
                         y: (parent.height - self.height) / 2;
                         width: 16px;
@@ -273,7 +287,10 @@ export component LocalPane inherits Rectangle {
                         background: lclr-ta.has-hover ? Theme.bg-hover : transparent;
                         lclr-ta := TouchArea {
                             mouse-cursor: pointer;
-                            clicked => { root.filter-text = ""; }
+                            clicked => {
+                                root.filter = "";
+                                root.set-filter("");
+                            }
                         }
                         OutlineIcon {
                             x: (parent.width - self.width) / 2;
@@ -291,7 +308,10 @@ export component LocalPane inherits Rectangle {
                     icon: root.show-hidden ? "eye" : "eye-off";
                     active: root.show-hidden;
                     tooltip: root.show-hidden ? @tr("Hide hidden files (.*)") : @tr("Show hidden files (.*)");
-                    clicked => { root.show-hidden = !root.show-hidden; }
+                    clicked => {
+                        root.show-hidden = !root.show-hidden;
+                        root.toggle-hidden();
+                    }
                 }
 
                 SftpIconBtn {
@@ -361,10 +381,10 @@ export component LocalPane inherits Rectangle {
                         }
                     }
                     Text {
-                        text: @tr("Name") + (root.sort-key == "name" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
-                        color: root.sort-key == "name" ? Theme.accent : (lname-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        text: @tr("Name") + (root.effective-sort-key == "name" ? (root.effective-sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.effective-sort-key == "name" ? Theme.accent : (lname-ta.has-hover ? Theme.text-primary : Theme.text-muted);
                         font-size: Theme.fs-xs;
-                        font-weight: root.sort-key == "name" ? 600 : 500;
+                        font-weight: root.effective-sort-key == "name" ? 600 : 500;
                         width: parent.width;
                         horizontal-alignment: left;
                         vertical-alignment: center;
@@ -389,10 +409,10 @@ export component LocalPane inherits Rectangle {
                         }
                     }
                     Text {
-                        text: @tr("Size") + (root.sort-key == "size" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
-                        color: root.sort-key == "size" ? Theme.accent : (lsize-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        text: @tr("Size") + (root.effective-sort-key == "size" ? (root.effective-sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.effective-sort-key == "size" ? Theme.accent : (lsize-ta.has-hover ? Theme.text-primary : Theme.text-muted);
                         font-size: Theme.fs-xs;
-                        font-weight: root.sort-key == "size" ? 600 : 500;
+                        font-weight: root.effective-sort-key == "size" ? 600 : 500;
                         width: parent.width;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -417,10 +437,10 @@ export component LocalPane inherits Rectangle {
                         }
                     }
                     Text {
-                        text: @tr("Type") + (root.sort-key == "type" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
-                        color: root.sort-key == "type" ? Theme.accent : (ltype-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        text: @tr("Type") + (root.effective-sort-key == "type" ? (root.effective-sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.effective-sort-key == "type" ? Theme.accent : (ltype-ta.has-hover ? Theme.text-primary : Theme.text-muted);
                         font-size: Theme.fs-xs;
-                        font-weight: root.sort-key == "type" ? 600 : 500;
+                        font-weight: root.effective-sort-key == "type" ? 600 : 500;
                         width: parent.width;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -445,10 +465,10 @@ export component LocalPane inherits Rectangle {
                         }
                     }
                     Text {
-                        text: @tr("Modified") + (root.sort-key == "modified" ? (root.sort-dir > 0 ? " ↑" : " ↓") : " ↕");
-                        color: root.sort-key == "modified" ? Theme.accent : (lmod-ta.has-hover ? Theme.text-primary : Theme.text-muted);
+                        text: @tr("Modified") + (root.effective-sort-key == "modified" ? (root.effective-sort-dir > 0 ? " ↑" : " ↓") : " ↕");
+                        color: root.effective-sort-key == "modified" ? Theme.accent : (lmod-ta.has-hover ? Theme.text-primary : Theme.text-muted);
                         font-size: Theme.fs-xs;
-                        font-weight: root.sort-key == "modified" ? 600 : 500;
+                        font-weight: root.effective-sort-key == "modified" ? 600 : 500;
                         width: parent.width;
                         horizontal-alignment: right;
                         vertical-alignment: center;
@@ -483,7 +503,7 @@ export component LocalPane inherits Rectangle {
                     }
 
                     for entry[i] in root.entries : lrow := Rectangle {
-                        property <bool> matched: !root.entry-matches("a", "", "") ? true : root.entry-matches(entry.name, entry.file-type, (root.show-hidden ? "" : "__hide_dot__:") + root.filter-text);
+                        property <bool> matched: !root.entry-matches("a", "", "") ? true : root.entry-matches(entry.name, entry.file-type, (root.show-hidden ? "" : "__hide_dot__:") + root.filter);
                         visible: self.matched;
                         height: self.matched ? 32px : 0px;
                         background: entry.selected

@@ -26,6 +26,10 @@ pub(super) fn save_layout(
     s.set_sftp_split_enabled(win.get_sftp_split_enabled());
     s.set_sftp_local_split(win.get_sftp_local_split());
     s.set_sftp_local_dir(&win.get_sftp_last_local_dir());
+    // Local list options (#532 follow-up).
+    s.set_sftp_local_show_hidden(win.get_sftp_local_show_hidden());
+    s.set_sftp_local_sort_key(&win.get_sftp_local_sort_key());
+    s.set_sftp_local_sort_dir(win.get_sftp_local_sort_dir());
     // Local bookmarks / recent folders (#532); the Slint models are the live
     // copy, the config only needs them on close.
     let places = crate::config::LocalPlaces {

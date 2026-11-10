@@ -168,7 +168,10 @@ export component LocalPlacesButton inherits Rectangle {
     callback toggle-bookmark();
     callback navigate(string);
     callback remove-bookmark(string);
+    callback remove-recent(string);
+    callback move-bookmark(string, int);
     callback clear-recent();
+    callback reveal();
     property <length> rows-h:
         34px
         + 22px + max(1, root.bookmarks.length) * 29px
@@ -176,7 +179,8 @@ export component LocalPlacesButton inherits Rectangle {
         + 22px + (root.quick-places.length + root.drive-places.length) * 29px
         + 8px
         + 22px + max(1, root.recent.length) * 29px
-        + (root.recent.length > 0 ? 29px : 0px);
+        + (root.recent.length > 0 ? 29px : 0px)
+        + 29px;
     property <length> menu-h: min(390px, root.rows-h + 16px);
     in property <length> pane-height: 0px;
     property <string> tip: @tr("Local bookmarks & common folders");
@@ -272,8 +276,11 @@ export component LocalPlacesButton inherits Rectangle {
                         icon: "star";
                         current: b == root.current-path;
                         removable: true;
+                        movable: true;
                         go => { root.navigate(b); }
                         remove => { root.remove-bookmark(b); }
+                        move-up => { root.move-bookmark(b, -1); }
+                        move-down => { root.move-bookmark(b, 1); }
                     }
                     if root.quick-places.length > 0 || root.drive-places.length > 0 : Rectangle {
                         height: 8px;
@@ -316,13 +323,21 @@ export component LocalPlacesButton inherits Rectangle {
                         path: r;
                         icon: "history";
                         current: r == root.current-path;
+                        removable: true;
                         go => { root.navigate(r); }
+                        remove => { root.remove-recent(r); }
                     }
                     if root.recent.length > 0 : SftpMenuItem {
                         label: @tr("Clear recent");
                         icon: "trash";
                         tint: Theme.text-secondary;
                         clicked => { root.clear-recent(); }
+                    }
+                    SftpMenuItem {
+                        label: @tr("Open in file manager");
+                        icon: "folder";
+                        tint: Theme.text-secondary;
+                        clicked => { root.reveal(); }
                     }
                 }
             }

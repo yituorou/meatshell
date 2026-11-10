@@ -1215,3 +1215,9 @@ msgstr "展开/收起 SFTP 文件管理面板"
 
 msgid "Switch monitored network interface"
 msgstr "切换监控网卡接口"
+
+msgid "Filter names"
+msgstr "筛选名称"
+
+msgid "Open in file manager"
+msgstr "打开所在文件夹"

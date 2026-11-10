@@ -129,6 +129,33 @@ impl LocalPlaces {
         self.bookmarks.retain(|entry| place_key(entry) != key);
     }
 
+    /// Move a bookmark by `delta` (-1 = up, +1 = down); returns whether it moved
+    /// (the first/last entry cannot move further).
+    pub fn move_bookmark(&mut self, path: &str, delta: i32) -> bool {
+        let Some(path) = normalize_local_path(path) else {
+            return false;
+        };
+        let key = place_key(&path);
+        let Some(index) = self.bookmarks.iter().position(|entry| place_key(entry) == key) else {
+            return false;
+        };
+        let target = index as i64 + delta as i64;
+        if target < 0 || target >= self.bookmarks.len() as i64 {
+            return false;
+        }
+        self.bookmarks.swap(index, target as usize);
+        true
+    }
+
+    /// Drop one folder from the recent list (the menu's hover ×).
+    pub fn remove_recent(&mut self, path: &str) {
+        let Some(path) = normalize_local_path(path) else {
+            return;
+        };
+        let key = place_key(&path);
+        self.recent.retain(|entry| place_key(entry) != key);
+    }
+
     pub fn clear_recent(&mut self) {
         self.recent.clear();
     }
@@ -227,5 +254,44 @@ mod tests {
             recent: vec![windows_path()],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn bookmarks_move_by_one_and_stop_at_the_edges() {
+        let mut places = LocalPlaces::default();
+        for name in ["a", "b", "c"] {
+            places.toggle_bookmark(&format!("{}/{}", windows_path(), name));
+        }
+        let names = |places: &LocalPlaces| -> Vec<String> {
+            places
+                .bookmarks
+                .iter()
+                .map(|path| path.rsplit(['/', '\\']).next().unwrap_or(path).to_string())
+                .collect()
+        };
+        // Newest first: c, b, a.
+        assert_eq!(names(&places), ["c", "b", "a"]);
+        assert!(places.move_bookmark(&format!("{}/b", windows_path()), -1));
+        assert_eq!(names(&places), ["b", "c", "a"]);
+        assert!(places.move_bookmark(&format!("{}/b", windows_path()), 1));
+        assert_eq!(names(&places), ["c", "b", "a"]);
+        // The first and the last entry cannot move out of the list.
+        assert!(!places.move_bookmark(&format!("{}/c", windows_path()), -1));
+        assert!(!places.move_bookmark(&format!("{}/a", windows_path()), 1));
+        assert!(!places.move_bookmark(&format!("{}/nope", windows_path()), 1));
+    }
+
+    #[test]
+    fn recent_entries_can_be_removed_one_by_one() {
+        let mut places = LocalPlaces::default();
+        places.record_visit(&format!("{}/a", windows_path()));
+        places.record_visit(&format!("{}/b", windows_path()));
+        assert_eq!(places.recent.len(), 2);
+        places.remove_recent(&format!("{}/a", windows_path()));
+        assert_eq!(places.recent.len(), 1);
+        assert!(places.recent[0].ends_with('b'));
+        // Removing something that is not there is a no-op.
+        places.remove_recent(&format!("{}/a", windows_path()));
+        assert_eq!(places.recent.len(), 1);
     }
 }

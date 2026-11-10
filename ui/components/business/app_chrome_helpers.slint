@@ -52,6 +52,11 @@ export struct TerminalState {
     sftp-local-bookmarks: [string],
     sftp-local-recent: [string],
     sftp-local-bookmarked: bool,
+    sftp-local-show-hidden: bool,
+    sftp-local-sort-key: string,
+    sftp-local-sort-dir: int,
+    sftp-local-filter: string,
+    sftp-local-all-entries: [SftpEntry],
     font-size: int,             // per-session zoom override in px (0 = follow window)
     tunnels: [TunnelInfo],      // runtime SSH tunnels (#206)
     sftp-collapsed: bool,       // SFTP panel minimised — per session (#v0.5)
