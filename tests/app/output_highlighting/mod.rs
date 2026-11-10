@@ -74,7 +74,7 @@ fn preserves_existing_ansi_styles() {
 
 #[test]
 fn alternate_screen_does_not_add_log_colours() {
-    let mut parser = vt100::Parser::new(3, 30, 0);
+    let mut parser = crate::terminal::vt_parser(3, 30, 0);
     parser.process(b"\x1b[?1049hERROR");
     assert!(parser.screen().alternate_screen());
     let (_plain, runs, _wrapped) = build_row(parser.screen(), 0, 30);

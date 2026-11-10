@@ -1,3 +1,4 @@
+use crate::terminal::ScreenDims as _;
 use super::*;
 
 pub(super) fn history_model(store: &ConfigStore) -> ModelRc<SharedString> {
@@ -170,13 +171,13 @@ pub(super) fn apply_terminal_resize(
     }
     if let Some(h) = term_buf(bufs, tab_id) {
         let mut buf = h.lock().unwrap();
-        let (old_rows, old_cols) = buf.parser.screen().size();
+        let (old_rows, old_cols) = buf.parser.screen().dims();
         let (new_rows, new_cols) = (rows as u16, cols as u16);
         if (new_rows, new_cols) != (old_rows, old_cols) {
             if buf.parser.screen().alternate_screen() {
                 // Alt-screen (tmux/vim/btop): the remote redraws the whole screen
                 // on SIGWINCH, so just resize the grid and let that redraw fill it.
-                buf.parser.screen_mut().set_size(new_rows, new_cols);
+                buf.parser.screen_mut().set_dims(new_rows, new_cols);
             } else {
                 // Reflow already-printed output to the new width by replaying the
                 // byte stream — vt100's set_size only truncates/pads (#169).
@@ -194,7 +195,7 @@ pub(super) fn apply_terminal_resize(
 /// Used by scroll + selection callbacks (Output has its own equivalent inline).
 pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &str) {
     let data = with_term_buf(bufs, tab_id, |buf| {
-        let cols = buf.parser.screen().size().1;
+        let cols = buf.parser.screen().dims().1;
         let b = buf.render(); // also refreshes buf.displayed_text
         let matches = compute_find_matches(&buf.displayed_text, &buf.find_query);
         let sel = buf.selection_rects_visible(cols);
@@ -368,7 +369,7 @@ fn plan_span_slots(old: &[TermSpan], spans: Vec<TermSpan>) -> Vec<TermSpan> {
 /// all terminal spans even though the underlying screen had not changed.
 pub(super) fn refresh_terminal_selection(win: &AppWindow, bufs: &TermBuffers, tab_id: &str) {
     let selection = with_term_buf(bufs, tab_id, |buf| {
-        let cols = buf.parser.screen().size().1;
+        let cols = buf.parser.screen().dims().1;
         buf.selection_rects_visible(cols)
     });
     let Some(selection) = selection else {

@@ -1,5 +1,6 @@
 //! Keyboard input routing from the terminal view to the PTY.
 
+use crate::terminal::ScreenDims as _;
 use super::*;
 
 pub(super) fn wire_key_input(
@@ -446,7 +447,7 @@ pub(super) fn wire_key_input(
                                 b.ingest("\x1b[?1049l".to_string().as_bytes());
                             }
 
-                            let (rows, cols) = b.parser.screen().size();
+                            let (rows, cols) = b.parser.screen().dims();
                             let cursor_row = b.parser.screen().cursor_position().0;
 
                             let curr: Vec<crate::terminal::Line> = {
@@ -470,7 +471,7 @@ pub(super) fn wire_key_input(
                             b.charset = crate::terminal::CharsetTracker::default();
                             b.mouse_tracked = false;
 
-                            b.parser = vt100::Parser::new(rows, cols, 5000);
+                            b.parser = crate::terminal::vt_parser(rows, cols, 5000);
 
                             if let Some(log) = b.session_log.as_mut() {
                                 log.note("reconnecting");
@@ -502,7 +503,7 @@ pub(super) fn wire_key_input(
                 // Typing snaps the view back to the live bottom so the
                 // user always sees what they're entering.
                 let cursor_row = b.parser.screen().cursor_position().0 as usize + b.view_offset;
-                let rows = b.parser.screen().size().0 as usize;
+                let rows = b.parser.screen().dims().0 as usize;
                 if cursor_row >= rows {
                     b.view_offset = 0;
                 }
@@ -1162,7 +1163,7 @@ pub(super) fn wire_key_input(
                 let screen = buf.parser.screen();
                 if screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None {
                     // 1-based cell under the cursor, clamped to the screen.
-                    let (rows, cols) = screen.size();
+                    let (rows, cols) = screen.dims();
                     let c = (col.clamp(0, cols.saturating_sub(1) as i32) as u16) + 1;
                     let r = (row.clamp(0, rows.saturating_sub(1) as i32) as u16) + 1;
                     let btn: u16 = if dir > 0 { 64 } else { 65 }; // wheel up / down
@@ -1228,7 +1229,7 @@ pub(super) fn wire_key_input(
             move |tab_id: SharedString, row: i32, col: i32, ctrl: bool, shift: bool| {
                 let tid = tab_id.to_string();
                 with_term_buf(&bufs_sel, &tid, |buf| {
-                    let (rows, cols) = buf.parser.screen().size();
+                    let (rows, cols) = buf.parser.screen().dims();
                     let r = row.clamp(0, rows.saturating_sub(1) as i32) as u16;
                     let c = col.clamp(0, cols.saturating_sub(1) as i32) as u16;
                     // Anchor + focus in absolute scrollback coordinates.
@@ -1261,7 +1262,7 @@ pub(super) fn wire_key_input(
         window.on_term_select_update(move |tab_id: SharedString, row: i32, col: i32| {
             let tid = tab_id.to_string();
             with_term_buf(&bufs_sel, &tid, |buf| {
-                let (rows, cols) = buf.parser.screen().size();
+                let (rows, cols) = buf.parser.screen().dims();
                 let r = row.clamp(0, rows.saturating_sub(1) as i32) as u16;
                 let c = col.clamp(0, cols.saturating_sub(1) as i32) as u16;
                 if buf.sel_anchor.is_some() {
@@ -1342,7 +1343,7 @@ pub(super) fn wire_key_input(
         window.on_term_select_word(move |tab_id: SharedString, row: i32, col: i32| {
             let tid = tab_id.to_string();
             let text = with_term_buf(&bufs_sel, &tid, |buf| {
-                let (rows, cols) = buf.parser.screen().size();
+                let (rows, cols) = buf.parser.screen().dims();
                 let row = row.clamp(0, rows.saturating_sub(1) as i32) as u16;
                 let col = col.clamp(0, cols.saturating_sub(1) as i32) as u16;
                 buf.select_word_at(row, col)
@@ -1377,7 +1378,7 @@ pub(super) fn wire_key_input(
                 if buf.sel_anchor.is_none() {
                     return;
                 }
-                let rows = buf.parser.screen().size().0;
+                let rows = buf.parser.screen().dims().0;
                 let last = rows.saturating_sub(1);
                 let max_off = buf.history.len();
                 let step = 2usize;
@@ -1429,7 +1430,7 @@ pub(super) fn wire_key_input(
                 let Some(bytes) = term_buf(&bufs_mouse, &tid).map(|h| {
                     let buf = h.lock().unwrap();
                     let screen = buf.parser.screen();
-                    let (rows, cols) = screen.size();
+                    let (rows, cols) = screen.dims();
                     if buf.mouse_tracked {
                         let encoding = screen.mouse_protocol_encoding();
                         let (btn, release) = match kind {

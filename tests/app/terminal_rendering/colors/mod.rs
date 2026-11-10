@@ -12,7 +12,7 @@ fn inverse_default_colours_paint_a_visible_background() {
     assert_eq!(fg.as_argb_encoded(), 0xff0e0f13);
     assert_eq!(bg.as_argb_encoded(), 0xffd4d4d4);
 
-    let mut parser = vt100::Parser::new(3, 30, 0);
+    let mut parser = crate::terminal::vt_parser(3, 30, 0);
     parser.process(b"abc \x1b[7m20260705\x1b[27m end");
     let (_plain, runs, _wrapped) = build_row(parser.screen(), 0, 30);
     let hit = runs
@@ -28,7 +28,7 @@ fn inverse_default_colours_paint_a_visible_background() {
 fn underlined_blanks_are_kept_as_visible_spans() {
     // #444: `printf '\033[4m \033[0m'` must still draw an underline, and
     // input fields drawn as underlined spaces must survive row building.
-    let mut parser = vt100::Parser::new(3, 30, 0);
+    let mut parser = crate::terminal::vt_parser(3, 30, 0);
     parser.process(b"\x1b[4m \x1b[0m\r\nName: \x1b[4m          \x1b[24m!");
 
     let (_plain, runs, _wrapped) = build_row(parser.screen(), 0, 30);
@@ -59,7 +59,7 @@ fn underlined_blanks_are_kept_as_visible_spans() {
 
 #[test]
 fn plain_default_blanks_still_produce_no_span() {
-    let mut parser = vt100::Parser::new(3, 30, 0);
+    let mut parser = crate::terminal::vt_parser(3, 30, 0);
     parser.process(b"a    b");
     let (_plain, runs, _wrapped) = build_row(parser.screen(), 0, 30);
     assert!(runs.iter().all(|span| !span.underline));

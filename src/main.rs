@@ -185,6 +185,41 @@ fn init_tracing() {
         .with(stderr_layer)
         .with(file_layer)
         .init();
+
+    install_panic_logger();
+}
+
+/// Release builds use `panic = "abort"` and run without a console, so a panic
+/// used to kill the app without a trace: the default hook only prints to
+/// stderr (#544). Log the message, location and thread to `error.log` first,
+/// then fall through to the default hook. The file writer is unbuffered, so the
+/// line is on disk before the process aborts.
+fn install_panic_logger() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".to_string());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let thread = std::thread::current();
+        let thread = thread.name().unwrap_or("<unnamed>");
+        let version = env!("CARGO_PKG_VERSION");
+        // Symbols are stripped in release, so a backtrace there is just raw
+        // addresses; only spend the lines on it in debug builds.
+        if cfg!(debug_assertions) {
+            let bt = std::backtrace::Backtrace::force_capture();
+            tracing::error!(%location, thread, version, "panic: {msg}\n{bt}");
+        } else {
+            tracing::error!(%location, thread, version, "panic: {msg}");
+        }
+        default_hook(info);
+    }));
 }
 
 #[cfg(test)]

@@ -67,3 +67,33 @@ pub(crate) use state::{
     BuiltScreen, CompiledOutputRule, CsiState, HistLine, HistSpan, Line, OutputHighlightPreset,
     RenderGates, TabRenderGate, TermBuffer, TermBufferHandle, TermBuffers,
 };
+
+/// vt100 0.18 takes/returns `NonZeroU16` sizes. These helpers keep the rest of
+/// the code on plain `u16` (rows/cols are always floored >= 1 by the UI, and a
+/// stray 0 is clamped to 1 rather than panicking).
+pub(crate) fn vt_nz(v: u16) -> std::num::NonZeroU16 {
+    std::num::NonZeroU16::new(v).unwrap_or(std::num::NonZeroU16::MIN)
+}
+
+/// `vt100::Parser::new` with plain `u16` rows/cols.
+pub(crate) fn vt_parser(rows: u16, cols: u16, scrollback: usize) -> vt100::Parser {
+    vt100::Parser::new(vt_nz(rows), vt_nz(cols), scrollback)
+}
+
+/// Plain-`u16` size accessors for `vt100::Screen`.
+pub(crate) trait ScreenDims {
+    /// `(rows, cols)` as plain `u16`.
+    fn dims(&self) -> (u16, u16);
+    /// Resize the grid; 0 is clamped to 1.
+    fn set_dims(&mut self, rows: u16, cols: u16);
+}
+
+impl ScreenDims for vt100::Screen {
+    fn dims(&self) -> (u16, u16) {
+        let (r, c) = self.size();
+        (r.get(), c.get())
+    }
+    fn set_dims(&mut self, rows: u16, cols: u16) {
+        self.set_size(vt_nz(rows), vt_nz(cols));
+    }
+}

@@ -196,7 +196,7 @@ pub(crate) fn detect_scroll(previous: &[Line], current: &[Line]) -> usize {
 #[cfg(test)]
 mod emoji_cluster_tests {
     fn spans(sample: &str) -> Vec<(i32, i32, String)> {
-        let mut parser = vt100::Parser::new(2, 20, 0);
+        let mut parser = crate::terminal::vt_parser(2, 20, 0);
         parser.process(sample.as_bytes());
         let (_, runs, _) = super::build_row(parser.screen(), 0, 20);
         runs.into_iter().map(|r| (r.col, r.cells, r.text)).collect()

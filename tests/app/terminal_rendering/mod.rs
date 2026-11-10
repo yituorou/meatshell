@@ -1,3 +1,4 @@
+use crate::terminal::ScreenDims as _;
 use super::*;
 
 fn hist_line(s: &str) -> Line {
@@ -15,7 +16,7 @@ fn make_buf(
     live_lines: &[&str],
     view_offset: usize,
 ) -> TermBuffer {
-    let mut parser = vt100::Parser::new(rows, cols, 0);
+    let mut parser = crate::terminal::vt_parser(rows, cols, 0);
     parser.process(live_lines.join("\r\n").as_bytes());
     TermBuffer {
         parser,
@@ -161,15 +162,65 @@ fn session_override_off_wins_over_global_on() {
 #[test]
 fn leaving_alternate_screen_after_shrinking_keeps_cursor_in_bounds() {
     for (start, rows, cols) in [("\x1b[40;1H", 20, 120), ("\x1b[40;100H", 20, 60)] {
-        let mut parser = vt100::Parser::new(40, 120, 0);
+        let mut parser = crate::terminal::vt_parser(40, 120, 0);
         parser.process(start.as_bytes());
         parser.process(b"\x1b[?1049h");
-        parser.screen_mut().set_size(rows, cols);
+        parser.screen_mut().set_dims(rows, cols);
         parser.process(b"\x1b[?1049l");
         parser.process("x\u{4e2d}".as_bytes());
         let (row, col) = parser.screen().cursor_position();
         assert!(row < rows && col <= cols, "cursor {row},{col} outside {rows}x{cols}");
     }
+}
+
+/// #544: inside tmux (alternate screen) a resize goes straight to vt100's
+/// `set_size`. When a shrink cut a wide CJK glyph in half at the right edge,
+/// vt100 0.16.2 kept the orphaned half and the next write there panicked
+/// (`screen.rs` unwrap / `row.rs` index out of bounds) — with
+/// `panic = "abort"` the app just vanished. Fixed upstream in vt100 0.17+.
+#[test]
+fn shrinking_through_a_wide_glyph_at_the_right_edge_does_not_panic() {
+    let mut parser = crate::terminal::vt_parser(5, 10, 0);
+    parser.process(b"\x1b[?1049h");
+    parser.process("\x1b[1;9H\u{4e2d}".as_bytes()); // 中 in the last two columns
+    parser.screen_mut().set_dims(5, 9); // cut it in half
+    parser.process(b"\x1b[1;9Hx\x1b[1;1H\x1b[K");
+    parser.screen_mut().set_dims(5, 12);
+    parser.process("\x1b[1;11H\u{6587}\x1b[?1049l".as_bytes());
+    assert_eq!(parser.screen().dims(), (5, 12));
+}
+
+/// #544: vt100 0.18's `set_size` pulls rows back out of its own scrollback
+/// when the screen grows. MeatShell already moved scrolled-off rows into
+/// `history`, so growing the window inside tmux and leaving it must not put
+/// those rows on the live screen a second time.
+#[test]
+fn growing_inside_alt_screen_does_not_duplicate_history_rows() {
+    let mut buf = make_buf(10, 20, &[], &[], 0);
+    buf.parser = crate::terminal::vt_parser(10, 20, 5000);
+    for i in 0..30 {
+        let _ = buf.ingest(format!("line{i}\r\n").as_bytes());
+    }
+    let _ = buf.ingest(b"\x1b[?1049h");
+    buf.parser.screen_mut().set_dims(15, 20);
+    let _ = buf.ingest(b"\x1b[?1049l");
+    let live = buf.parser.screen().contents();
+    for h in &buf.history {
+        let text = h.plain().trim_end();
+        if text.is_empty() {
+            continue;
+        }
+        assert!(
+            !live.lines().any(|l| l.trim_end() == text),
+            "{text:?} is both in history and on the live screen"
+        );
+    }
+    // A shrink-then-grow round trip still restores the hidden screen.
+    let _ = buf.ingest(b"\x1b[?1049h");
+    buf.parser.screen_mut().set_dims(5, 20);
+    buf.parser.screen_mut().set_dims(15, 20);
+    let _ = buf.ingest(b"\x1b[?1049l");
+    assert!(buf.parser.screen().contents().contains("line29"));
 }
 
 /// Log-flood throughput probe (not a correctness test). Run with:
@@ -241,7 +292,7 @@ fn run_tuples(runs: &[HistSpan]) -> Vec<(String, i32, i32, bool, bool, bool, Str
 
 #[test]
 fn compact_history_line_round_trips_styled_runs() {
-    let mut parser = vt100::Parser::new(2, 60, 0);
+    let mut parser = crate::terminal::vt_parser(2, 60, 0);
     parser.process(
         "12:00 \x1b[32mINFO\x1b[0m svc \x1b[1;35mFlood\x1b[0m 中文 ok \x1b[44m   \x1b[0m"
             .as_bytes(),

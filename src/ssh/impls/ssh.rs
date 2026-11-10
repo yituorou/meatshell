@@ -3750,7 +3750,7 @@ mod prompt_setup_echo_tests {
     #[test]
     fn hidden_setup_echo_resynchronizes_the_prompt_cursor() {
         let prompt = "root@host:~# ";
-        let mut parser = vt100::Parser::new(4, 80, 0);
+        let mut parser = crate::terminal::vt_parser(4, 80, 0);
         // The initial prompt is painted immediately before shell integration is
         // injected. The buffered setup echo must replace, not append to, it.
         parser.process(prompt.as_bytes());

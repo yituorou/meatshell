@@ -1,5 +1,6 @@
 //! Geometry and hit-testing of the main window's terminal and SFTP areas.
 
+use crate::terminal::ScreenDims as _;
 use super::*;
 
 /// Width of a left/right-docked SFTP panel as terminal_view.slint lays it out:
@@ -143,7 +144,7 @@ pub(super) fn terminal_wheel_hit(
     let h = term_buf(bufs, &active)?;
     let guard = h.lock().ok()?;
     let screen = guard.parser.screen();
-    let (rows, cols) = screen.size();
+    let (rows, cols) = screen.dims();
     let cell_w = (term_w / cols.max(1) as f32).max(1.0);
     let cell_h = (term_h / rows.max(1) as f32).max(1.0);
     Some(TerminalWheelHit {

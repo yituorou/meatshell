@@ -1,5 +1,6 @@
 //! Terminal output ingest, session-log wiring and per-tab render pacing.
 
+use crate::terminal::ScreenDims as _;
 use super::*;
 
 /// Max bytes merged into one Output event before starting a fresh chunk (#209).
@@ -84,7 +85,7 @@ pub(super) fn handle_scrollback_key(buf: &mut TermBuffer, key: ScrollbackKey) ->
     }
 
     let max_offset = buf.history.len();
-    let page_rows = usize::from(buf.parser.screen().size().0).max(1);
+    let page_rows = usize::from(buf.parser.screen().dims().0).max(1);
     buf.scroll_accum = 0.0;
     buf.view_offset = match key {
         ScrollbackKey::Home => max_offset,

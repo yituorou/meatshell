@@ -78,12 +78,14 @@ async-trait = "0.1"
 futures = "0.3"
 # 0.16.2+ clamps the saved cursor on resize; older versions panic after
 # resizing inside nano/vim and leaving the alternate screen (#490).
-vt100 = "0.16.2"
+# 0.17+ fixes panics when a resize cuts a wide (CJK/emoji) glyph at the right
+# edge — e.g. tmux + collapsing the sidebar crashed the app (#544).
+vt100 = "0.18.1"
 portable-pty = "0.8"
 # East Asian width detection for terminal copy/find column math. Pinned to the
 # same version vt100 uses so "is this glyph 2 cells wide?" agrees with how vt100
 # lays CJK glyphs on the grid 鈥?otherwise selection/find columns drift (#132).
-unicode-width = "0.2.1"
+unicode-width = "0.2.2"
 # Split terminal output into complete emoji grapheme clusters (ZWJ sequences,
 # flags, skin tones, variation selectors) before replacing them with images.
 unicode-segmentation = "1.12"

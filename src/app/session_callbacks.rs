@@ -1517,7 +1517,7 @@ pub(super) fn wire_session_callbacks(
             bufs.lock().unwrap().insert(
                 tab_id.clone(),
                 Arc::new(Mutex::new(TermBuffer {
-                    parser: vt100::Parser::new(24, 80, 5000),
+                    parser: crate::terminal::vt_parser(24, 80, 5000),
                     find_query: String::new(),
                     find_cursor: None,
                     is_dark: is_dark_now,
