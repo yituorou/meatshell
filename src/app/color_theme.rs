@@ -10,6 +10,8 @@
 //! With a wallpaper and immersive colours on, the wallpaper's accent and tint
 //! still override the preset (see `theme.slint`); with immersive colours off
 //! the wallpaper stays as a backdrop and the preset decides the colours.
+//! Picking a preset or a custom colour switches immersive colours off, so the
+//! chosen theme takes effect straight away; "default" leaves the switch alone.
 
 use super::*;
 
@@ -168,16 +170,22 @@ const fn seeds(root: u32, panel: u32, text: u32, accent: u32, term: u32) -> Seed
 
 /// Build a full palette from seeds, using the same steps the default palette
 /// takes between its surfaces, borders and text shades.
+///
+/// Surfaces step toward a target lightly tinted with the accent rather than
+/// toward pure white / the text colour, so hover, borders and elevated panels
+/// share the preset's hue instead of turning grey. The active (selected)
+/// surface takes a little more accent so the selection reads at a glance.
 fn derive(dark: bool, s: Seeds) -> Palette {
     if dark {
-        let up = |t: f32| s.panel.mix(WHITE, t);
+        let lift = WHITE.mix(s.accent, 0.08);
+        let up = |t: f32| s.panel.mix(lift, t);
         Palette {
             bg_root: s.root,
             bg_panel: s.panel,
             bg_panel_alt: up(0.03),
             bg_elevated: up(0.055),
             bg_hover: up(0.085),
-            bg_active: up(0.12),
+            bg_active: up(0.12).mix(s.accent, 0.10),
             tab_active_bg: s.root.mix(BLACK, 0.15),
             tab_active_border: s.root.mix(BLACK, 0.75),
             border_subtle: up(0.10),
@@ -191,15 +199,16 @@ fn derive(dark: bool, s: Seeds) -> Palette {
             term_bg: s.term,
         }
     } else {
-        // Light surfaces step toward the text colour, keeping the hue.
-        let down = |t: f32| s.panel.mix(s.text, t);
+        // Light surfaces step toward an accent-tinted ink, keeping the hue.
+        let ink = s.text.mix(s.accent, 0.20);
+        let down = |t: f32| s.panel.mix(ink, t);
         Palette {
             bg_root: s.root,
             bg_panel: s.panel,
             bg_panel_alt: down(0.05),
             bg_elevated: down(0.09),
             bg_hover: down(0.12),
-            bg_active: down(0.155),
+            bg_active: down(0.155).mix(s.accent, 0.06),
             tab_active_bg: s.panel,
             tab_active_border: down(0.25),
             border_subtle: down(0.11),
@@ -244,8 +253,8 @@ const PRESETS: &[Preset] = &[
         name_en: "Mist Gray",
         name_zh: "雾灰",
         swatch: hex(0xd5dbe2),
-        dark: seeds(0x1d2024, 0x24282d, 0xe4e8ed, 0x6f8196, 0x121417),
-        light: seeds(0xf1f3f5, 0xf8f9fa, 0x1f2328, 0x55687d, 0xfbfcfd),
+        dark: seeds(0x1d2024, 0x24282d, 0xe4e8ed, 0x6683a3, 0x121417),
+        light: seeds(0xf1f3f5, 0xf8f9fa, 0x1f2328, 0x4f6784, 0xfbfcfd),
     },
     Preset {
         id: "titanium-gray",
@@ -276,7 +285,7 @@ const PRESETS: &[Preset] = &[
         name_en: "Warm Yellow",
         name_zh: "暖黄",
         swatch: hex(0xf3dfae),
-        dark: seeds(0x1f1c17, 0x26221c, 0xece4d6, 0xb8862b, 0x15130f),
+        dark: seeds(0x1f1c17, 0x26221c, 0xece4d6, 0xab7a1f, 0x15130f),
         light: seeds(0xf7f2e8, 0xfcf9f3, 0x2a2418, 0x9c6c16, 0xfefcf8),
     },
     Preset {
@@ -446,6 +455,29 @@ fn sync_detached(
     }
 }
 
+/// Picking a preset (or a custom colour) means the user wants those colours,
+/// so switch immersive colours off — otherwise an active wallpaper would keep
+/// overriding the accent and tint. Light/dark goes back to the user's choice.
+/// Returns true when the switch was flipped.
+fn disable_immersive_for_preset(
+    id: &str,
+    window: &AppWindow,
+    store: &Rc<RefCell<ConfigStore>>,
+    bufs: &TermBuffers,
+) -> bool {
+    if id == DEFAULT_ID || !store.borrow().immersive_colors() {
+        return false;
+    }
+    {
+        let mut s = store.borrow_mut();
+        s.set_immersive_colors(false);
+        let _ = s.save();
+    }
+    window.set_immersive_colors(false);
+    apply_dark_mode(window, bufs, theme_pref_is_dark(&store.borrow()));
+    true
+}
+
 /// Wire the colour theme picker, the custom colour and the immersive switch.
 pub(super) fn wire(ctx: &WinCtx) {
     let WinCtx {
@@ -464,6 +496,7 @@ pub(super) fn wire(ctx: &WinCtx) {
         let weak = window.as_weak();
         let store = store.clone();
         let registry = registry.clone();
+        let bufs = bufs.clone();
         let (proc, sys, editor) = detached.clone();
         window.on_set_color_theme(move |id: SharedString| {
             let id = normalized_id(id.as_str());
@@ -473,6 +506,7 @@ pub(super) fn wire(ctx: &WinCtx) {
                 let _ = s.save();
             }
             if let Some(w) = weak.upgrade() {
+                disable_immersive_for_preset(id, &w, &store, &bufs);
                 apply_color_theme(&w, &store.borrow());
                 sync_detached(&w, &proc, &sys, &editor);
             }
@@ -483,6 +517,7 @@ pub(super) fn wire(ctx: &WinCtx) {
         let weak = window.as_weak();
         let store = store.clone();
         let registry = registry.clone();
+        let bufs = bufs.clone();
         let (proc, sys, editor) = detached.clone();
         window.on_set_color_theme_custom(move |text: SharedString| {
             let Some(color) = Rgb::parse(text.as_str()) else {
@@ -499,6 +534,7 @@ pub(super) fn wire(ctx: &WinCtx) {
                 let _ = s.save();
             }
             if let Some(w) = weak.upgrade() {
+                disable_immersive_for_preset(CUSTOM_ID, &w, &store, &bufs);
                 apply_color_theme(&w, &store.borrow());
                 sync_detached(&w, &proc, &sys, &editor);
             }
