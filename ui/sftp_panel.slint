@@ -632,6 +632,8 @@ component LocalPane inherits Rectangle {
     function apply-suggestion(index: int, go: bool, drill: bool) {
         if (index < 0 || index >= root.suggestions.length) { return; }
         path-input.text = root.suggestions[index].path;
+        // Continue typing at the end of the completed folder.
+        path-input.set-selection-offsets(1000000, 1000000);
         root.suggest-open = false;
         if (go) {
             root.navigate(root.suggestions[index].path);
@@ -1358,6 +1360,10 @@ export component SftpPanel inherits Rectangle {
     property <bool> suggest-open: false;
     property <int> suggest-selected: 0;
     property <string> suggest-target: "pane";
+    // The path just applied from the popup: the focused field compares its new
+    // text with this and moves the caret to the end (the field ids are out of
+    // scope here).
+    property <string> suggest-caret-text: "";
     property <length> suggest-x;
     property <length> suggest-y;
     property <length> suggest-w;
@@ -1603,8 +1609,10 @@ export component SftpPanel inherits Rectangle {
     function apply-suggestion(index: int, go: bool, drill: bool) {
         if (index < 0 || index >= root.suggestions.length) { return; }
         if (root.suggest-target == "pane") {
+            root.suggest-caret-text = root.suggestions[index].path;
             root.pane-path-text = root.suggestions[index].path;
         } else {
+            root.suggest-caret-text = root.suggestions[index].path;
             root.toolbar-path-text = root.suggestions[index].path;
         }
         root.suggest-open = false;
@@ -1831,6 +1839,11 @@ export component SftpPanel inherits Rectangle {
                             font-size: Theme.fs-sm;
                             vertical-alignment: center;
                             single-line: true;
+                            changed text => {
+                                if (self.text == root.suggest-caret-text) {
+                                    self.set-selection-offsets(1000000, 1000000);
+                                }
+                            }
                             edited => {
                                 root.open-suggestions(
                                     toolbar-path-field.absolute-position.x,
@@ -2077,6 +2090,11 @@ export component SftpPanel inherits Rectangle {
                             font-size: Theme.fs-sm;
                             vertical-alignment: center;
                             single-line: true;
+                            changed text => {
+                                if (self.text == root.suggest-caret-text) {
+                                    self.set-selection-offsets(1000000, 1000000);
+                                }
+                            }
                             edited => {
                                 root.open-suggestions(
                                     compact-path-field.absolute-position.x,
@@ -2416,6 +2434,11 @@ export component SftpPanel inherits Rectangle {
                                 font-size: Theme.fs-sm;
                                 vertical-alignment: center;
                                 single-line: true;
+                                changed text => {
+                                    if (self.text == root.suggest-caret-text) {
+                                        self.set-selection-offsets(1000000, 1000000);
+                                    }
+                                }
                                 edited => {
                                     root.open-suggestions(
                                         pane-path-field.absolute-position.x,

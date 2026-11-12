@@ -9,9 +9,8 @@
 use super::*;
 
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
-use slint::platform::{PointerEventButton, WindowEvent};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Rgb8Pixel};
-
 struct Backend(std::rc::Rc<MinimalSoftwareWindow>);
 
 impl slint::platform::Platform for Backend {
@@ -579,6 +578,23 @@ fn path_completion_popup_renders_under_the_remote_path_bar() {
         press(&window, 400.0, 639.0);
         release(&window, 400.0, 639.0);
         assert_eq!(picked.borrow().as_slice(), ["/home/bob/"]);
+
+        // The caret sits at the end of the completed path: typing appends, so
+        // Enter navigates to "/home/bob/x" (not "/home/bobx/").
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Return.into(),
+        });
+        assert_eq!(
+            picked.borrow().as_slice(),
+            ["/home/bob/", "/home/bob/x"],
+            "the caret should be at the end of a completed path"
+        );
     })
     .join()
     .unwrap();
@@ -643,6 +659,33 @@ fn path_completion_popup_works_in_the_local_pane() {
         assert!(
             accent > 20,
             "local path completion popup painted almost no folder icons ({accent})"
+        );
+
+        // Picking a row completes the field and puts the caret at the end, so
+        // typing continues after the completed folder.
+        let picked = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let picked = picked.clone();
+            ui.on_sftp_local_navigate(move |_tab: SharedString, path: SharedString| {
+                picked.borrow_mut().push(path.to_string());
+            });
+        }
+        press(&window, 100.0, 639.0);
+        release(&window, 100.0, 639.0);
+        assert_eq!(picked.borrow().as_slice(), ["C:\\Users\\me\\docs\\"]);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Return.into(),
+        });
+        assert_eq!(
+            picked.borrow().as_slice(),
+            ["C:\\Users\\me\\docs\\", "C:\\Users\\me\\docs\\x"],
+            "the local caret should be at the end of a completed path"
         );
     })
     .join()
