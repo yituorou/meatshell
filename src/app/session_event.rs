@@ -305,6 +305,10 @@ pub(super) fn apply_session_event_to_window(
             // folders and update the bookmark star for the new path (#500).
             win.invoke_sftp_record_visit(tab_id.into(), path.clone().into());
         }
+        SessionEvent::SftpDirPeek { path, names } => {
+            // Path completion: only the popup changes; the panel stays put.
+            update_terminal(&|t| apply_remote_peek(t, &path, &names));
+        }
         SessionEvent::SftpStatus(msg) => {
             update_terminal(&|t| t.sftp_status = msg.clone().into());
         }

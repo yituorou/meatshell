@@ -14,6 +14,10 @@ use tokio::task::JoinHandle;
 pub enum SftpCommand {
     /// List the contents of a remote directory.
     ListDir(String),
+    /// List only the folder names of a directory for path completion. Unlike
+    /// `ListDir` this does not navigate the panel, change its status or touch
+    /// the directory tree.
+    PeekDir(String),
     /// Fill owner/group names after the initial listing is already visible.
     EnrichEntries { path: String, entries: Vec<crate::ssh::RemoteEntry> },
     /// Refresh button: re-list the directory *and* re-sync the whole expanded

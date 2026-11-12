@@ -101,6 +101,12 @@ pub enum SessionEvent {
         path: String,
         entries: Vec<RemoteEntry>,
     },
+    /// Folder names of one directory, for path completion. A peek never
+    /// navigates the panel; a stale answer is dropped by its `path`.
+    SftpDirPeek {
+        path: String,
+        names: Vec<String>,
+    },
     /// Free-form SFTP status message (progress, errors, etc.).
     SftpStatus(String),
     /// A directory listing failed (e.g. permission denied): show the message and

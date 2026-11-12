@@ -532,6 +532,27 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         });
     }
     {
+        // Remote path completion: peek the folder being typed without moving the
+        // panel; the answer arrives as `SessionEvent::SftpDirPeek`.
+        let sftp_handles = sftp_handles.clone();
+        let weak = window.as_weak();
+        window.on_sftp_complete_path(move |tab_id: SharedString, text: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            let Ok(handles) = sftp_handles.lock() else { return };
+            if let Some(handle) = handles.get(tab_id.as_str()) {
+                request_remote(&w, handle, tab_id.as_str(), text.as_str());
+            }
+        });
+    }
+    {
+        // Local path completion reads the folder on a worker thread.
+        let weak = window.as_weak();
+        window.on_sftp_local_complete_path(move |tab_id: SharedString, text: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            request_local(&w, tab_id.as_str(), text.as_str());
+        });
+    }
+    {
         let sftp_handles = sftp_handles.clone();
         let weak = window.as_weak();
         window.on_sftp_download_to_local(

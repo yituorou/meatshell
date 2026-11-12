@@ -1484,6 +1484,8 @@ pub(super) fn wire_session_callbacks(
                 sftp_local_all_entries: ModelRc::from(std::rc::Rc::new(
                     VecModel::<SftpEntry>::default(),
                 )),
+                sftp_suggest: empty_suggestions(),
+                sftp_local_suggest: empty_suggestions(),
                 font_size: 0,
                 tunnels: ModelRc::from(std::rc::Rc::new(VecModel::<TunnelInfo>::default())),
                 sftp_collapsed: !has_sftp || sftp_collapsed_default,
