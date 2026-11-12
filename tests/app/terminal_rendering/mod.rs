@@ -593,3 +593,38 @@ fn flood_scrollbar_lock_wait() {
         pct(&renders, 1.0)
     );
 }
+
+#[test]
+fn selection_stays_on_its_text_while_a_full_scrollback_evicts_lines() {
+    let history: Vec<String> = (0..crate::terminal::MAX_HISTORY)
+        .map(|i| format!("line {i:06}"))
+        .collect();
+    let refs: Vec<&str> = history.iter().map(String::as_str).collect();
+    let mut buf = make_buf(5, 20, &refs, &["live"], 1000);
+    // Prime the previous-screen snapshot so later output is captured.
+    let _ = buf.ingest(b"\r\nprime\r\n");
+
+    // Select one whole history line while scrolled back.
+    let row = buf
+        .history
+        .iter()
+        .position(|line| line.plain().trim_end() == "line 090000")
+        .expect("line in history");
+    buf.sel_ranges = vec![((row, 0), (row, 10))];
+    buf.sel_anchor = Some((row, 0));
+    buf.sel_focus = Some((row, 10));
+    let before = buf.extract_selection_text();
+    assert_eq!(before.trim_end(), "line 090000");
+    let top_before = buf.vis_to_abs(0);
+    let first_visible_before = buf.history[top_before].plain().to_string();
+
+    // A burst of output evicts lines from the front of the full history.
+    for i in 0..60 {
+        let _ = buf.ingest(format!("new {i}\r\n").as_bytes());
+    }
+    assert_eq!(buf.history.len(), crate::terminal::MAX_HISTORY);
+
+    // The view and the selection both still show the same text.
+    assert_eq!(buf.history[buf.vis_to_abs(0)].plain(), first_visible_before);
+    assert_eq!(buf.extract_selection_text(), before);
+}

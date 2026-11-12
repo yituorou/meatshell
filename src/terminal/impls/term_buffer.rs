@@ -194,6 +194,30 @@ impl TermBuffer {
         (live, used)
     }
 
+    /// `n` rows were evicted from the front of a full `history`, so every
+    /// absolute combined-row index now points `n` rows further on. The
+    /// scrolled view stays anchored through `view_offset`; move the selection
+    /// and the find cursor the same way so they stay on the text the user
+    /// picked. Without this, selecting while a log flood filled the scrollback
+    /// slid the selection down by one row per new line and selected far more
+    /// than was dragged over. A point whose row was evicted clamps to the top.
+    fn shift_marks_after_eviction(&mut self, n: usize) {
+        let shift = |(row, col): (usize, u16)| match row.checked_sub(n) {
+            Some(row) => (row, col),
+            None => (0, 0),
+        };
+        self.sel_anchor = self.sel_anchor.map(shift);
+        self.sel_focus = self.sel_focus.map(shift);
+        self.sel_ranges.retain(|&(a, f)| a.0 >= n || f.0 >= n);
+        for (a, f) in &mut self.sel_ranges {
+            *a = shift(*a);
+            *f = shift(*f);
+        }
+        self.find_cursor = self
+            .find_cursor
+            .and_then(|(row, idx)| row.checked_sub(n).map(|row| (row, idx)));
+    }
+
     /// Absolute combined-row index of the top visible row for the current view.
     fn view_top_abs(&self, _live_used: usize) -> usize {
         let rows = self.parser.screen().dims().0 as usize;
@@ -918,8 +942,13 @@ impl TermBuffer {
             for line in self.prev.iter().take(k) {
                 self.history.push_back(HistLine::from(line));
             }
+            let mut evicted = 0usize;
             while self.history.len() > MAX_HISTORY {
                 self.history.pop_front();
+                evicted += 1;
+            }
+            if evicted > 0 {
+                self.shift_marks_after_eviction(evicted);
             }
             // `view_offset` is measured backwards from the live bottom.  If
             // output scrolls while the user is reading history, keeping the
