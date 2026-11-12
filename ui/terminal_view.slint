@@ -290,7 +290,7 @@ export component TerminalView inherits Rectangle {
     in property <int> cursor-row;       // cursor cell (grid coords)
     in property <int> cursor-col;
     in property <string> cursor-style: "block";
-    in property <color> cursor-color: Theme.term-fg;
+    in property <color> cursor-color: Theme.term-cursor;
     in property <int> rows-used;        // content rows, for viewport sizing
     in property <int> scroll-max;       // scrollback depth (max offset) (#103)
     in property <int> scroll-offset;    // current offset (0 = live bottom) (#103)
@@ -956,13 +956,14 @@ export component TerminalView inherits Rectangle {
                             }
                         }
 
-                        // Drag-selection highlights (under the text, blue tint).
+                        // Drag-selection highlights (under the text): the
+                        // terminal scheme's selection, else an accent tint.
                         for s in root.selection : Rectangle {
                             x: s.col * root.cell-w;
                             y: s.row * root.cell-h;
                             width: s.len * root.cell-w;
                             height: root.cell-h;
-                            background: Theme.accent.with-alpha(0.40);
+                            background: Theme.term-selection;
                         }
 
                         // Search-match highlights (behind the text).

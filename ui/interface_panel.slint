@@ -7,7 +7,7 @@
 // of the global UI scale; only the font-preview reflects the real terminal size.
 
 import { Theme } from "theme.slint";
-import { ComboBox, Slider, ScrollView } from "std-widgets.slint";
+import { ComboBox, Slider, ScrollView, LineEdit } from "std-widgets.slint";
 import { LabeledInput, PrimaryButton, GhostButton } from "widgets.slint";
 
 export struct OutputRuleItem {
@@ -47,6 +47,214 @@ export struct ColorThemeItem {
     name-en: string,
     name-zh: string,
     swatch: color,
+}
+
+// One terminal colour scheme in Settings › Terminal colours. `ansi` holds the
+// 16 ANSI colours; `selection` is already adjusted to stay readable.
+export struct TermSchemeItem {
+    id: string,
+    name: string,
+    subtitle: string,
+    dark: bool,
+    imported: bool,
+    bg: color,
+    fg: color,
+    cursor: color,
+    selection: color,
+    ansi: [color],
+}
+
+// Live preview of a terminal scheme: a fake prompt and log line in the
+// scheme's colours, a selection sample, and the 16 ANSI swatches.
+component SchemePreview inherits Rectangle {
+    in property <TermSchemeItem> item;
+    in property <bool> lang-en;
+    height: 150px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: root.item.bg;
+    clip: true;
+    VerticalLayout {
+        padding: 12px;
+        padding-top: 10px;
+        spacing: 5px;
+        HorizontalLayout {
+            spacing: 6px;
+            for c in [#ff5f57, #febc2e, #28c840] : VerticalLayout {
+                alignment: center;
+                Rectangle { width: 9px; height: 9px; border-radius: 4.5px; background: c; }
+            }
+            Rectangle { width: 4px; }
+            Text { text: root.item.name; color: root.item.fg; font-size: 12px * Theme.panel-font;
+                   font-weight: 700; vertical-alignment: center; }
+            Text { text: root.item.subtitle; color: root.item.ansi[8]; font-size: 11px * Theme.panel-font;
+                   vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Rectangle {
+                width: tag.preferred-width + 12px; height: 18px; border-radius: 9px;
+                background: root.item.fg.with-alpha(0.12);
+                tag := Text {
+                    text: root.item.dark ? (root.lang-en ? "Dark" : "深色") : (root.lang-en ? "Light" : "浅色");
+                    color: root.item.fg; font-size: 10px * Theme.panel-font;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
+        Rectangle { height: 2px; }
+        HorizontalLayout {
+            alignment: start;
+            Text { text: "root@meatshell"; color: root.item.ansi[2]; font-weight: 700;
+                   font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: ":"; color: root.item.fg; font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "~/workspace"; color: root.item.ansi[4]; font-weight: 700;
+                   font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "$ git status && "; color: root.item.fg; font-family: Theme.term-font-family; font-size: 12px; }
+            Rectangle {
+                background: root.item.selection;
+                width: sel.preferred-width;
+                sel := Text { text: "cargo test"; color: root.item.fg;
+                              font-family: Theme.term-font-family; font-size: 12px; }
+            }
+            Rectangle { width: 4px; }
+            Rectangle { width: 7px; background: root.item.cursor; }
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: 10px;
+            Text { text: "[INFO] ready"; color: root.item.ansi[6]; font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "✔ 42 passed"; color: root.item.ansi[2]; font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "⚠ 1 warning"; color: root.item.ansi[3]; font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "✖ 0 errors"; color: root.item.ansi[1]; font-family: Theme.term-font-family; font-size: 12px; }
+            Text { text: "#TrueColor"; color: root.item.ansi[5]; font-family: Theme.term-font-family; font-size: 12px; }
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalLayout {
+            spacing: 3px;
+            for i in 8 : Rectangle { height: 11px; border-radius: 2px; background: root.item.ansi[i];
+                                     border-width: 1px; border-color: root.item.fg.with-alpha(0.10); }
+        }
+        HorizontalLayout {
+            spacing: 3px;
+            for i in 8 : Rectangle { height: 11px; border-radius: 2px; background: root.item.ansi[i + 8];
+                                     border-width: 1px; border-color: root.item.fg.with-alpha(0.10); }
+        }
+    }
+}
+
+// One row of the scheme list: mini terminal thumbnail, name + source, the
+// dark/light tag, "in use" badge, and a delete button for imported schemes.
+component SchemeRow inherits Rectangle {
+    in property <TermSchemeItem> item;
+    in property <bool> current;
+    in property <bool> lang-en;
+    callback clicked();
+    callback remove();
+    height: 50px;
+    border-radius: 6px;
+    border-width: root.current ? 1px : 0px;
+    border-color: Theme.accent;
+    background: root.current ? Theme.accent.with-alpha(0.10) : (ta.has-hover ? Theme.bg-hover : transparent);
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 62px; height: 36px; border-radius: 4px;
+                background: root.item.bg;
+                border-width: 1px; border-color: Theme.border-subtle;
+                Text { x: 6px; y: 3px; text: ">_"; color: root.item.fg;
+                       font-family: Theme.term-font-family; font-size: 10px; font-weight: 700; }
+                Rectangle { x: 22px; y: 7px; width: 6px; height: 9px; background: root.item.cursor; }
+                HorizontalLayout {
+                    x: 6px; y: 23px; width: parent.width - 12px; height: 7px;
+                    spacing: 2px;
+                    for i in 6 : Rectangle { border-radius: 1px; background: root.item.ansi[i + 1]; }
+                }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Text { text: root.item.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font;
+                       font-weight: root.current ? 700 : 400; overflow: elide; }
+                Rectangle {
+                    width: chip.preferred-width + 10px; height: 16px; border-radius: 4px;
+                    background: Theme.bg-elevated;
+                    chip := Text {
+                        text: root.item.dark ? (root.lang-en ? "Dark" : "深色") : (root.lang-en ? "Light" : "浅色");
+                        color: Theme.text-muted; font-size: 10px * Theme.panel-font;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                }
+            }
+            Text { text: root.item.subtitle; color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide; }
+        }
+        if root.current : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: in-use.preferred-width + 24px; height: 22px; border-radius: 11px;
+                background: Theme.accent;
+                HorizontalLayout {
+                    padding-left: 8px; spacing: 3px; alignment: start;
+                    Text { text: "\u{E5CA}"; font-family: "Material Icons"; color: white;
+                           font-size: 12px; vertical-alignment: center; }
+                    in-use := Text { text: root.lang-en ? "In use" : "当前使用"; color: white;
+                                     font-size: 11px * Theme.panel-font; vertical-alignment: center; }
+                }
+            }
+        }
+        if root.item.imported : VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 26px; height: 26px; border-radius: 5px;
+                background: del-ta.has-hover ? Theme.bg-active : transparent;
+                del-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.remove(); }
+                }
+                Text { text: "\u{E872}"; font-family: "Material Icons";
+                       color: del-ta.has-hover ? Theme.danger : Theme.text-muted; font-size: 16px;
+                       width: 100%; height: 100%; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+// Dark / light mode switch above the scheme picker.
+component ModeChip inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <string> value;
+    in property <bool> selected;
+    callback clicked();
+    height: 30px;
+    width: chip-row.preferred-width + 20px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border-subtle;
+    background: root.selected ? Theme.accent.with-alpha(0.12) : (ta.has-hover ? Theme.bg-hover : transparent);
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    chip-row := HorizontalLayout {
+        padding-left: 10px;
+        spacing: 6px;
+        alignment: start;
+        Text { text: root.icon; font-family: "Material Icons"; font-size: 14px;
+               color: root.selected ? Theme.accent : Theme.text-secondary; vertical-alignment: center; }
+        Text { text: root.label; font-size: 12px * Theme.panel-font;
+               color: root.selected ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; }
+        Text { text: "· " + root.value; font-size: 12px * Theme.panel-font; color: Theme.text-muted;
+               vertical-alignment: center; overflow: elide; max-width: 150px; }
+    }
 }
 
 // A user-defined agent launcher (#427).
@@ -602,6 +810,20 @@ export component InterfacePanel inherits Rectangle {
     in property <bool> immersive-colors: true;
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
+    // Terminal colours page: one scheme for dark mode, one for light.
+    in property <[TermSchemeItem]> term-schemes;
+    in property <TermSchemeItem> term-scheme-preview;
+    in property <bool> term-scheme-slot-dark: true;
+    in property <string> term-scheme-query;
+    in property <string> term-scheme-dark-id: "default";
+    in property <string> term-scheme-light-id: "default";
+    in property <string> term-scheme-dark-name;
+    in property <string> term-scheme-light-name;
+    in property <string> term-scheme-status;
+    callback set-term-scheme(bool, string);
+    callback term-scheme-filter(bool, string);
+    callback import-term-scheme(bool);
+    callback remove-term-scheme(string);
     callback set-immersive-colors(bool);
     in property <[WslProfileInfo]> wsl-profiles;
     in-out property <string> wsl-new-name: "WSL";
@@ -709,6 +931,11 @@ export component InterfacePanel inherits Rectangle {
                     icon: "\u{E167}"; label: root.lang-en ? "Font" : "字体";
                     active: root.ifd-page == "font";
                     clicked => { root.ifd-page = "font"; }
+                }
+                NavItem {
+                    icon: "\u{E40A}"; label: root.lang-en ? "Terminal colors" : "终端配色";
+                    active: root.ifd-page == "term-colors";
+                    clicked => { root.ifd-page = "term-colors"; }
                 }
                 NavItem {
                     icon: "\u{E312}"; label: root.lang-en ? "Input" : "输入";
@@ -1217,11 +1444,109 @@ export component InterfacePanel inherits Rectangle {
                 }
             }
 
+            // --- Terminal colours page ---------------------------------
+            if root.ifd-page == "term-colors" : VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 14px;
+                padding-bottom: 40px;
+                spacing: 0;
+                alignment: start;
+
+                SectionHeader { text: root.lang-en ? "TERMINAL COLORS" : "终端配色"; height: 24px; }
+                Text {
+                    text: root.lang-en
+                        ? "Pick one scheme for dark mode and one for light mode; the terminal follows the light/dark switch."
+                        : "为深色和浅色模式各选一套配色，终端会跟随浅色 / 深色切换。";
+                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; wrap: word-wrap;
+                }
+                Rectangle { height: 10px; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    ModeChip {
+                        icon: "\u{E51C}"; // dark mode
+                        label: root.lang-en ? "Dark mode" : "深色模式";
+                        value: root.term-scheme-dark-name;
+                        selected: root.term-scheme-slot-dark;
+                        clicked => { root.term-scheme-filter(true, root.term-scheme-query); }
+                    }
+                    ModeChip {
+                        icon: "\u{E518}"; // light mode
+                        label: root.lang-en ? "Light mode" : "浅色模式";
+                        value: root.term-scheme-light-name;
+                        selected: !root.term-scheme-slot-dark;
+                        clicked => { root.term-scheme-filter(false, root.term-scheme-query); }
+                    }
+                }
+                Rectangle { height: 10px; }
+                SchemePreview { item: root.term-scheme-preview; lang-en: root.lang-en; }
+                Rectangle { height: 12px; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        height: 30px;
+                        text: root.term-scheme-query;
+                        placeholder-text: root.lang-en
+                            ? "Search schemes (Dracula, Catppuccin, Solarized…)"
+                            : "搜索配色（Dracula、Catppuccin、Solarized…）";
+                        edited(t) => { root.term-scheme-filter(root.term-scheme-slot-dark, t); }
+                    }
+                    GhostButton {
+                        text: root.lang-en ? "Import .itermcolors…" : "导入 .itermcolors…";
+                        width: 150px;
+                        clicked => { root.import-term-scheme(root.term-scheme-slot-dark); }
+                    }
+                }
+                if root.term-scheme-status != "" : Text {
+                    text: root.term-scheme-status;
+                    color: Theme.text-muted; font-size: 11px * Theme.panel-font; wrap: word-wrap;
+                }
+                Rectangle { height: 8px; }
+                Rectangle {
+                    height: 320px;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    clip: true;
+                    scheme-scroll := ScrollView {
+                        width: 100%;
+                        height: 100%;
+                        content-width: self.visible-width;
+                        content-height: max(self.visible-height, scheme-list.preferred-height);
+                        scheme-list := VerticalLayout {
+                            width: scheme-scroll.visible-width;
+                            padding: 6px;
+                            spacing: 3px;
+                            alignment: start;
+                            for s in root.term-schemes : SchemeRow {
+                                item: s;
+                                lang-en: root.lang-en;
+                                current: s.id == (root.term-scheme-slot-dark
+                                    ? root.term-scheme-dark-id : root.term-scheme-light-id);
+                                clicked => { root.set-term-scheme(root.term-scheme-slot-dark, s.id); }
+                                remove => { root.remove-term-scheme(s.id); }
+                            }
+                            if root.term-schemes.length == 0 : Text {
+                                text: root.lang-en ? "No schemes match." : "没有匹配的配色。";
+                                color: Theme.text-muted; font-size: 12px * Theme.panel-font;
+                                horizontal-alignment: center;
+                                height: 60px; vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
             // --- Wallpaper page ----------------------------------------
             if root.ifd-page == "wallpaper" : VerticalLayout {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                // Room below the last section (Overlay) so its slider scrolls
+                // fully clear of the dialog's bottom edge.
+                padding-bottom: 40px;
                 spacing: 0;
                 alignment: start;
 

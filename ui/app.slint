@@ -14,7 +14,7 @@ import "fonts/MeatshellMono-Regular.ttf";
 import "fonts/MeatshellMono-Bold.ttf";
 import "fonts/MaterialIcons-Regular.ttf";
 
-import { Theme, ThemePalette } from "theme.slint";
+import { Theme, ThemePalette, TermColors } from "theme.slint";
 import { Sidebar, DiskInfo } from "sidebar.slint";
 import { TabBar, TabInfo, LaunchItem } from "tabs.slint";
 import { Welcome, SessionInfo } from "welcome.slint";
@@ -30,12 +30,12 @@ import { ProcWindow, ProcRow } from "proc_window.slint";
 import { SystemInfoWindow, SysInfoRow, SysMetricRow, SysNetRow } from "system_info_window.slint";
 import { EditorWindow } from "editor_window.slint";
 import { EditorPane, EditorFindResult, EditorDoc } from "editor_pane.slint";
-import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ColorThemeItem } from "interface_panel.slint";
+import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ColorThemeItem, TermSchemeItem } from "interface_panel.slint";
 // Re-export so `slint::include_modules!` generates the detached Rust window types.
 export { ProcWindow, SystemInfoWindow, EditorWindow }
 import { ComboBox, SpinBox, LineEdit, Button, ScrollView, CheckBox, Palette } from "std-widgets.slint";
 
-export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem }
+export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem, TermColors, TermSchemeItem }
 
 // --- TerminalState ---------------------------------------------------------
 // Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
@@ -717,7 +717,7 @@ export component AppWindow inherits Window {
     in-out property <bool> term-font-bold <=> Theme.term-font-bold;
     in-out property <string> term-cursor-style: "block";
     in-out property <string> term-cursor-color-hex: root.dark-mode ? "#D4D4D4" : "#2D2D2F";
-    in-out property <color> term-cursor-color: Theme.term-fg;
+    in-out property <color> term-cursor-color: Theme.term-cursor;
     in-out property <bool> output-highlight-enabled: true;
     in-out property <bool> json-format-output: true;
     in-out property <string> output-highlight-preset: "log";
@@ -754,6 +754,23 @@ export component AppWindow inherits Window {
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
     callback set-immersive-colors(bool);
+    // Terminal colour schemes (Settings › Terminal colours): one for dark mode,
+    // one for light. Rust fills the Theme colours and the picker list.
+    in-out property <TermColors> term-colors-dark <=> Theme.term-colors-dark;
+    in-out property <TermColors> term-colors-light <=> Theme.term-colors-light;
+    in property <[TermSchemeItem]> term-schemes;      // filtered rows for the edited mode
+    in property <TermSchemeItem> term-scheme-preview; // the edited mode's scheme
+    in-out property <bool> term-scheme-slot-dark: true;
+    in-out property <string> term-scheme-query;
+    in-out property <string> term-scheme-dark-id: "default";
+    in-out property <string> term-scheme-light-id: "default";
+    in property <string> term-scheme-dark-name;
+    in property <string> term-scheme-light-name;
+    in-out property <string> term-scheme-status;
+    callback set-term-scheme(bool /* dark slot */, string /* id */);
+    callback term-scheme-filter(bool /* dark slot */, string /* query */);
+    callback import-term-scheme(bool /* dark slot */);
+    callback remove-term-scheme(string /* id */);
     in property <[string]> term-fonts;             // installed monospace families
     in-out property <bool> interface-open: false;  // Interface settings overlay
     // Interface card position (draggable by its title bar, clamped inside the
@@ -5442,6 +5459,19 @@ export component AppWindow inherits Window {
                     set-color-theme(id) => { root.set-color-theme(id); }
                     set-color-theme-custom(hex) => { root.set-color-theme-custom(hex) }
                     set-immersive-colors(v) => { root.set-immersive-colors(v); }
+                    term-schemes: root.term-schemes;
+                    term-scheme-preview: root.term-scheme-preview;
+                    term-scheme-slot-dark: root.term-scheme-slot-dark;
+                    term-scheme-query: root.term-scheme-query;
+                    term-scheme-dark-id: root.term-scheme-dark-id;
+                    term-scheme-light-id: root.term-scheme-light-id;
+                    term-scheme-dark-name: root.term-scheme-dark-name;
+                    term-scheme-light-name: root.term-scheme-light-name;
+                    term-scheme-status: root.term-scheme-status;
+                    set-term-scheme(slot, id) => { root.set-term-scheme(slot, id); }
+                    term-scheme-filter(slot, q) => { root.term-scheme-filter(slot, q); }
+                    import-term-scheme(slot) => { root.import-term-scheme(slot); }
+                    remove-term-scheme(id) => { root.remove-term-scheme(id); }
                     set-term-font(v) => { root.set-term-font(v); }
                     set-term-font-size(v) => { root.set-term-font-size(v); }
                     set-terminal-line-spacing(v) => { root.set-terminal-line-spacing(v); }

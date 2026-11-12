@@ -79,6 +79,8 @@ pub(super) fn apply_saved_appearance(ctx: &WinCtx) {
 
     // Colour theme preset + immersive switch (Wallpaper & theme).
     super::color_theme::apply_color_theme(window, &store.borrow());
+    // Terminal colour schemes (dark + light pair), before any terminal renders.
+    super::terminal_scheme::apply_terminal_schemes(window, &store.borrow());
     // Apply the saved immersive wallpaper (overrides dark/light when set; a
     // missing custom file falls back to the plain theme).
     {

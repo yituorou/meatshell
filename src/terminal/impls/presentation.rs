@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use super::glyph_fallback::{active_glyph_fallback, GlyphFallback};
+use super::scheme::SchemeColors;
 use crate::terminal::{CompiledOutputRule, HistSpan, OutputHighlightPreset};
 use crate::ui::TermSpan;
 
@@ -615,7 +616,7 @@ fn contains_cjk(s: &str) -> bool {
 }
 
 /// 16-colour ANSI palette for **dark** terminals (VS Code "Dark+" values).
-const ANSI16_DARK: [(u8, u8, u8); 16] = [
+pub(crate) const ANSI16_DARK: [(u8, u8, u8); 16] = [
     (0x00, 0x00, 0x00), // 0  black
     (0xcd, 0x31, 0x31), // 1  red
     (0x0d, 0xbc, 0x79), // 2  green
@@ -640,7 +641,7 @@ const ANSI16_DARK: [(u8, u8, u8); 16] = [
 /// "bright white" (slot 15) are nearly invisible.  We remap them to dark greys
 /// so `ls`, `git` and other tools that use colour 7 for regular text stay
 /// perfectly readable.  Saturated hues are darkened for contrast.
-const ANSI16_LIGHT: [(u8, u8, u8); 16] = [
+pub(crate) const ANSI16_LIGHT: [(u8, u8, u8); 16] = [
     (0x1c, 0x1c, 0x1e), // 0  black        → Apple near-black
     (0xc0, 0x39, 0x2b), // 1  red
     (0x1a, 0x7f, 0x37), // 2  green        → darker for white bg
@@ -691,18 +692,21 @@ const ANSI16_LIGHT_BG: [(u8, u8, u8); 16] = [
 ///
 /// In light mode, true-colour RGB foregrounds that are light (HSL lightness
 /// ≥ 0.55) are darkened so they remain readable on a near-white background.
-fn vt_color_to_slint(color: vt100::Color, bold: bool, is_dark: bool) -> slint::Color {
+///
+/// With a terminal colour scheme (`scheme` is `Some`), the scheme's default
+/// text and 16 ANSI colours are used as-is: the light-mode remaps are only for
+/// the default palette, since a scheme is already designed for its background.
+fn vt_color_to_slint(
+    color: vt100::Color,
+    bold: bool,
+    is_dark: bool,
+    scheme: Option<&SchemeColors>,
+) -> slint::Color {
     let (r, g, b) = match color {
-        vt100::Color::Default => {
-            if is_dark {
-                (0xd4, 0xd4, 0xd4)
-            } else {
-                (0x2d, 0x2d, 0x2f)
-            }
-        }
-        vt100::Color::Idx(i) => idx_to_rgb(i, bold, is_dark),
+        vt100::Color::Default => vt_default_fg_rgb(is_dark, scheme),
+        vt100::Color::Idx(i) => idx_to_rgb(i, bold, is_dark, scheme),
         vt100::Color::Rgb(r, g, b) => {
-            if is_dark {
+            if is_dark || scheme.is_some() {
                 (r, g, b)
             } else {
                 darken_light_fg(r, g, b)
@@ -712,22 +716,23 @@ fn vt_color_to_slint(color: vt100::Color, bold: bool, is_dark: bool) -> slint::C
     slint::Color::from_rgb_u8(r, g, b)
 }
 
-fn vt_default_fg_rgb(is_dark: bool) -> (u8, u8, u8) {
-    if is_dark {
-        (0xd4, 0xd4, 0xd4)
-    } else {
-        (0x2d, 0x2d, 0x2f)
+fn vt_default_fg_rgb(is_dark: bool, scheme: Option<&SchemeColors>) -> (u8, u8, u8) {
+    match scheme {
+        Some(s) => s.fg,
+        None if is_dark => (0xd4, 0xd4, 0xd4),
+        None => (0x2d, 0x2d, 0x2f),
     }
 }
 
-fn vt_default_bg_rgb(is_dark: bool) -> (u8, u8, u8) {
-    if is_dark {
-        (0x0e, 0x0f, 0x13)
-    } else {
-        (0xfa, 0xfa, 0xfa)
+fn vt_default_bg_rgb(is_dark: bool, scheme: Option<&SchemeColors>) -> (u8, u8, u8) {
+    match scheme {
+        Some(s) => s.bg,
+        None if is_dark => (0x0e, 0x0f, 0x13),
+        None => (0xfa, 0xfa, 0xfa),
     }
 }
 
+/// Span colours under the active terminal colour scheme for this mode.
 pub(crate) fn vt_span_colors(
     fg: vt100::Color,
     bg: vt100::Color,
@@ -735,26 +740,38 @@ pub(crate) fn vt_span_colors(
     inverse: bool,
     is_dark: bool,
 ) -> (slint::Color, slint::Color) {
+    let scheme = super::scheme::active(is_dark);
+    vt_span_colors_with(fg, bg, bold, inverse, is_dark, scheme.as_deref())
+}
+
+pub(crate) fn vt_span_colors_with(
+    fg: vt100::Color,
+    bg: vt100::Color,
+    bold: bool,
+    inverse: bool,
+    is_dark: bool,
+    scheme: Option<&SchemeColors>,
+) -> (slint::Color, slint::Color) {
     if !inverse {
         return (
-            vt_color_to_slint(fg, bold, is_dark),
-            vt_bg_to_slint(bg, is_dark),
+            vt_color_to_slint(fg, bold, is_dark, scheme),
+            vt_bg_to_slint(bg, is_dark, scheme),
         );
     }
 
     let fg_color = match bg {
         vt100::Color::Default => {
-            let (r, g, b) = vt_default_bg_rgb(is_dark);
+            let (r, g, b) = vt_default_bg_rgb(is_dark, scheme);
             slint::Color::from_rgb_u8(r, g, b)
         }
-        _ => vt_color_to_slint(bg, false, is_dark),
+        _ => vt_color_to_slint(bg, false, is_dark, scheme),
     };
     let bg_color = match fg {
         vt100::Color::Default => {
-            let (r, g, b) = vt_default_fg_rgb(is_dark);
+            let (r, g, b) = vt_default_fg_rgb(is_dark, scheme);
             slint::Color::from_rgb_u8(r, g, b)
         }
-        _ => vt_bg_to_slint(fg, is_dark),
+        _ => vt_bg_to_slint(fg, is_dark, scheme),
     };
     (fg_color, bg_color)
 }
@@ -780,15 +797,15 @@ fn darken_light_fg(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 /// - ANSI 16 colours use `ANSI16_LIGHT_BG` (light pastels).
 /// - True-colour RGB backgrounds that are dark (HSL lightness < 0.45) are
 ///   remapped to light pastels so programs like btop feel light-themed.
-fn vt_bg_to_slint(color: vt100::Color, is_dark: bool) -> slint::Color {
+fn vt_bg_to_slint(color: vt100::Color, is_dark: bool, scheme: Option<&SchemeColors>) -> slint::Color {
     match color {
         vt100::Color::Default => slint::Color::from_argb_u8(0, 0, 0, 0), // transparent
         vt100::Color::Idx(i) => {
-            let (r, g, b) = idx_to_rgb_bg(i, is_dark);
+            let (r, g, b) = idx_to_rgb_bg(i, is_dark, scheme);
             slint::Color::from_rgb_u8(r, g, b)
         }
         vt100::Color::Rgb(r, g, b) => {
-            if is_dark {
+            if is_dark || scheme.is_some() {
                 slint::Color::from_rgb_u8(r, g, b)
             } else {
                 let (nr, ng, nb) = lighten_dark_bg(r, g, b);
@@ -876,9 +893,13 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
 }
 
 /// Map an xterm-256 palette index to RGB (16 ANSI + 6×6×6 cube + grayscale).
-fn idx_to_rgb(i: u8, bold: bool, is_dark: bool) -> (u8, u8, u8) {
+fn idx_to_rgb(i: u8, bold: bool, is_dark: bool, scheme: Option<&SchemeColors>) -> (u8, u8, u8) {
     let i = if bold && i < 8 { i + 8 } else { i };
-    let palette = if is_dark { &ANSI16_DARK } else { &ANSI16_LIGHT };
+    let palette = match scheme {
+        Some(s) => &s.ansi,
+        None if is_dark => &ANSI16_DARK,
+        None => &ANSI16_LIGHT,
+    };
     match i {
         0..=15 => palette[i as usize],
         16..=231 => {
@@ -902,11 +923,11 @@ fn idx_to_rgb(i: u8, bold: bool, is_dark: bool) -> (u8, u8, u8) {
 /// Same as [`idx_to_rgb`] but for **background** fills in light mode: the 16
 /// ANSI base colours use `ANSI16_LIGHT_BG` (light pastels) so TUI program
 /// backgrounds feel light.  256-colour cube / grayscale are used as-is.
-fn idx_to_rgb_bg(i: u8, is_dark: bool) -> (u8, u8, u8) {
-    if !is_dark && i < 16 {
+fn idx_to_rgb_bg(i: u8, is_dark: bool, scheme: Option<&SchemeColors>) -> (u8, u8, u8) {
+    if scheme.is_none() && !is_dark && i < 16 {
         return ANSI16_LIGHT_BG[i as usize];
     }
-    idx_to_rgb(i, false, is_dark)
+    idx_to_rgb(i, false, is_dark, scheme)
 }
 
 #[cfg(test)]
@@ -973,5 +994,60 @@ mod glyph_fallback_tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text.as_str(), "➜ ~");
         assert!(spans[0].font.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod scheme_colour_tests {
+    use super::*;
+
+    fn scheme() -> SchemeColors {
+        let mut ansi = [(0, 0, 0); 16];
+        for (i, c) in ansi.iter_mut().enumerate() {
+            *c = (i as u8 * 10, 100, 200);
+        }
+        SchemeColors {
+            bg: (0x11, 0x22, 0x33),
+            fg: (0xee, 0xdd, 0xcc),
+            cursor: (1, 2, 3),
+            selection: (4, 5, 6),
+            ansi,
+        }
+    }
+
+    fn rgb(c: slint::Color) -> (u8, u8, u8) {
+        (c.red(), c.green(), c.blue())
+    }
+
+    #[test]
+    fn a_scheme_drives_text_ansi_and_inverse_without_light_remaps() {
+        let s = scheme();
+        for is_dark in [true, false] {
+            let colors = |fg, bg, bold, inverse| {
+                let (f, b) = vt_span_colors_with(fg, bg, bold, inverse, is_dark, Some(&s));
+                (rgb(f), b)
+            };
+            use vt100::Color::{Default, Idx, Rgb};
+            assert_eq!(colors(Default, Default, false, false).0, s.fg);
+            assert_eq!(colors(Idx(1), Default, false, false).0, s.ansi[1]);
+            assert_eq!(colors(Idx(1), Default, true, false).0, s.ansi[9]);
+            // Light true colour stays light; ANSI fills use the scheme, not pastels.
+            assert_eq!(colors(Rgb(250, 250, 250), Default, false, false).0, (250, 250, 250));
+            let (_, fill) = colors(Default, Idx(0), false, false);
+            assert_eq!(rgb(fill), s.ansi[0]);
+            // Inverse of the defaults swaps the scheme's text and background.
+            let (f, b) = colors(Default, Default, false, true);
+            assert_eq!((f, rgb(b)), (s.bg, s.fg));
+        }
+    }
+
+    #[test]
+    fn no_scheme_keeps_the_default_light_remaps() {
+        let (_, fill) =
+            vt_span_colors_with(vt100::Color::Default, vt100::Color::Idx(0), false, false, false, None);
+        assert_eq!(rgb(fill), ANSI16_LIGHT_BG[0]);
+        let (text, _) =
+            vt_span_colors_with(vt100::Color::Idx(7), vt100::Color::Default, false, false, false, None);
+        assert_eq!(rgb(text), ANSI16_LIGHT[7]);
     }
 }

@@ -1754,7 +1754,9 @@ pub(super) fn listen_for_config_changes(ctx: &WinCtx, sessions_model: &Rc<VecMod
                 sync_sessions_for_window(&weak, &store.borrow(), &sessions_model);
                 // Custom agents (#427): launch menu and Settings list.
                 w.invoke_refresh_agent_launchers();
-                // Re-apply the theme to the chrome AND every open terminal buffer.
+                // Terminal colour schemes, then re-apply the theme to the
+                // chrome AND every open terminal buffer (re-renders them).
+                super::terminal_scheme::apply_terminal_schemes(&w, &store.borrow());
                 apply_dark_mode(&w, &bufs, theme_pref_is_dark(&store.borrow()));
                 // Colour theme preset + immersive switch (Wallpaper & theme).
                 super::color_theme::apply_color_theme(&w, &store.borrow());

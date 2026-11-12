@@ -1517,6 +1517,22 @@ impl ConfigStore {
     pub fn set_immersive_colors(&mut self, on: bool) {
         self.cache.immersive_colors_disabled = !on;
     }
+    /// Terminal colour scheme id for dark (`dark == true`) or light mode;
+    /// "" = the default MeatShell terminal colours.
+    pub fn terminal_scheme(&self, dark: bool) -> &str {
+        if dark {
+            &self.cache.terminal_scheme_dark
+        } else {
+            &self.cache.terminal_scheme_light
+        }
+    }
+    pub fn set_terminal_scheme(&mut self, dark: bool, id: impl Into<String>) {
+        if dark {
+            self.cache.terminal_scheme_dark = id.into();
+        } else {
+            self.cache.terminal_scheme_light = id.into();
+        }
+    }
     pub fn panel_font(&self) -> u32 {
         if self.cache.panel_font == 0 {
             100

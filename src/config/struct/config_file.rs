@@ -357,6 +357,13 @@ pub struct ConfigFile {
     /// the interface or switches light/dark. Default false keeps them on.
     #[serde(default)]
     pub immersive_colors_disabled: bool,
+    /// Terminal colour scheme used in dark mode (Settings › Terminal colours).
+    /// Empty = the default MeatShell terminal colours.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub terminal_scheme_dark: String,
+    /// Terminal colour scheme used in light mode. Empty = default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub terminal_scheme_light: String,
     /// Settings-panel font scale, percent (80–160). 0 = 100% default (v0.5).
     #[serde(default)]
     pub panel_font: u32,

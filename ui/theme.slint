@@ -33,6 +33,18 @@ export struct ThemePalette {
     term-bg: color,
 }
 
+// Terminal colour scheme for one mode (Settings › Terminal colours). Rust fills
+// it from the chosen scheme; `custom` is false for MeatShell's default
+// terminal colours, which keep the colour theme's terminal background and the
+// accent-tinted selection.
+export struct TermColors {
+    custom: bool,
+    bg: color,
+    fg: color,
+    cursor: color,
+    selection: color,
+}
+
 export global Theme {
     // Set by Rust on startup (system detection) and on user toggle.
     in-out property <bool> dark: true;
@@ -145,9 +157,20 @@ export global Theme {
     // Terminal uses its own background so it stays readable regardless of
     // what the shell / remote app outputs via ANSI colour codes. With a
     // wallpaper it frosts (kept neutral, not tinted) so text stays legible.
-    property <color> base-term-bg: root.p.term-bg;
+    // A terminal colour scheme replaces the background, text, cursor and
+    // selection colours for its mode.
+    in-out property <TermColors> term-colors-dark: {
+        custom: false, bg: #0e0f13, fg: #d4d4d4, cursor: #d4d4d4, selection: #4a90e2,
+    };
+    in-out property <TermColors> term-colors-light: {
+        custom: false, bg: #fafafa, fg: #2d2d2f, cursor: #2d2d2f, selection: #0071e3,
+    };
+    property <TermColors> tc: root.dark ? root.term-colors-dark : root.term-colors-light;
+    property <color> base-term-bg: root.tc.custom ? root.tc.bg : root.p.term-bg;
     out property <brush> term-bg: root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg;
-    out property <brush> term-fg: dark ? #d4d4d4 : #2d2d2f;
+    out property <brush> term-fg: root.tc.fg;
+    out property <color> term-cursor: root.tc.cursor;
+    out property <brush> term-selection: root.tc.custom ? root.tc.selection : root.accent.with-alpha(0.40);
 
     // True on macOS (set by Rust). App shortcuts use Cmd (⌘) here instead of
     // Ctrl, so the physical Ctrl key stays free for the shell (^C/^X…) (#158).
