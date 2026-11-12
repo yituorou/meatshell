@@ -373,6 +373,33 @@ fn split_view_survives_a_side_dock() {
 }
 
 #[test]
+fn split_view_uses_the_single_row_toolbar_in_a_side_dock() {
+    // The remote path bar lives in the right pane now, so the split view keeps
+    // one 34px toolbar row even when the dock is narrower than the 560px
+    // compact threshold. Rust's drop rect must mirror that: it used to assume
+    // the 62px two-row toolbar and started the local half 28px too low in a
+    // narrow side dock. Comparing a narrow and a wide dock avoids hard-coding
+    // the window chrome (the custom title bar differs per platform).
+    let pane_top = |panel_width: f32| {
+        std::thread::spawn(move || {
+            let (ui, _window) = build_ui(true, panel_width, 260.0, 1400, 800, "right");
+            let (_tab, rect) =
+                active_sftp_local_pane_rect(&ui).expect("split view should expose the local half");
+            rect.y
+        })
+        .join()
+        .unwrap()
+    };
+    let narrow = pane_top(520.0);
+    let wide = pane_top(900.0);
+    assert!(
+        (narrow - wide).abs() <= 0.5,
+        "local half starts at {narrow} in a 520px dock but {wide} in a 900px dock; \
+         the split view must use the same single-row toolbar in both"
+    );
+}
+
+#[test]
 fn os_drop_hit_test_matches_the_visible_split() {
     // The OS drop handler routes a file to the local half by geometry; it must
     // agree with the pane the user actually sees (even split by default).

@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **双栏界面整理：双栏开关不再混在“文件 / 隧道”标签里，远端地址栏移入右栏。** “文件”和“隧道”是同级标签，双栏只是文件视图的一种显示方式，现在和折叠按钮一起放在工具栏右端；开启双栏后工具栏只保留标签、勾选操作和双栏开关，远端路径、收藏、位置、复制/粘贴、上级、刷新、上传都移到右侧列表上方的地址栏，与左侧本机地址栏同高，不再一上一下。
+- **Tidier split view: the Split view toggle no longer sits among the Files / Tunnels tabs, and the remote path bar moves into the right pane.** Files and Tunnels are peers, while splitting is a view mode for the file list, so the toggle now sits at the right end of the toolbar next to the collapse button. With the split view on, the toolbar keeps only the tabs, the checked-item actions and the toggle; the remote path, bookmark, places, copy/paste, up, refresh and upload controls move into a path bar above the right listing, level with the local pane's own bar instead of one row higher.
+
 - **本机“位置”下拉的小改进：最近项可单独移除、收藏可上下排序、可打开所在文件夹。** 最近列表悬停出现 ×，只删这一条（“清除最近访问”仍在）；收藏行悬停出现 ↑ / ↓ 调整顺序（顺序会保存，决定菜单里的先后）；菜单底部新增“打开所在文件夹”，用系统文件管理器打开左侧当前目录。
 - **Local places menu polish: remove one recent entry, reorder bookmarks, open the folder in the file manager.** Recent rows show a × on hover that drops just that entry (the bulk "Clear recent" stays); bookmark rows show ↑ / ↓ to reorder them (the order is saved and drives the menu); a new "Open in file manager" item at the bottom opens the folder the pane is showing.
 - **本机侧列表支持隐藏文件开关、点列头排序和按名称筛选。** 路径栏新增“眼睛”按钮切换隐藏/系统项（Windows 属性、Unix 点文件），默认隐藏，AppData、$RECYCLE.BIN 不再占满列表；名称、大小、修改时间列头可点击，按升序 → 降序 → 默认（文件夹在前、自然名称序）循环，当前排序列高亮并带箭头；面板够宽时路径栏下多一行筛选框，输入即按名称过滤（大小写不敏感），切换目录保留。隐藏开关与排序列随布局保存。
