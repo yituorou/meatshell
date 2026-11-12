@@ -423,3 +423,173 @@ fn tab_menu_session_log_starts_and_stops_independently_of_the_setting() {
     assert!(text.contains("session log closed"));
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Replays a captured log flood (`target/flood.typescript.gz`, recorded with
+/// `script` from the log-flood heavy profile) through ingest + render + the
+/// span-model sync the way the session pump and UI flush do, and prints how
+/// the cost develops as history fills. `FLOOD_MB` limits the replay. Run with
+/// `cargo test --bin meatshell flood_replay_profile -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn flood_replay_profile() {
+    use slint::Model as _;
+    use std::io::Read as _;
+    use std::time::{Duration, Instant};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/flood.typescript.gz");
+    let mut data = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&path).expect("capture"))
+        .read_to_end(&mut data)
+        .unwrap();
+    let limit = std::env::var("FLOOD_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(data.len(), |mb| (mb << 20).min(data.len()));
+    let data = &data[..limit];
+
+    let mut buf = make_buf(40, 180, &[], &[], 0);
+    buf.is_dark = true;
+    buf.output_highlight = OutputHighlightPreset::DevOps;
+    buf.json_format_output = true;
+    let model = slint::VecModel::<crate::ui::TermSpan>::default();
+
+    const CHUNK: usize = 64 * 1024;
+    let total = data.len().div_ceil(CHUNK);
+    let every = (total / 16).max(1);
+    let (mut ingest, mut ingest_max, mut render) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    let (mut spans, mut spans_max, mut changed, mut changed_max, mut bytes) = (0usize, 0, 0, 0, 0);
+    println!(
+        "{:>6} {:>8} {:>8} {:>10} {:>9} {:>7} {:>9} {:>7} {:>8}",
+        "MiB", "history", "MB/s", "ingestmax", "render", "spans", "spansmax", "changed", "chgmax"
+    );
+    for (i, chunk) in data.chunks(CHUNK).enumerate() {
+        let t = Instant::now();
+        let _ = buf.ingest(chunk);
+        let d = t.elapsed();
+        ingest += d;
+        ingest_max = ingest_max.max(d);
+        bytes += chunk.len();
+
+        let t = Instant::now();
+        let built = buf.render();
+        render += t.elapsed();
+        let before: Vec<_> = model.iter().collect();
+        let n = built.spans.len();
+        crate::app::terminal_ui::sync_span_model(&model, built.spans);
+        let c = (0..model.row_count())
+            .filter(|&r| before.get(r) != model.row_data(r).as_ref())
+            .count();
+        spans += n;
+        spans_max = spans_max.max(n);
+        changed += c;
+        changed_max = changed_max.max(c);
+
+        if (i + 1) % every == 0 || i + 1 == total {
+            let n = ((i % every) + 1) as u32;
+            println!(
+                "{:>6.1} {:>8} {:>8.1} {:>8.1}ms {:>7.2}ms {:>7} {:>9} {:>7} {:>8}",
+                ((i + 1) * CHUNK) as f64 / 1048576.0,
+                buf.history.len(),
+                bytes as f64 / 1e6 / ingest.as_secs_f64().max(1e-9),
+                ingest_max.as_secs_f64() * 1e3,
+                (render / n).as_secs_f64() * 1e3,
+                spans / n as usize,
+                spans_max,
+                changed / n as usize,
+                changed_max,
+            );
+            (ingest, ingest_max, render) = (Duration::ZERO, Duration::ZERO, Duration::ZERO);
+            (spans, spans_max, changed, changed_max, bytes) = (0, 0, 0, 0, 0);
+        }
+    }
+}
+
+/// While a pump thread ingests the captured flood as fast as it can (a
+/// backlog), the UI thread does what one scrollbar-drag step does every 8 ms:
+/// lock the buffer, move `view_offset`, render. Prints how long each step
+/// waited for the lock. Run with
+/// `cargo test --release --bin meatshell flood_scrollbar_lock_wait -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn flood_scrollbar_lock_wait() {
+    use std::io::Read as _;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/flood.typescript.gz");
+    let mut data = Vec::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&path).expect("capture"))
+        .read_to_end(&mut data)
+        .unwrap();
+    data.truncate(96 << 20);
+
+    let mut buf = make_buf(40, 180, &[], &[], 0);
+    buf.is_dark = true;
+    buf.output_highlight = OutputHighlightPreset::DevOps;
+    buf.json_format_output = true;
+    // Start with full history so drags have somewhere to go.
+    for chunk in data[..(24 << 20)].chunks(16 * 1024) {
+        let _ = buf.ingest(chunk);
+    }
+    let handle = Arc::new(Mutex::new(buf));
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let pump = {
+        let handle = handle.clone();
+        let stop = stop.clone();
+        let rest = data[(24 << 20)..].to_vec();
+        std::thread::spawn(move || {
+            let mut bytes = 0usize;
+            for chunk in rest.chunks(16 * 1024) {
+                if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let _ = crate::app::term_output::with_pump_lock(&handle, |b| b.ingest(chunk));
+                bytes += chunk.len();
+            }
+            bytes
+        })
+    };
+
+    let mut waits = Vec::new();
+    let mut renders = Vec::new();
+    let started = Instant::now();
+    let mut step = 0usize;
+    while started.elapsed() < Duration::from_secs(4) {
+        let t = Instant::now();
+        let mut b = crate::app::term_output::lock_for_ui(&handle);
+        waits.push(t.elapsed());
+        let max = b.history.len().max(1);
+        b.view_offset = 1 + (step * 37) % max;
+        let t = Instant::now();
+        let _ = b.render();
+        renders.push(t.elapsed());
+        drop(b);
+        step += 1;
+        std::thread::sleep(Duration::from_millis(8));
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let pumped = pump.join().unwrap();
+
+    waits.sort();
+    renders.sort();
+    let pct = |v: &[Duration], p: f64| v[((v.len() - 1) as f64 * p) as usize].as_secs_f64() * 1e3;
+    println!(
+        "drag steps {} | pump ingested {:.1} MiB in 4 s",
+        waits.len(),
+        pumped as f64 / 1048576.0
+    );
+    println!(
+        "lock wait  p50 {:.2}ms  p90 {:.2}ms  p99 {:.2}ms  max {:.2}ms",
+        pct(&waits, 0.5),
+        pct(&waits, 0.9),
+        pct(&waits, 0.99),
+        pct(&waits, 1.0)
+    );
+    println!(
+        "render     p50 {:.2}ms  p99 {:.2}ms  max {:.2}ms",
+        pct(&renders, 0.5),
+        pct(&renders, 0.99),
+        pct(&renders, 1.0)
+    );
+}

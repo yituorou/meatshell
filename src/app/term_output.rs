@@ -4,11 +4,21 @@ use crate::terminal::ScreenDims as _;
 use super::*;
 
 /// Max bytes merged into one Output event before starting a fresh chunk (#209).
-/// Keeps a single UI callback from spending hundreds of ms in vt100 ingest.
-pub(super) const OUTPUT_MERGE_BYTE_CAP: usize = 64 * 1024;
+/// The pump holds the tab's buffer lock for one whole event, and a UI frame
+/// (or a scrollbar drag) waits on that lock: 16 KiB keeps each hold around a
+/// millisecond even for dense truecolor logs, instead of ~5 ms at 64 KiB.
+pub(super) const OUTPUT_MERGE_BYTE_CAP: usize = 16 * 1024;
 
 /// Output parsed between UI-flush checkpoints during sustained traffic.
-pub(super) const INGEST_FRAME_BUDGET: usize = 64 * 1024;
+///
+/// The pump waits for a UI flush after each budget, so budget × frame rate is
+/// the most output the terminal can show per second while paced. At 64 KiB and
+/// 60 Hz that was ~3.9 MB/s: a log flood just above it built a backlog, and
+/// past `PACED_LOCAL_BACKLOG_LIMIT` the pump stopped pacing and ingested in a
+/// burst, so the view froze and then jumped — a stutter every few lines. At
+/// 256 KiB and 120 Hz the paced ceiling is ~31 MB/s; frames still come at the
+/// render interval and simply show however much arrived since the last one.
+pub(super) const INGEST_FRAME_BUDGET: usize = 256 * 1024;
 
 /// A busy or closing UI must never block a session pump indefinitely.
 pub(super) const UI_FLUSH_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
@@ -18,13 +28,14 @@ pub(super) const UI_FLUSH_ACK_TIMEOUT: std::time::Duration = std::time::Duration
 pub(super) const PACED_LOCAL_BACKLOG_LIMIT: usize = 1024 * 1024;
 pub(super) const PACED_QUEUE_EVENT_LIMIT: usize = 256;
 
-/// Max UI renders per second for a tab under sustained output (#209). 60 Hz:
-/// frames now update the span model in place (only new lines are re-shaped),
-/// so the old 30 Hz cap made scrolling logs look choppy for no CPU benefit.
-pub(super) const RENDER_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
-/// Echo produced shortly after a physical keypress should feel immediate. This
-/// temporary 120 Hz ceiling is still coalesced, then falls back to 60 Hz once
-/// the user stops typing so firehose output keeps its existing CPU protection.
+/// Max UI renders per second for a tab under sustained output (#209). 120 Hz:
+/// building a frame costs well under a millisecond (span model updated in
+/// place), and 60 Hz looked steppy on high-refresh displays next to terminals
+/// that follow the monitor (FinalShell runs at 120 fps).
+pub(super) const RENDER_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(8);
+/// Echo produced shortly after a physical keypress should feel immediate. Kept
+/// as its own ceiling (now equal to the normal one) so typing stays at least
+/// this responsive if the normal rate is ever lowered again.
 pub(super) const INTERACTIVE_RENDER_MIN_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(8);
 pub(super) const INTERACTIVE_ECHO_WINDOW: std::time::Duration =
@@ -33,6 +44,49 @@ pub(super) const INTERACTIVE_ECHO_WINDOW: std::time::Duration =
 /// needs occasional model refreshes for its scrollbar metadata (#306).
 pub(super) const SCROLLED_RENDER_MIN_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(100);
+
+/// UI-thread lock requests currently waiting for a terminal buffer.
+///
+/// The OS mutex is not fair: during a log flood a session pump releases a
+/// buffer after one chunk and re-locks it for the next before a waiting UI
+/// thread wakes, so a scrollbar drag could wait seconds for one frame
+/// (measured: 3 drag steps in 4 s, worst wait 3.8 s). Pumps check this before
+/// each chunk and step aside, so the UI gets the next turn and the pump the
+/// one after it.
+static UI_LOCK_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How long a pump yields to waiting UI requests before taking its turn
+/// anyway (it never blocks a pump for longer than one UI critical section
+/// plus this).
+const PUMP_YIELD_LIMIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Lock a tab's buffer from a session pump (ingest), letting any UI thread
+/// that is waiting for a buffer go first.
+pub(super) fn with_pump_lock<R>(
+    handle: &std::sync::Mutex<TermBuffer>,
+    f: impl FnOnce(&mut TermBuffer) -> R,
+) -> R {
+    use std::sync::atomic::Ordering;
+    if UI_LOCK_WAITERS.load(Ordering::Acquire) > 0 {
+        let deadline = std::time::Instant::now() + PUMP_YIELD_LIMIT;
+        while UI_LOCK_WAITERS.load(Ordering::Acquire) > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
+    }
+    let mut guard = handle.lock().unwrap();
+    f(&mut guard)
+}
+
+/// Lock a tab's buffer from the UI thread; pumps hold off until it has it.
+pub(super) fn lock_for_ui(
+    handle: &std::sync::Mutex<TermBuffer>,
+) -> std::sync::MutexGuard<'_, TermBuffer> {
+    use std::sync::atomic::Ordering;
+    UI_LOCK_WAITERS.fetch_add(1, Ordering::AcqRel);
+    let guard = handle.lock();
+    UI_LOCK_WAITERS.fetch_sub(1, Ordering::AcqRel);
+    guard.unwrap()
+}
 
 pub(super) fn term_buf(bufs: &TermBuffers, tab_id: &str) -> Option<TermBufferHandle> {
     bufs.lock().unwrap().get(tab_id).cloned()
@@ -62,7 +116,7 @@ pub(super) fn with_term_buf<R>(
     f: impl FnOnce(&mut TermBuffer) -> R,
 ) -> Option<R> {
     let h = term_buf(bufs, tab_id)?;
-    let mut guard = h.lock().unwrap();
+    let mut guard = lock_for_ui(&h);
     Some(f(&mut guard))
 }
 
@@ -98,7 +152,7 @@ pub(super) fn handle_scrollback_key(buf: &mut TermBuffer, key: ScrollbackKey) ->
 
 pub(super) fn ingest_terminal_output(bufs: &TermBuffers, tab_id: &str, chunk: &[u8]) -> Vec<u8> {
     if let Some(h) = term_buf(bufs, tab_id) {
-        h.lock().unwrap().ingest(chunk)
+        with_pump_lock(&h, |buf| buf.ingest(chunk))
     } else {
         Vec::new()
     }
