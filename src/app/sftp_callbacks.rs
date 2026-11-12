@@ -288,6 +288,7 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
             let mut enable = false;
             let mut path = String::new();
             let mut loaded = false;
+            let mut filtered = false;
             for i in 0..model.row_count() {
                 let Some(row) = model.row_data(i) else { continue };
                 if row.id.as_str() != tab {
@@ -296,9 +297,15 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
                 enable = !row.sftp_dual;
                 path = row.sftp_local_path.to_string();
                 loaded = row.sftp_local_entries.row_count() > 0;
+                filtered = !row.sftp_filter.is_empty();
                 break;
             }
             update_terminal_row(model, &tab, |row| row.sftp_dual = enable);
+            if !enable && filtered {
+                // The remote filter box only exists in the split view; don't
+                // leave the classic list silently filtered.
+                set_remote_filter(&w, &tab, "");
+            }
             // Remember the choice so the next launch opens the same view (#532).
             w.set_sftp_split_enabled(enable);
             if enable {
@@ -513,6 +520,15 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         window.on_sftp_local_set_filter(move |tab_id: SharedString, text: SharedString| {
             let Some(w) = weak.upgrade() else { return };
             set_filter(&w, tab_id.as_str(), text.as_str());
+        });
+    }
+    {
+        // Remote name filter in the split view: re-filter the listing kept in
+        // the tab, so typing costs no SFTP round trip.
+        let weak = window.as_weak();
+        window.on_sftp_set_filter(move |tab_id: SharedString, text: SharedString| {
+            let Some(w) = weak.upgrade() else { return };
+            set_remote_filter(&w, tab_id.as_str(), text.as_str());
         });
     }
     {
@@ -1466,6 +1482,31 @@ fn set_sftp_status(w: &AppWindow, tab_id: &str, message: &str) {
             }
         }
     }
+}
+
+/// Remote name filter edited (split view): republish the matches from the full
+/// listing kept in the tab, re-applying the current sort order. The checked set
+/// is cleared, because a hidden checked row would otherwise keep the toolbar
+/// count alive without being part of the batch actions.
+pub(super) fn set_remote_filter(w: &AppWindow, tab_id: &str, text: &str) {
+    let terminals = w.get_terminals();
+    let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+        return;
+    };
+    update_terminal_row(model, tab_id, |row| {
+        let mut all: Vec<SftpEntry> = (0..row.sftp_all_entries.row_count())
+            .filter_map(|i| row.sftp_all_entries.row_data(i))
+            .collect();
+        let key = row.sftp_sort_key.to_string();
+        for entry in &mut all {
+            entry.selected = false;
+        }
+        let shown = filtered_sftp_entries(&all, &key, row.sftp_sort_dir, text);
+        row.sftp_filter = text.to_string().into();
+        row.sftp_all_entries = ModelRc::from(Rc::new(VecModel::from(all)));
+        row.sftp_entries = ModelRc::from(Rc::new(VecModel::from(shown)));
+        row.sftp_selected_count = 0;
+    });
 }
 
 #[cfg(test)]

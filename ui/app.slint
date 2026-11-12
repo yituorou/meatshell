@@ -82,6 +82,10 @@ export struct TerminalState {
     // SFTP panel state
     sftp-path: string,
     sftp-entries: [SftpEntry],
+    // Unfiltered remote listing, kept so the name filter can be changed (or
+    // cleared) without another round trip to the server.
+    sftp-all-entries: [SftpEntry],
+    sftp-filter: string,        // remote name filter; "" = show everything
     sftp-status: string,
     sftp-loading: bool,
     sftp-tree-nodes: [SftpTreeNode],
@@ -1471,6 +1475,7 @@ export component AppWindow inherits Window {
     callback sftp-local-toggle-hidden(string /* tab-id */);
     callback sftp-local-sort(string /* tab-id */, string /* column */);
     callback sftp-local-set-filter(string /* tab-id */, string /* text */);
+    callback sftp-set-filter(string /* tab-id */, string /* text */);
     callback sftp-local-remove-recent(string /* tab-id */, string /* path */);
     callback sftp-local-move-bookmark(string /* tab-id */, string /* path */, int /* delta */);
     callback sftp-local-reveal(string /* tab-id */);
@@ -2335,6 +2340,7 @@ export component AppWindow inherits Window {
                         toggle-sftp-column(key) => { root.toggle-sftp-column(key); }
                         sftp-path: term.sftp-path;
                         sftp-entries: term.sftp-entries;
+                        sftp-filter: term.sftp-filter;
                         sftp-status: term.sftp-status;
                         sftp-loading: term.sftp-loading;
                         sftp-tree-nodes: term.sftp-tree-nodes;
@@ -2380,6 +2386,9 @@ export component AppWindow inherits Window {
                         }
                         sftp-local-set-filter(text) => {
                             root.sftp-local-set-filter(term.id, text);
+                        }
+                        sftp-set-filter(text) => {
+                            root.sftp-set-filter(term.id, text);
                         }
                         sftp-local-remove-recent(path) => {
                             root.sftp-local-remove-recent(term.id, path);

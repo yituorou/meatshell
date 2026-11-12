@@ -473,6 +473,9 @@ component LocalPane inherits Rectangle {
     in property <string> sort-key;
     in property <int> sort-dir: 0;
     in property <string> filter: "";
+    // The panel shows the local and remote filter rows together so the two
+    // listings line up in the split view.
+    in property <bool> show-filter: false;
 
     callback navigate(string);      // "..", "~" or a typed path
     callback up();
@@ -659,7 +662,7 @@ component LocalPane inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border-subtle; }
 
         // --- Filter row -----------------------------------------------------
-        if root.width > 320px : Rectangle {
+        if root.show-filter : Rectangle {
             height: 26px;
             background: Theme.bg-panel-alt;
             HorizontalLayout {
@@ -1019,6 +1022,9 @@ export component SftpPanel inherits Rectangle {
     // --- Properties --------------------------------------------------------
     in property <string>  current-path: "/";
     in property <[SftpEntry]>    entries;
+    // Remote name filter (split view). Rust keeps the unfiltered listing in
+    // TerminalState and republishes `entries` for the current text.
+    in property <string>  filter: "";
     in property <string>  status: @tr("SFTP not connected");
     in property <bool>    loading: false;
     in property <[SftpTreeNode]> tree-nodes: [];
@@ -1042,6 +1048,13 @@ export component SftpPanel inherits Rectangle {
     // into the other. The remote path bar and its buttons keep working as before,
     // so the toolbar always describes the *remote* side.
     in property <bool> dual: false;
+    // The two panes show their name-filter rows as a pair, so in the split view
+    // both listings start at the same height. One threshold for the whole panel
+    // (roughly two 320px panes plus the divider) keeps the rows from eating a
+    // narrow side dock; an active filter keeps them visible after a resize so
+    // the text can still be edited or cleared.
+    property <bool> filter-row-shown:
+        root.width > 660px || root.local-filter != "" || root.filter != "";
     in property <[SftpEntry]> local-entries;
     in property <string> local-path: "";
     in property <string> local-status: "";
@@ -1235,6 +1248,8 @@ export component SftpPanel inherits Rectangle {
     // Split view: local pane + two-way transfers (the panel forwards these to
     // the app shell, which owns the local filesystem side).
     callback toggle-dual();
+    // Remote name filter (split view).
+    callback set-filter(string /* text */);
     callback local-navigate(string /* path */);
     callback local-up();
     callback local-home();
@@ -1970,6 +1985,8 @@ export component SftpPanel inherits Rectangle {
                 loading: root.local-loading;
                 status: root.local-status;
                 selected-count: root.local-selected-count;
+                filter: root.local-filter;
+                show-filter: root.filter-row-shown;
                 quick-places: root.local-quick-places;
                 drive-places: root.local-drive-places;
                 bookmarks: root.local-bookmarks;
@@ -1978,7 +1995,6 @@ export component SftpPanel inherits Rectangle {
                 show-hidden: root.local-show-hidden;
                 sort-key: root.local-sort-key;
                 sort-dir: root.local-sort-dir;
-                filter: root.local-filter;
                 navigate(path)        => { root.local-navigate(path); }
                 up()                  => { root.local-up(); }
                 home()                => { root.local-home(); }
@@ -2186,6 +2202,48 @@ export component SftpPanel inherits Rectangle {
                     }
                 }
                 Rectangle { visible: root.dual; height: 1px; background: Theme.border-subtle; }
+
+                // Remote name filter: mirrors the local pane's row so both
+                // listings start at the same height. Rust filters the unfiltered
+                // listing held by the tab, so no extra SFTP round trip is needed.
+                if root.dual && root.filter-row-shown : Rectangle {
+                    height: 26px;
+                    background: Theme.bg-panel-alt;
+                    HorizontalLayout {
+                        padding-left: 6px; padding-right: 6px; spacing: 4px;
+                        Text {
+                            width: 14px;
+                            text: "\u{E8B6}";
+                            font-family: "Material Icons";
+                            color: Theme.text-muted; font-size: Theme.fs-xs;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 20px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.bg-root;
+                            border-width: 1px;
+                            border-color: remote-filter-input.has-focus ? Theme.accent : Theme.border-subtle;
+                            remote-filter-input := TextInput {
+                                x: 6px; width: parent.width - 12px; height: parent.height;
+                                text: root.filter;
+                                color: Theme.text-primary;
+                                font-family: Theme.ui-font-family;
+                                font-size: Theme.fs-sm;
+                                vertical-alignment: center;
+                                single-line: true;
+                                edited => { root.set-filter(remote-filter-input.text); }
+                            }
+                            if remote-filter-input.text == "" : Text {
+                                x: 6px; height: parent.height;
+                                text: @tr("Filter names");
+                                color: Theme.text-muted; font-size: Theme.fs-xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
 
                 // Column headers
                 column-header := Rectangle {

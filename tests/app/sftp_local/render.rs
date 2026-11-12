@@ -64,6 +64,8 @@ fn terminal(
         selection: ModelRc::from(Rc::new(VecModel::default())),
         sftp_path: "/home/me".into(),
         sftp_entries: ModelRc::from(Rc::new(VecModel::from(remote_entries))),
+        sftp_all_entries: ModelRc::from(Rc::new(VecModel::<SftpEntry>::default())),
+        sftp_filter: "".into(),
         sftp_status: "/home/me".into(),
         sftp_loading: false,
         sftp_tree_nodes: ModelRc::from(Rc::new(VecModel::default())),
@@ -426,6 +428,74 @@ fn os_drop_hit_test_matches_the_visible_split() {
             sftp_local_pane_hit(&ui, rect.x + 40.0, rect.y - 40.0).is_none(),
             "the toolbar is not a drop target"
         );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn remote_filter_narrows_the_right_listing() {
+    // The remote filter box writes through `sftp-set-filter` into the tab; the
+    // full listing stays in `sftp-all-entries`, so clearing the text restores
+    // every row without another SFTP round trip.
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let mut t = model.row_data(0).expect("tab");
+            let all = vec![
+                row("src", true, "", "2026-10-27 10:00"),
+                row("notes.txt", false, "1.2 KB", "2026-10-26 22:15"),
+                row("nginx.conf", false, "2.8 KB", "2026-10-19 17:42"),
+            ];
+            t.sftp_all_entries = ModelRc::from(Rc::new(VecModel::from(all.clone())));
+            t.sftp_entries = ModelRc::from(Rc::new(VecModel::from(all)));
+            model.set_row_data(0, t);
+        }
+
+        let names = |ui: &AppWindow| -> Vec<String> {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let t = model.row_data(0).expect("tab");
+            (0..t.sftp_entries.row_count())
+                .filter_map(|i| t.sftp_entries.row_data(i))
+                .map(|entry| entry.name.to_string())
+                .collect()
+        };
+
+        // Case-insensitive substring, with the folder-first order preserved.
+        set_remote_filter(&ui, "t1", "NGINX");
+        assert_eq!(names(&ui), ["nginx.conf"]);
+        // Visual QA: the right filter box shows the text, the listing shrinks.
+        let pixels = render_frame(&window, 1100, 800);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/sftp-filter-qa.png"),
+            &bytes,
+            1100,
+            800,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        let terminals = ui.get_terminals();
+        let model = terminals.as_any().downcast_ref::<VecModel<TerminalState>>().unwrap();
+        assert_eq!(model.row_data(0).unwrap().sftp_filter.as_str(), "NGINX");
+
+        // Clearing the filter brings the whole listing back.
+        set_remote_filter(&ui, "t1", "");
+        assert_eq!(names(&ui), ["src", "nginx.conf", "notes.txt"]);
+        assert!(names(&ui).len() == 3);
+
+        // A filter that matches nothing leaves an empty list, not everything.
+        set_remote_filter(&ui, "t1", "zzz");
+        assert!(names(&ui).is_empty());
     })
     .join()
     .unwrap();

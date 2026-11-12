@@ -1420,6 +1420,10 @@ pub(super) fn wire_session_callbacks(
                 selection: ModelRc::from(std::rc::Rc::new(VecModel::<TermMatch>::default())),
                 sftp_path: "/".into(),
                 sftp_entries: ModelRc::from(std::rc::Rc::new(VecModel::<SftpEntry>::default())),
+                sftp_all_entries: ModelRc::from(std::rc::Rc::new(
+                    VecModel::<SftpEntry>::default(),
+                )),
+                sftp_filter: "".into(),
                 sftp_status: if has_sftp {
                     t("SFTP 连接中...", "SFTP connecting...").into()
                 } else {

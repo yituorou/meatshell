@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **双栏右栏新增“筛选名称”，两栏列表从此对齐。** 双栏且面板足够宽时，右侧远端列表上方和左侧一样出现筛选框：输入即按名称过滤（大小写不敏感），沿用当前排序列，切换目录后仍然生效，且不需要重新连服务器（过滤的是已读到的完整列表）。过滤时清空勾选，避免看不见的勾选项继续留在计数里。左右两行筛选框同时出现/收起，所以两栏的列头和文件行从同一高度开始。
+- **The remote half of the split view has its own name filter, and the two listings now line up.** When the split view is on and the panel is wide enough, a filter box sits above the right listing just like the local one: typing filters names (case-insensitively), follows the current sort column, survives navigation, and costs no extra SFTP round trip because the full listing is already in memory. Changing the filter clears the checked set so hidden checks cannot keep the toolbar count alive. Both filter rows appear and disappear together, so the two column headers and file rows start at the same height.
+
 - **双栏界面整理：双栏开关不再混在“文件 / 隧道”标签里，远端地址栏移入右栏。** “文件”和“隧道”是同级标签，双栏只是文件视图的一种显示方式，现在和折叠按钮一起放在工具栏右端；开启双栏后工具栏只保留标签、勾选操作和双栏开关，远端路径、收藏、位置、复制/粘贴、上级、刷新、上传都移到右侧列表上方的地址栏，与左侧本机地址栏同高，不再一上一下。
 - **Tidier split view: the Split view toggle no longer sits among the Files / Tunnels tabs, and the remote path bar moves into the right pane.** Files and Tunnels are peers, while splitting is a view mode for the file list, so the toggle now sits at the right end of the toolbar next to the collapse button. With the split view on, the toolbar keeps only the tabs, the checked-item actions and the toggle; the remote path, bookmark, places, copy/paste, up, refresh and upload controls move into a path bar above the right listing, level with the local pane's own bar instead of one row higher.
 
