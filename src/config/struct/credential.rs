@@ -50,11 +50,12 @@ impl Credential {
 
     /// One-line summary for lists: `root · password`.
     pub fn summary(&self) -> String {
+        use crate::i18n::t;
         let method = match self.auth {
-            AuthMethod::Password => "password",
-            AuthMethod::KeyboardInteractive => "keyboard-interactive",
-            AuthMethod::Key if !self.private_key_inline.is_empty() => "pasted key",
-            AuthMethod::Key => "key file",
+            AuthMethod::Password => t("密码", "password"),
+            AuthMethod::KeyboardInteractive => t("键盘交互", "keyboard-interactive"),
+            AuthMethod::Key if !self.private_key_inline.is_empty() => t("粘贴的私钥", "pasted key"),
+            AuthMethod::Key => t("私钥文件", "key file"),
         };
         if self.user.is_empty() {
             method.to_string()
