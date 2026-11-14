@@ -7,10 +7,14 @@
 # force a large allocation (denial of service). The fix caps the agent frame at
 # 256 KiB.
 #
-# meatshell does NOT use the ssh-agent in any way — no agent authentication, no
-# agent forwarding (grep the source tree for "agent": the only hits are HTTP
-# "User-Agent" and colour comments). The vulnerable code path is therefore never
-# reached in this binary, so the advisory is not exploitable here.
+# meatshell never uses russh's agent code (russh_keys::agent / AgentClient) and
+# has no agent forwarding. SSH-agent login (#528, Bitwarden etc.) goes through
+# meatshell's own minimal agent client, src/ssh/impls/agent.rs, which applies
+# the same 256 KiB frame cap as the fix before allocating (covered by the test
+# `oversized_frames_are_refused_before_allocating`) and hands signatures to
+# russh only through its public `Signer` trait. The vulnerable code path is
+# therefore never reached in this binary, so the advisory is not exploitable
+# here. Keep it that way: don't switch agent.rs to russh's AgentClient.
 #
 # We are deliberately NOT upgrading to the patched russh yet: the only fixed
 # release (>= 0.60.3) pulls in a stack of *pre-release* crypto crates

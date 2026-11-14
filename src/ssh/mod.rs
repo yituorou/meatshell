@@ -1,5 +1,7 @@
 #[path = "struct/mod.rs"]
 mod structs;
+#[path = "impls/agent.rs"]
+pub(crate) mod agent;
 #[path = "impls/connection.rs"]
 mod connection;
 #[path = "impls/cwd.rs"]

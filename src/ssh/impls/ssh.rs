@@ -1395,6 +1395,7 @@ pub(crate) async fn authenticate_session(
             )
             .await?
         }
+        AuthMethod::Agent => agent_auth(handle, &user, session, events).await?,
     };
 
     if authed {
@@ -1402,6 +1403,29 @@ pub(crate) async fn authenticate_session(
     } else {
         Ok(AuthResult::Failed)
     }
+}
+
+/// Log in with keys held by the user's SSH agent (#528); see `agent::login`.
+pub(crate) async fn agent_auth<H: Handler>(
+    handle: &mut Handle<H>,
+    user: &str,
+    session: &Session,
+    events: &UnboundedSender<SessionEvent>,
+) -> Result<bool> {
+    let mut agent = super::agent::Agent::connect().await?;
+    let _ = events.send(SessionEvent::Status(format!(
+        "{} {}@{}:{}",
+        t(
+            "正在通过 SSH Agent 认证（如 Bitwarden 弹出确认，请批准）",
+            "Authenticating with the SSH agent (approve the login if Bitwarden asks)",
+        ),
+        user,
+        session.host,
+        session.port
+    )));
+    super::agent::login(handle, user, &mut agent)
+        .await
+        .with_context(|| format!("SSH agent authentication at {}:{}", session.host, session.port))
 }
 
 /// Connect + authenticate a jump/bastion session, open a `direct-tcpip` channel

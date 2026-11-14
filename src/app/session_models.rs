@@ -621,6 +621,14 @@ pub(super) fn session_from_draft(
         draft.private_key_path.to_string().replace('\\', "/")
     };
     let kind = SessionKind::from_str(&draft.kind.to_string());
+    // An SSH agent session (#528) keeps no secrets of its own: the agent
+    // holds the key, so drop any password / key left from another method.
+    let agent = kind == SessionKind::Ssh && AuthMethod::from_str(&draft.auth.to_string()) == AuthMethod::Agent;
+    let (password, private_key_inline, private_key_path) = if agent {
+        (Secret::default(), Secret::default(), String::new())
+    } else {
+        (password, private_key_inline, private_key_path)
+    };
     // Auto-name: serial uses the device; otherwise user@host or just host (#110).
     let auto_name = match kind {
         SessionKind::Serial => format!("{} @{}", draft.serial_port, draft.baud_rate),

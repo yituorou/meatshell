@@ -2062,6 +2062,19 @@ export component InterfacePanel inherits Rectangle {
                         selected: root.cred-new-auth == "key";
                         clicked => { root.cred-new-auth = "key"; }
                     }
+                    AuthChoice {
+                        label: root.lang-en ? "SSH agent" : "SSH Agent";
+                        selected: root.cred-new-auth == "agent";
+                        clicked => { root.cred-new-auth = "agent"; }
+                    }
+                }
+                if root.cred-new-auth == "agent" : Text {
+                    text: root.lang-en
+                        ? "Uses a key from a running SSH agent (Bitwarden, 1Password, KeePassXC, OpenSSH agent). Nothing secret is saved here."
+                        : "使用正在运行的 SSH Agent（Bitwarden、1Password、KeePassXC、OpenSSH Agent）中的密钥，这里不保存任何密码或私钥。";
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.panel-font;
+                    wrap: word-wrap;
                 }
                 if root.cred-new-auth == "key" : HorizontalLayout {
                     spacing: 8px;
@@ -2079,7 +2092,7 @@ export component InterfacePanel inherits Rectangle {
                         }
                     }
                 }
-                LabeledInput {
+                if root.cred-new-auth != "agent" : LabeledInput {
                     label: root.cred-new-auth == "key"
                         ? (root.lang-en ? "Key passphrase" : "私钥密码")
                         : (root.lang-en ? "Password" : "密码");

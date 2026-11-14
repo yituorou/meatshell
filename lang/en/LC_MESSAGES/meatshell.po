@@ -872,3 +872,9 @@ msgstr "Saved credential"
 msgid "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
 msgstr "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
 
+
+msgid "SSH agent"
+msgstr "SSH agent"
+
+msgid "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."
+msgstr "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."

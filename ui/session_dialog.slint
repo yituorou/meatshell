@@ -1261,7 +1261,21 @@ export component SessionDialog inherits ModalLayer {
                         active: root.draft-auth == "key";
                         clicked => { root.draft-auth = "key"; }
                     }
+                    SegOption {
+                        label: @tr("SSH agent");
+                        active: root.draft-auth == "agent";
+                        clicked => { root.draft-auth = "agent"; }
+                    }
                 }
+            }
+
+            // SSH agent (#528): the key stays in Bitwarden / 1Password / the
+            // OpenSSH agent; nothing secret is stored with the session.
+            if root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth == "agent" : Text {
+                text: @tr("Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks.");
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                wrap: word-wrap;
             }
 
             if root.draft-kind == "ssh" && !root.credential-linked && (root.draft-auth == "password" || root.draft-auth == "keyboard-interactive") : LabeledInput {
@@ -1430,7 +1444,7 @@ export component SessionDialog inherits ModalLayer {
                 value <=> root.draft-password;
             }
 
-            if (root.draft-kind == "ssh" && !root.credential-linked) || root.draft-kind == "rdp" || root.draft-kind == "telnet" : CheckBox {
+            if (root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth != "agent") || root.draft-kind == "rdp" || root.draft-kind == "telnet" : CheckBox {
                 text: @tr("Allow viewing saved credentials in this session");
                 checked <=> root.allow-secret-reveal;
                 toggled => {
@@ -1439,7 +1453,7 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
-            if root.allow-secret-reveal && ((root.draft-kind == "ssh" && !root.credential-linked) || root.draft-kind == "rdp" || root.draft-kind == "telnet") : Text {
+            if root.allow-secret-reveal && ((root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth != "agent") || root.draft-kind == "rdp" || root.draft-kind == "telnet") : Text {
                 text: @tr("Credentials start hidden. Click the eye to view. Save to remember this option.");
                 color: Theme.text-muted;
                 font-size: Theme.fs-xs;

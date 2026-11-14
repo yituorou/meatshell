@@ -449,6 +449,8 @@ async fn run_sftp(
             )
             .await?
         }
+        // Its own connection, so the agent signs (and may ask) again (#528).
+        AuthMethod::Agent => crate::ssh::agent_auth(&mut handle, &user, &session, &events).await?,
     };
 
     if !authed {

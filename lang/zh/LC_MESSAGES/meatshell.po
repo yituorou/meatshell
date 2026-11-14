@@ -874,3 +874,9 @@ msgstr "已保存的认证"
 msgid "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
 msgstr "此会话使用上面选择的已保存认证登录。在 设置 › 认证管理 中修改用户名或密码，所有使用它的会话都会同步更新。"
 
+
+msgid "SSH agent"
+msgstr "SSH Agent"
+
+msgid "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."
+msgstr "使用正在运行的 SSH Agent（Bitwarden、1Password、KeePassXC 或 OpenSSH Agent）中的密钥登录，此会话不保存任何密码或私钥。如密码管理器弹出确认，请批准登录。"

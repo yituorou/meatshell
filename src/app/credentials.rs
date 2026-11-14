@@ -69,6 +69,10 @@ fn credential_from_form(
         // A password is not a key passphrase (and vice versa).
         credential.password = Secret::default();
     }
+    if auth == AuthMethod::Agent {
+        // The agent holds the key (#528); nothing secret is kept here.
+        credential.password = Secret::default();
+    }
     if auth == AuthMethod::Key {
         if !key_path.is_empty() {
             credential.private_key_path = key_path;

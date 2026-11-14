@@ -56,6 +56,7 @@ impl Credential {
             AuthMethod::KeyboardInteractive => t("键盘交互", "keyboard-interactive"),
             AuthMethod::Key if !self.private_key_inline.is_empty() => t("粘贴的私钥", "pasted key"),
             AuthMethod::Key => t("私钥文件", "key file"),
+            AuthMethod::Agent => t("SSH Agent", "SSH agent"),
         };
         if self.user.is_empty() {
             method.to_string()

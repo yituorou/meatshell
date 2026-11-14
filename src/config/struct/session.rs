@@ -153,6 +153,9 @@ pub enum AuthMethod {
     #[serde(rename = "keyboard-interactive")]
     KeyboardInteractive,
     Key,
+    /// Keys held by a running SSH agent — Bitwarden, 1Password, KeePassXC,
+    /// the OpenSSH agent (#528). Nothing secret is stored in the session.
+    Agent,
 }
 
 impl AuthMethod {
@@ -161,6 +164,7 @@ impl AuthMethod {
             AuthMethod::Password => "password",
             AuthMethod::KeyboardInteractive => "keyboard-interactive",
             AuthMethod::Key => "key",
+            AuthMethod::Agent => "agent",
         }
     }
 
@@ -168,6 +172,7 @@ impl AuthMethod {
         match s {
             "keyboard-interactive" | "keyboard" | "interactive" => AuthMethod::KeyboardInteractive,
             "key" => AuthMethod::Key,
+            "agent" => AuthMethod::Agent,
             _ => AuthMethod::Password,
         }
     }
