@@ -271,6 +271,47 @@ fn filter_matches_names_case_insensitively() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+#[test]
+fn remote_filter_keeps_the_sort_order_and_ignores_case() {
+    let entry = |name: &str, is_dir: bool, size_bytes: f32| SftpEntry {
+        name: name.into(),
+        full_path: format!("/{name}").into(),
+        is_dir,
+        size: "".into(),
+        size_bytes,
+        modified: "".into(),
+        modified_ts: 0.0,
+        mode: 0,
+        file_type: "".into(),
+        permissions: "".into(),
+        permissions_mode: 0,
+        owner: "".into(),
+        group: "".into(),
+        selected: false,
+    };
+    let all = vec![
+        entry("beta.txt", false, 2.0),
+        entry("Album", true, 0.0),
+        entry("alpha.log", false, 1.0),
+    ];
+    let names = |key: &str, dir: i32, filter: &str| -> Vec<String> {
+        filtered_sftp_entries(&all, key, dir, filter)
+            .into_iter()
+            .map(|entry| entry.name.to_string())
+            .collect()
+    };
+    // Default order: folders first, then natural name order.
+    assert_eq!(names("", 0, ""), ["Album", "alpha.log", "beta.txt"]);
+    // The filter is a case-insensitive substring over names.
+    assert_eq!(names("", 0, "TXT"), ["beta.txt"]);
+    // A sorted column drives the result even though `all` is unsorted, and
+    // filtering preserves that order (folders stay first either way).
+    assert_eq!(names("size", 1, ""), ["Album", "alpha.log", "beta.txt"]);
+    assert_eq!(names("size", -1, "a"), ["Album", "beta.txt", "alpha.log"]);
+    // No match yields an empty list, never the whole listing.
+    assert!(names("", 0, "zzz").is_empty());
+}
+
 #[cfg(windows)]
 #[test]
 fn hidden_entries_are_listed_only_when_asked() {

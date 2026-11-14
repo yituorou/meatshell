@@ -41,6 +41,10 @@ impl SftpHandle {
     pub fn list_dir(&self, path: String) {
         let _ = self.commands.send(SftpCommand::ListDir(path));
     }
+    /// Path completion: folders in `path`, without navigating the panel.
+    pub fn peek_dir(&self, path: String) {
+        let _ = self.commands.send(SftpCommand::PeekDir(path));
+    }
     pub fn refresh_dir(&self, path: String) {
         let _ = self.commands.send(SftpCommand::RefreshDir(path));
     }
@@ -627,6 +631,20 @@ async fn run_sftp(
                         let _ = events.send(SessionEvent::SftpError(list_error_msg(&path, &e)));
                     }
                 }
+            }
+
+            // Path completion: folder names only. No navigation, status line or
+            // tree round-trip — the panel must stay exactly where it is.
+            SftpCommand::PeekDir(path) => {
+                let names = match list_dir_impl(&sftp, &path).await {
+                    Ok(entries) => entries
+                        .into_iter()
+                        .filter(|entry| entry.is_dir)
+                        .map(|entry| entry.name)
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                let _ = events.send(SessionEvent::SftpDirPeek { path, names });
             }
 
             SftpCommand::RefreshDir(path) => {

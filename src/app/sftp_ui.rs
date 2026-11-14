@@ -87,6 +87,21 @@ pub(super) fn sort_sftp_entries(entries: &mut [SftpEntry], key: &str, dir: i32) 
     });
 }
 
+/// The entries of `all` whose names match `filter` (case-insensitive),
+/// presented in the listing's current sort order. The remote pane's filter box
+/// feeds the full listing kept by the tab through this, so typing re-uses what
+/// was already read from the server.
+pub(super) fn filtered_sftp_entries(
+    all: &[SftpEntry],
+    key: &str,
+    dir: i32,
+    filter: &str,
+) -> Vec<SftpEntry> {
+    let mut entries = all.to_vec();
+    sort_sftp_entries(&mut entries, key, dir);
+    filter_entries(&entries, filter)
+}
+
 pub(super) fn natural_name_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     natural_ascii_cmp(&a.to_lowercase(), &b.to_lowercase()).then_with(|| a.cmp(b))
 }

@@ -3750,7 +3750,14 @@ mod prompt_setup_echo_tests {
     #[test]
     fn hidden_setup_echo_resynchronizes_the_prompt_cursor() {
         let prompt = "root@host:~# ";
-        let mut parser = crate::terminal::vt_parser(4, 80, 0);
+        // Build the parser directly: `crate::terminal` is the desktop module,
+        // while the headless build only keeps the transport helpers. This test
+        // exercises SSH prompt handling and should run in both builds.
+        let mut parser = vt100::Parser::new(
+            std::num::NonZeroU16::new(4).unwrap(),
+            std::num::NonZeroU16::new(80).unwrap(),
+            0,
+        );
         // The initial prompt is painted immediately before shell integration is
         // injected. The buffered setup echo must replace, not append to, it.
         parser.process(prompt.as_bytes());
