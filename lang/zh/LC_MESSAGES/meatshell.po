@@ -867,3 +867,10 @@ msgstr "右键复制或粘贴"
 
 msgid "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."
 msgstr "有选区时复制，否则粘贴；Shift+右键打开菜单。多行粘贴仍需按设置确认。"
+
+msgid "Saved credential"
+msgstr "已保存的认证"
+
+msgid "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
+msgstr "此会话使用上面选择的已保存认证登录。在 设置 › 认证管理 中修改用户名或密码，所有使用它的会话都会同步更新。"
+

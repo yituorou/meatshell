@@ -34,13 +34,25 @@ mod config {
 struct Session {
     user: String,
     password: config::Secret,
+    credential_id: String,
+}
+#[derive(Clone, Default)]
+struct Credential {
+    user: String,
+    password: config::Secret,
 }
 struct ConfigStore;
 impl ConfigStore {
     fn get(&self, _: &str) -> Option<&Session> {
         None
     }
+    fn credential(&self, _: &str) -> Option<&Credential> {
+        None
+    }
     fn upsert(&mut self, _: Session) {}
+    fn upsert_credential(&mut self, _: Credential) -> bool {
+        true
+    }
     fn save(&self) -> Result<(), ()> {
         Ok(())
     }

@@ -453,9 +453,26 @@ impl ConfigStore {
                 }
             }
         }
+        for credential in &mut cfg.credentials {
+            if let Some(plain) = Self::try_decrypt(key, credential.password.as_str()) {
+                credential.password = Secret::new(plain);
+            }
+            if let Some(plain) = Self::try_decrypt(key, credential.private_key_inline.as_str()) {
+                credential.private_key_inline = Secret::new(plain);
+            }
+        }
         if let Some(plain) = Self::try_decrypt(key, cfg.webdav_password.as_str()) {
             cfg.webdav_password = Secret::new(plain);
         }
+    }
+
+    /// Fill every linked session's login from its saved credential (#526).
+    fn apply_all_credentials(cfg: &mut ConfigFile) {
+        let credentials = std::mem::take(&mut cfg.credentials);
+        for session in &mut cfg.sessions {
+            crate::config::apply_linked_credential(&credentials, session);
+        }
+        cfg.credentials = credentials;
     }
 
     // ── Key file management ───────────────────────────────────────────────
@@ -540,6 +557,7 @@ impl ConfigStore {
                         }
                     }
                     Self::decrypt_local_secrets(&key, &mut cfg);
+                    Self::apply_all_credentials(&mut cfg);
                     // Clean up any duplicate history accumulated before #113,
                     // keeping the last (most recent) occurrence of each command.
                     dedup_keep_last(&mut cfg.command_history);
@@ -715,6 +733,7 @@ impl ConfigStore {
         if is_reserved_session_group(session.group.trim()) {
             session.group.clear();
         }
+        crate::config::apply_linked_credential(&self.cache.credentials, &mut session);
         if let Some(existing) = self.cache.sessions.iter_mut().find(|s| s.id == session.id) {
             *existing = session;
         } else {
@@ -757,6 +776,63 @@ impl ConfigStore {
 
     pub fn get(&self, id: &str) -> Option<&Session> {
         self.cache.sessions.iter().find(|s| s.id == id)
+    }
+
+    // ── Saved credentials (#526) ──────────────────────────────────────────
+
+    pub fn credentials(&self) -> &[Credential] {
+        &self.cache.credentials
+    }
+
+    pub fn credential(&self, id: &str) -> Option<&Credential> {
+        self.cache.credentials.iter().find(|c| c.id == id)
+    }
+
+    /// Fill a session's login from its linked credential, as `upsert` does.
+    /// For drafts that are tested before they are saved.
+    pub fn apply_credential(&self, session: &mut Session) {
+        crate::config::apply_linked_credential(&self.cache.credentials, session);
+    }
+
+    /// Number of saved sessions that log in with credential `id`.
+    pub fn credential_usage(&self, id: &str) -> usize {
+        self.cache
+            .sessions
+            .iter()
+            .filter(|s| s.credential_id == id)
+            .count()
+    }
+
+    /// Add or replace a credential, then push the new login into every
+    /// session that uses it. Blank names are rejected.
+    pub fn upsert_credential(&mut self, mut credential: Credential) -> bool {
+        credential.name = credential.name.trim().to_string();
+        credential.user = credential.user.trim().to_string();
+        if credential.name.is_empty() {
+            return false;
+        }
+        if credential.auth != AuthMethod::Key {
+            credential.private_key_path.clear();
+            credential.private_key_inline = Secret::default();
+        }
+        if let Some(existing) = self.cache.credentials.iter_mut().find(|c| c.id == credential.id) {
+            *existing = credential;
+        } else {
+            self.cache.credentials.push(credential);
+        }
+        Self::apply_all_credentials(&mut self.cache);
+        true
+    }
+
+    /// Delete a credential. Sessions that used it keep a copy of the login as
+    /// their own, so nothing stops working.
+    pub fn remove_credential(&mut self, id: &str) {
+        self.cache.credentials.retain(|c| c.id != id);
+        for session in &mut self.cache.sessions {
+            if session.credential_id == id {
+                session.credential_id.clear();
+            }
+        }
     }
 
     pub fn download_dir(&self) -> &str {
@@ -2016,7 +2092,25 @@ impl ConfigStore {
         }
         // Build a disk copy where every non-empty password is encrypted.
         let mut disk = self.cache.clone();
+        for credential in &mut disk.credentials {
+            if !credential.password.is_empty() && !credential.password.is_local_ciphertext() {
+                let enc = Self::encrypt(&self.key, credential.password.as_str())?;
+                credential.password = Secret::new(enc);
+            }
+            if !credential.private_key_inline.is_empty()
+                && !credential.private_key_inline.is_local_ciphertext()
+            {
+                let enc = Self::encrypt(&self.key, credential.private_key_inline.as_str())?;
+                credential.private_key_inline = Secret::new(enc);
+            }
+        }
         for session in &mut disk.sessions {
+            // A linked session's secrets live in its credential (#526); keep
+            // only one copy on disk. Load fills them back in.
+            if !session.credential_id.is_empty() {
+                session.password = Secret::default();
+                session.private_key_inline = Secret::default();
+            }
             if !session.password.is_empty()
                 && !session.password.is_local_ciphertext()
             {
@@ -2172,6 +2266,9 @@ impl ConfigStore {
             }
             // `last_used` is machine-local noise — don't carry it across.
             s.last_used = None;
+            // Saved credentials stay on this machine (#526); the session
+            // already holds its own copy of the login, so it stands alone.
+            s.credential_id.clear();
         }
         Ok((serde_json::to_string_pretty(&out)?, out.sessions.len()))
     }
@@ -2847,6 +2944,115 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&store.path);
+    }
+
+    fn credential_fixture(store: &mut ConfigStore) -> (String, String, String) {
+        let credential = Credential {
+            name: "lab".into(),
+            user: "deploy".into(),
+            password: Secret::new("shared-secret"),
+            ..Credential::new_empty()
+        };
+        let id = credential.id.clone();
+        assert!(store.upsert_credential(credential));
+        let mut ids = Vec::new();
+        for host in ["10.0.0.1", "10.0.0.2"] {
+            let session = Session {
+                host: host.into(),
+                credential_id: id.clone(),
+                ..Session::new_empty()
+            };
+            ids.push(session.id.clone());
+            store.upsert(session);
+        }
+        (id, ids[0].clone(), ids[1].clone())
+    }
+
+    /// Read `store`'s file back the way `load` does.
+    fn reload(store: &ConfigStore) -> ConfigFile {
+        let raw = std::fs::read_to_string(&store.path).unwrap();
+        let mut cfg: ConfigFile = serde_json::from_str(&raw).unwrap();
+        ConfigStore::decrypt_local_secrets(&store.key, &mut cfg);
+        ConfigStore::apply_all_credentials(&mut cfg);
+        cfg
+    }
+
+    #[test]
+    fn issue_526_linked_sessions_share_one_encrypted_copy_of_the_login() {
+        let mut store = temp_store();
+        let (_, a, _) = credential_fixture(&mut store);
+        assert_eq!(store.get(&a).unwrap().user, "deploy");
+        assert_eq!(store.get(&a).unwrap().password.as_str(), "shared-secret");
+
+        store.save().unwrap();
+        let raw = std::fs::read_to_string(&store.path).unwrap();
+        assert!(!raw.contains("shared-secret"));
+        let disk: ConfigFile = serde_json::from_str(&raw).unwrap();
+        assert!(disk.credentials[0].password.as_str().starts_with(ConfigStore::ENC_PREFIX));
+        assert!(disk.sessions.iter().all(|s| s.password.is_empty()));
+
+        let loaded = reload(&store);
+        assert!(loaded
+            .sessions
+            .iter()
+            .all(|s| s.user == "deploy" && s.password.as_str() == "shared-secret"));
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[test]
+    fn issue_526_editing_a_credential_updates_every_session_using_it() {
+        let mut store = temp_store();
+        let (id, a, b) = credential_fixture(&mut store);
+        let mut own = Session::new_empty();
+        own.password = Secret::new("own-secret");
+        let own_id = own.id.clone();
+        store.upsert(own);
+
+        let mut rotated = store.credential(&id).unwrap().clone();
+        rotated.password = Secret::new("rotated");
+        rotated.user = "ops".into();
+        assert!(store.upsert_credential(rotated));
+        for session in [&a, &b] {
+            let session = store.get(session).unwrap();
+            assert_eq!((session.user.as_str(), session.password.as_str()), ("ops", "rotated"));
+        }
+        assert_eq!(store.get(&own_id).unwrap().password.as_str(), "own-secret");
+        assert_eq!(store.credential_usage(&id), 2);
+    }
+
+    #[test]
+    fn issue_526_deleting_a_credential_leaves_sessions_with_their_own_copy() {
+        let mut store = temp_store();
+        let (id, a, _) = credential_fixture(&mut store);
+        store.remove_credential(&id);
+        let session = store.get(&a).unwrap();
+        assert!(session.credential_id.is_empty());
+        assert_eq!(session.password.as_str(), "shared-secret");
+
+        store.save().unwrap();
+        let loaded = reload(&store);
+        assert!(loaded.credentials.is_empty());
+        assert!(loaded.sessions.iter().all(|s| s.password.as_str() == "shared-secret"));
+        let _ = std::fs::remove_file(&store.path);
+    }
+
+    #[test]
+    fn issue_526_export_is_self_contained_and_import_never_links() {
+        let mut a = temp_store();
+        credential_fixture(&mut a);
+        let (export, count) = a.export_json().unwrap();
+        assert_eq!(count, 2);
+        assert!(!export.contains("credential_id"));
+        assert!(!export.contains("shared-secret"));
+
+        let mut b = temp_store();
+        assert_eq!(b.import_json(&export).unwrap(), (2, 0));
+        assert!(b.credentials().is_empty());
+        assert!(b
+            .sessions()
+            .iter()
+            .all(|s| s.credential_id.is_empty() && s.password.as_str() == "shared-secret"));
+        let _ = std::fs::remove_file(&b.path);
     }
 
     #[test]

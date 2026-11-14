@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{DockEdgeSer, OutputHighlightRule, QuickCommand, Secret, Session};
+use super::{Credential, DockEdgeSer, OutputHighlightRule, QuickCommand, Secret, Session};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WslProfile {
@@ -106,6 +106,10 @@ pub(crate) fn default_quick_panel_height() -> f32 {
 pub struct ConfigFile {
     #[serde(default)]
     pub sessions: Vec<Session>,
+    /// Saved SSH logins shared by sessions (#526). Secrets are encrypted at
+    /// rest like session passwords.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credentials: Vec<Credential>,
     /// User-managed WSL launch entries. An empty list keeps the implicit default
     /// WSL entry for backwards compatibility.
     #[serde(default)]

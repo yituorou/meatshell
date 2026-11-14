@@ -274,6 +274,35 @@ export struct CustomShellInfo {
     directory: string,
 }
 
+// A saved SSH login in Settings › Credentials (#526). Secrets never leave Rust.
+export struct CredentialInfo {
+    id: string,
+    name: string,
+    summary: string,   // "root · password"
+    usage: int,        // sessions that log in with it
+}
+
+// One choice of the credential form's authentication selector.
+component AuthChoice inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+    height: 30px;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border-subtle;
+    background: root.selected ? Theme.accent.with-alpha(0.12) : (auth-ta.has-hover ? Theme.bg-hover : Theme.bg-elevated);
+    auth-ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Text {
+        text: root.label;
+        color: root.selected ? Theme.text-primary : Theme.text-secondary;
+        font-size: 12px * Theme.panel-font;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 // One left-nav row (icon + label).
 component NavItem inherits Rectangle {
     in property <string> icon;
@@ -845,6 +874,16 @@ export component InterfacePanel inherits Rectangle {
     in-out property <string> shell-new-program;
     in-out property <string> shell-new-args;
     in-out property <string> shell-new-directory;
+    // Settings › Credentials (#526). `cred-edit-id` is "" while adding.
+    in property <[CredentialInfo]> credentials;
+    in-out property <string> cred-edit-id;
+    in-out property <string> cred-new-name;
+    in-out property <string> cred-new-user;
+    in-out property <string> cred-new-auth: "password";
+    in-out property <string> cred-new-password;
+    in-out property <string> cred-new-key-path;
+    in-out property <string> cred-status;
+    property <string> cred-confirm-remove;
     property <string> new-rule-pattern;
     property <bool> new-rule-regex;
     property <bool> new-rule-case-sensitive;
@@ -905,6 +944,12 @@ export component InterfacePanel inherits Rectangle {
     callback remove-custom-shell(string /* id */);
     callback pick-shell-program();
     callback pick-shell-directory();
+    callback save-credential(string /* id */, string /* name */, string /* user */,
+        string /* auth */, string /* password */, string /* key path */);
+    callback edit-credential(string /* id */);
+    callback cancel-credential-edit();
+    callback remove-credential(string /* id */);
+    callback pick-credential-key();
 
     HorizontalLayout {
         // --- Left nav ------------------------------------------------------
@@ -961,6 +1006,11 @@ export component InterfacePanel inherits Rectangle {
                     icon: "\u{E8BE}"; label: root.lang-en ? "Connection" : "连接";
                     active: root.ifd-page == "connection";
                     clicked => { root.ifd-page = "connection"; }
+                }
+                NavItem {
+                    icon: "\u{E0DA}"; label: root.lang-en ? "Credentials" : "认证管理";
+                    active: root.ifd-page == "credentials";
+                    clicked => { root.ifd-page = "credentials"; }
                 }
                 NavItem {
                     icon: "\u{E2C7}"; label: "SFTP";
@@ -1958,6 +2008,155 @@ export component InterfacePanel inherits Rectangle {
                         changed(v) => {
                             root.ssh-keepalive-max = v;
                             root.set-ssh-keepalive(true, root.ssh-keepalive-interval, v);
+                        }
+                    }
+                }
+            }
+
+            // --- Credentials page (#526) --------------------------------
+            if root.ifd-page == "credentials" : VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 14px;
+                padding-bottom: 20px;
+                spacing: 8px;
+                alignment: start;
+                SectionHeader { text: root.lang-en ? "SAVED CREDENTIALS" : "已保存的认证"; height: 24px; }
+                Text {
+                    text: root.lang-en
+                        ? "Save a login once and pick it in any SSH session's editor. Changing the password here changes it for every session that uses it. Secrets are encrypted on disk like session passwords."
+                        : "登录信息只需保存一次，在任意 SSH 会话的编辑窗口中选择即可。在这里修改密码，所有使用它的会话都会同步更新。密码和私钥与会话密码一样加密保存。";
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.panel-font;
+                    wrap: word-wrap;
+                }
+                LabeledInput {
+                    label: root.lang-en ? "Name" : "名称";
+                    placeholder: root.lang-en ? "e.g. Lab servers (root)" : "例如：实验室服务器 (root)";
+                    value <=> root.cred-new-name;
+                }
+                LabeledInput {
+                    label: root.lang-en ? "Username" : "用户名";
+                    placeholder: "root";
+                    value <=> root.cred-new-user;
+                }
+                Text {
+                    text: root.lang-en ? "Authentication" : "认证方式";
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    AuthChoice {
+                        label: root.lang-en ? "Password" : "密码";
+                        selected: root.cred-new-auth == "password";
+                        clicked => { root.cred-new-auth = "password"; }
+                    }
+                    AuthChoice {
+                        label: root.lang-en ? "Keyboard-interactive" : "键盘交互";
+                        selected: root.cred-new-auth == "keyboard-interactive";
+                        clicked => { root.cred-new-auth = "keyboard-interactive"; }
+                    }
+                    AuthChoice {
+                        label: root.lang-en ? "Private key" : "私钥";
+                        selected: root.cred-new-auth == "key";
+                        clicked => { root.cred-new-auth = "key"; }
+                    }
+                }
+                if root.cred-new-auth == "key" : HorizontalLayout {
+                    spacing: 8px;
+                    LabeledInput {
+                        horizontal-stretch: 1;
+                        label: root.lang-en ? "Private key file" : "私钥文件";
+                        placeholder: "~/.ssh/id_ed25519";
+                        value <=> root.cred-new-key-path;
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        GhostButton {
+                            text: root.lang-en ? "Browse…" : "选择文件…";
+                            clicked => { root.pick-credential-key(); }
+                        }
+                    }
+                }
+                LabeledInput {
+                    label: root.cred-new-auth == "key"
+                        ? (root.lang-en ? "Key passphrase" : "私钥密码")
+                        : (root.lang-en ? "Password" : "密码");
+                    placeholder: root.cred-edit-id != ""
+                        ? (root.lang-en ? "Leave blank to keep the current one" : "留空则保留原来的")
+                        : (root.cred-new-auth == "key"
+                            ? (root.lang-en ? "Leave blank if the key isn't encrypted" : "私钥未加密时留空")
+                            : (root.lang-en ? "Leave blank to be asked on connect" : "留空则在连接时询问"));
+                    password: true;
+                    value <=> root.cred-new-password;
+                }
+                if root.cred-status != "" : Text {
+                    text: root.cred-status;
+                    color: Theme.danger;
+                    font-size: 11px * Theme.panel-font;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    if root.cred-edit-id != "" : GhostButton {
+                        text: root.lang-en ? "Cancel" : "取消";
+                        clicked => { root.cancel-credential-edit(); }
+                    }
+                    PrimaryButton {
+                        text: root.cred-edit-id != ""
+                            ? (root.lang-en ? "Save changes" : "保存修改")
+                            : (root.lang-en ? "Add credential" : "添加认证");
+                        clicked => {
+                            root.save-credential(root.cred-edit-id, root.cred-new-name, root.cred-new-user,
+                                root.cred-new-auth, root.cred-new-password, root.cred-new-key-path);
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                if root.credentials.length == 0 : Text {
+                    text: root.lang-en ? "No saved credentials yet." : "暂无已保存的认证。";
+                    color: Theme.text-muted;
+                    font-size: 11px * Theme.panel-font;
+                }
+                for cred in root.credentials : Rectangle {
+                    height: 54px;
+                    border-radius: Theme.radius-sm;
+                    border-width: root.cred-edit-id == cred.id ? 1px : 0px;
+                    border-color: Theme.accent;
+                    background: Theme.bg-elevated;
+                    HorizontalLayout {
+                        padding-left: 10px; padding-right: 8px; spacing: 8px;
+                        VerticalLayout {
+                            horizontal-stretch: 1; alignment: center;
+                            Text { text: cred.name; color: Theme.text-primary; font-size: 13px * Theme.panel-font; overflow: elide; }
+                            Text {
+                                text: root.cred-confirm-remove == cred.id && cred.usage > 0
+                                    ? (root.lang-en
+                                        ? "The " + cred.usage + " session(s) using it keep their own copy of the login."
+                                        : "使用它的 " + cred.usage + " 个会话会各自保留一份登录信息。")
+                                    : cred.summary + "  ·  " + (root.lang-en
+                                        ? (cred.usage == 1 ? "used by 1 session" : "used by " + cred.usage + " sessions")
+                                        : cred.usage + " 个会话在用");
+                                color: Theme.text-muted; font-size: 11px * Theme.panel-font; overflow: elide;
+                            }
+                        }
+                        if root.cred-confirm-remove != cred.id : GhostButton {
+                            text: root.lang-en ? "Edit" : "编辑";
+                            clicked => { root.cred-confirm-remove = ""; root.edit-credential(cred.id); }
+                        }
+                        if root.cred-confirm-remove != cred.id : GhostButton {
+                            text: root.lang-en ? "Remove" : "删除";
+                            clicked => { root.cred-confirm-remove = cred.id; }
+                        }
+                        if root.cred-confirm-remove == cred.id : GhostButton {
+                            text: root.lang-en ? "Keep" : "保留";
+                            clicked => { root.cred-confirm-remove = ""; }
+                        }
+                        if root.cred-confirm-remove == cred.id : PrimaryButton {
+                            text: root.lang-en ? "Delete" : "确认删除";
+                            clicked => { root.cred-confirm-remove = ""; root.remove-credential(cred.id); }
                         }
                     }
                 }

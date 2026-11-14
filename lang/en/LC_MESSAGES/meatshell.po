@@ -865,3 +865,10 @@ msgstr "Right-click copy or paste"
 
 msgid "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."
 msgstr "Copy selection, otherwise paste. Shift+right-click opens the menu. Multiline paste confirmation still applies."
+
+msgid "Saved credential"
+msgstr "Saved credential"
+
+msgid "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
+msgstr "This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows."
+

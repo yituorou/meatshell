@@ -439,6 +439,7 @@ fn refresh(
     // launch menu / Quick connect lists, so refresh them on the same signal.
     w.set_launch_shells(super::launch_shell_model(&store));
     super::local_shells::refresh_settings(w, &store);
+    super::credentials::refresh_settings(w, &store);
     super::sync_sessions_for_window(weak, &store, sessions_model);
 }
 

@@ -42,6 +42,8 @@ export struct SessionDraft {
     private-key-path: string,
     private-key-inline: string,
     private-key-inline-mode: bool,
+    // Saved credential the SSH session logs in with (#526); "" = own login.
+    credential-id: string,
     proxy: string,     // "" | "socks5://host:port" | "http://host:port"
     group: string,     // folder/group name ("" = ungrouped)
     // Serial-only (ignored unless kind == "serial")
@@ -787,6 +789,13 @@ export component SessionDialog inherits ModalLayer {
     in-out property <string> draft-key-path;
     in-out property <string> draft-key-inline;
     in-out property <bool> draft-key-inline-mode: false;
+    // Saved credentials (#526): parallel labels / ids, row 0 = none.
+    in property <[string]> credential-choices;
+    in property <[string]> credential-ids;
+    in-out property <string> draft-credential-id;
+    in-out property <int> draft-credential-index: 0;
+    // An SSH session using a saved credential hides its own login fields.
+    property <bool> credential-linked: root.draft-kind == "ssh" && root.draft-credential-id != "";
     in-out property <string> draft-proxy-type: "none";  // "none" | "socks5" | "http"
     in-out property <string> draft-proxy-hostport;
     in-out property <string> draft-group;
@@ -867,6 +876,7 @@ export component SessionDialog inherits ModalLayer {
     changed draft-password => { root.connection-draft-changed(); }
     changed draft-key-path => { root.connection-draft-changed(); }
     changed draft-key-inline => { root.connection-draft-changed(); }
+    changed draft-credential-id => { root.connection-draft-changed(); }
     changed draft-proxy-type => { root.connection-draft-changed(); }
     changed draft-proxy-hostport => { root.connection-draft-changed(); }
     changed draft-serial-port => { root.connection-draft-changed(); }
@@ -913,6 +923,7 @@ export component SessionDialog inherits ModalLayer {
             private-key-path: root.draft-key-path,
             private-key-inline: root.draft-key-inline,
             private-key-inline-mode: root.draft-key-inline-mode,
+            credential-id: root.draft-kind == "ssh" ? root.draft-credential-id : "",
             proxy: (root.draft-proxy-type == "none" || root.draft-proxy-hostport == "") ? ""
                  : root.draft-proxy-type == "http" ? "http://" + root.draft-proxy-hostport
                  : "socks5://" + root.draft-proxy-hostport,
@@ -1176,8 +1187,26 @@ export component SessionDialog inherits ModalLayer {
                 font-size: Theme.fs-sm;
             }
 
+            // ── SSH: saved credential (#526) ────────────────────────────────
+            if root.draft-kind == "ssh" && root.credential-choices.length > 1 : JumpCombo {
+                label: @tr("Saved credential");
+                choices: root.credential-choices;
+                selected-index <=> root.draft-credential-index;
+                selected(idx) => {
+                    root.draft-credential-id = idx > 0 && idx < root.credential-ids.length
+                        ? root.credential-ids[idx] : "";
+                }
+            }
+
+            if root.credential-linked : Text {
+                text: @tr("This session logs in with the saved credential above. Change its username or password in Settings › Credentials; every session that uses it follows.");
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                wrap: word-wrap;
+            }
+
             // ── SSH: user + auth. Telnet: optional auto-login (#507) ────────
-            if root.draft-kind == "ssh" || root.draft-kind == "telnet" : LabeledInput {
+            if (root.draft-kind == "ssh" && !root.credential-linked) || root.draft-kind == "telnet" : LabeledInput {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: @tr("Username");
@@ -1208,7 +1237,7 @@ export component SessionDialog inherits ModalLayer {
                 wrap: word-wrap;
             }
 
-            if root.draft-kind == "ssh" : VerticalLayout {
+            if root.draft-kind == "ssh" && !root.credential-linked : VerticalLayout {
                 spacing: 4px;
                 Text {
                     text: @tr("Authentication");
@@ -1235,7 +1264,7 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
-            if root.draft-kind == "ssh" && (root.draft-auth == "password" || root.draft-auth == "keyboard-interactive") : LabeledInput {
+            if root.draft-kind == "ssh" && !root.credential-linked && (root.draft-auth == "password" || root.draft-auth == "keyboard-interactive") : LabeledInput {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: root.draft-auth == "keyboard-interactive" ? @tr("Password / first answer") : @tr("Password");
@@ -1249,14 +1278,14 @@ export component SessionDialog inherits ModalLayer {
                 value <=> root.draft-password;
             }
 
-            if root.draft-kind == "ssh" && root.draft-auth == "keyboard-interactive" : Text {
+            if root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth == "keyboard-interactive" : Text {
                 text: @tr("Server prompts are shown during login; MFA / OTP prompts will ask again.");
                 color: Theme.text-muted;
                 font-size: Theme.fs-xs;
                 wrap: word-wrap;
             }
 
-            if root.draft-kind == "ssh" && root.draft-auth == "key" : VerticalLayout {
+            if root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth == "key" : VerticalLayout {
                 spacing: 4px;
                 Text {
                     text: @tr("Private key");
@@ -1387,7 +1416,7 @@ export component SessionDialog inherits ModalLayer {
             // Passphrase for an *encrypted* private key (#90). Reuses the
             // password field; blank means the key isn't encrypted (or, when
             // editing, keep the saved passphrase).
-            if root.draft-kind == "ssh" && root.draft-auth == "key" : LabeledInput {
+            if root.draft-kind == "ssh" && !root.credential-linked && root.draft-auth == "key" : LabeledInput {
                 input-background: Theme.bg-elevated;
                 idle-border: Theme.border-strong;
                 label: @tr("Key passphrase");
@@ -1401,7 +1430,7 @@ export component SessionDialog inherits ModalLayer {
                 value <=> root.draft-password;
             }
 
-            if root.draft-kind == "ssh" || root.draft-kind == "rdp" || root.draft-kind == "telnet" : CheckBox {
+            if (root.draft-kind == "ssh" && !root.credential-linked) || root.draft-kind == "rdp" || root.draft-kind == "telnet" : CheckBox {
                 text: @tr("Allow viewing saved credentials in this session");
                 checked <=> root.allow-secret-reveal;
                 toggled => {
@@ -1410,7 +1439,7 @@ export component SessionDialog inherits ModalLayer {
                 }
             }
 
-            if root.allow-secret-reveal && (root.draft-kind == "ssh" || root.draft-kind == "rdp" || root.draft-kind == "telnet") : Text {
+            if root.allow-secret-reveal && ((root.draft-kind == "ssh" && !root.credential-linked) || root.draft-kind == "rdp" || root.draft-kind == "telnet") : Text {
                 text: @tr("Credentials start hidden. Click the eye to view. Save to remember this option.");
                 color: Theme.text-muted;
                 font-size: Theme.fs-xs;

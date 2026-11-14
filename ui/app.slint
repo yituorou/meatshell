@@ -30,12 +30,12 @@ import { ProcWindow, ProcRow } from "proc_window.slint";
 import { SystemInfoWindow, SysInfoRow, SysMetricRow, SysNetRow } from "system_info_window.slint";
 import { EditorWindow } from "editor_window.slint";
 import { EditorPane, EditorFindResult, EditorDoc } from "editor_pane.slint";
-import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ColorThemeItem, TermSchemeItem } from "interface_panel.slint";
+import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ColorThemeItem, TermSchemeItem } from "interface_panel.slint";
 // Re-export so `slint::include_modules!` generates the detached Rust window types.
 export { ProcWindow, SystemInfoWindow, EditorWindow }
 import { ComboBox, SpinBox, LineEdit, Button, ScrollView, CheckBox, Palette } from "std-widgets.slint";
 
-export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem, TermColors, TermSchemeItem }
+export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem, TermColors, TermSchemeItem }
 
 // --- TerminalState ---------------------------------------------------------
 // Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
@@ -1106,6 +1106,20 @@ export component AppWindow inherits Window {
     callback remove-custom-shell(string);
     callback pick-shell-program();
     callback pick-shell-directory();
+    // Settings → Credentials (#526): saved SSH logins shared by sessions.
+    in property <[CredentialInfo]> credentials;
+    in-out property <string> cred-edit-id;
+    in-out property <string> cred-new-name;
+    in-out property <string> cred-new-user;
+    in-out property <string> cred-new-auth: "password";
+    in-out property <string> cred-new-password;
+    in-out property <string> cred-new-key-path;
+    in-out property <string> cred-status;
+    callback save-credential(string, string, string, string, string, string);
+    callback edit-credential(string);
+    callback cancel-credential-edit();
+    callback remove-credential(string);
+    callback pick-credential-key();
     // Rebuild the launch menu, the "agents" group and the settings list.
     callback refresh-agent-launchers();
     // Settings page to show when the panel opens (see InterfacePanel).
@@ -1166,6 +1180,11 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-key-path;
     in-out property <string> dialog-key-inline;
     in-out property <bool> dialog-key-inline-mode: false;
+    // Saved credentials for the SSH login picker (#526); row 0 = none.
+    in property <[string]> credential-choices;
+    in property <[string]> credential-ids;
+    in-out property <string> dialog-credential-id;
+    in-out property <int> dialog-credential-index: 0;
     in-out property <string> dialog-proxy-type: "none";  // "none" | "socks5" | "http"
     in-out property <string> dialog-proxy-hostport;
     in-out property <string> dialog-group;
@@ -4880,6 +4899,10 @@ export component AppWindow inherits Window {
         draft-key-path <=> root.dialog-key-path;
         draft-key-inline <=> root.dialog-key-inline;
         draft-key-inline-mode <=> root.dialog-key-inline-mode;
+        credential-choices: root.credential-choices;
+        credential-ids: root.credential-ids;
+        draft-credential-id <=> root.dialog-credential-id;
+        draft-credential-index <=> root.dialog-credential-index;
         draft-proxy-type <=> root.dialog-proxy-type;
         draft-proxy-hostport <=> root.dialog-proxy-hostport;
         draft-group <=> root.dialog-group;
@@ -5450,6 +5473,14 @@ export component AppWindow inherits Window {
                     shell-new-program <=> root.shell-new-program;
                     shell-new-args <=> root.shell-new-args;
                     shell-new-directory <=> root.shell-new-directory;
+                    credentials: root.credentials;
+                    cred-edit-id <=> root.cred-edit-id;
+                    cred-new-name <=> root.cred-new-name;
+                    cred-new-user <=> root.cred-new-user;
+                    cred-new-auth <=> root.cred-new-auth;
+                    cred-new-password <=> root.cred-new-password;
+                    cred-new-key-path <=> root.cred-new-key-path;
+                    cred-status <=> root.cred-status;
                     set-wallpaper(v) => { root.set-wallpaper(v); }
                     pick-wallpaper-file() => { root.pick-wallpaper-file(); }
                     color-themes: root.color-themes;
@@ -5538,6 +5569,13 @@ export component AppWindow inherits Window {
                     remove-custom-shell(id) => { root.remove-custom-shell(id); }
                     pick-shell-program => { root.pick-shell-program(); }
                     pick-shell-directory => { root.pick-shell-directory(); }
+                    save-credential(id, name, user, auth, password, key-path) => {
+                        root.save-credential(id, name, user, auth, password, key-path);
+                    }
+                    edit-credential(id) => { root.edit-credential(id); }
+                    cancel-credential-edit => { root.cancel-credential-edit(); }
+                    remove-credential(id) => { root.remove-credential(id); }
+                    pick-credential-key => { root.pick-credential-key(); }
                     persist-wallpaper-overlay(v) => { root.persist-wallpaper-overlay(v); }
                 }
             }

@@ -137,6 +137,9 @@ impl ConfigStore {
                 }
                 _ => {}
             }
+            // Saved credentials (#526) are machine-local and never imported:
+            // exports already carry each session's own copy of the login.
+            session.credential_id.clear();
             if meatshell {
                 self.decode_import_secret(&mut session.password, index, "password")?;
                 self.decode_import_secret(&mut session.private_key_inline, index, "private key")?;

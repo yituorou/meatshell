@@ -365,7 +365,22 @@ pub(super) fn persist_credentials(
     HISTORY_STORE.with(|s| {
         if let Some(store) = s.borrow().as_ref() {
             let mut st = store.borrow_mut();
-            if let Some(mut sess) = st.get(session_id).cloned() {
+            // A session that logs in with a saved credential (#526) remembers
+            // into that credential, so every session using it gets the login.
+            let linked = st
+                .get(session_id)
+                .and_then(|sess| st.credential(&sess.credential_id))
+                .cloned();
+            if let Some(mut credential) = linked {
+                if set_user && !user.trim().is_empty() {
+                    credential.user = user.trim().to_string();
+                }
+                if set_password {
+                    credential.password = crate::config::Secret::new(password.to_string());
+                }
+                st.upsert_credential(credential);
+                let _ = st.save();
+            } else if let Some(mut sess) = st.get(session_id).cloned() {
                 if set_user && !user.trim().is_empty() {
                     sess.user = user.trim().to_string();
                 }

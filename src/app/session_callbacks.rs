@@ -207,6 +207,7 @@ pub(super) fn wire_session_callbacks(
             // prompt ask for it, Xshell-style.
             w.set_dialog_user("".into());
             w.set_dialog_auth("password".into());
+            set_dialog_credentials(&w, &store_ng.borrow(), "");
             w.set_dialog_password("".into());
             w.set_dialog_key_path("".into());
             w.set_dialog_key_inline("".into());
@@ -464,6 +465,7 @@ pub(super) fn wire_session_callbacks(
                 w.set_dialog_port(session.port.to_string().into());
                 w.set_dialog_user(session.user.clone().into());
                 w.set_dialog_auth(session.auth.as_str().into());
+                set_dialog_credentials(&w, &store, &session.credential_id);
                 // Start blank; the dialog only loads saved credentials after
                 // opt-in, initially masked. Blank on save still retains them (#10).
                 w.set_dialog_password("".into());
@@ -860,7 +862,8 @@ pub(super) fn wire_session_callbacks(
                 };
             // Saving and testing use the same draft conversion, including blank-secret retention.
             let existing = store.borrow().get(&id).cloned();
-            let new_session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            let mut new_session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            link_draft_credential(&store.borrow(), &draft, &mut new_session);
             if new_session.kind == crate::config::SessionKind::Rdp {
                 if let Err(message) = crate::rdp::validate_options(&new_session) {
                     if let Some(w) = weak.upgrade() {
@@ -967,7 +970,8 @@ pub(super) fn wire_session_callbacks(
                         return;
                     }
                 };
-            let session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            let mut session = session_from_draft(&draft, existing.as_ref(), forwards, triggers);
+            link_draft_credential(&store.borrow(), &draft, &mut session);
             let weak_done = weak.clone();
 
             if kind == "ssh" {

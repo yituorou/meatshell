@@ -15,6 +15,7 @@ pub(super) fn connection_snapshot(window: &AppWindow) -> u64 {
         window.get_dialog_password(),
         window.get_dialog_key_path(),
         window.get_dialog_key_inline(),
+        window.get_dialog_credential_id(),
         window.get_dialog_proxy_type(),
         window.get_dialog_proxy_hostport(),
         window.get_dialog_serial_port(),
