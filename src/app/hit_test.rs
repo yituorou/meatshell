@@ -363,10 +363,11 @@ pub(super) fn active_sftp_local_pane_rect(win: &AppWindow) -> Option<(String, Lo
         h: panel_h,
     };
 
-    // SftpPanel: toolbar (62px in the two-row compact layout), content, 18px
-    // status bar. The split view hides the tree, so the compact threshold is
-    // the bare 560px.
-    let toolbar = if panel.w < 560.0 { 62.0 } else { 34.0 };
+    // SftpPanel: toolbar, content, 18px status bar. The split view always uses
+    // the single 34px toolbar row (the split toggle and checked-count actions
+    // hug its right edge) because the remote path bar and its controls move
+    // down into the right pane, next to the local pane's own path bar.
+    let toolbar = 34.0;
     let content_h = (panel.h - toolbar - 18.0).max(0.0);
     // Mirrors `local-w` in ui/sftp_panel.slint: the dragged width, else the
     // remembered share, else an even split.

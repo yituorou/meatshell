@@ -9,9 +9,8 @@
 use super::*;
 
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
-use slint::platform::{PointerEventButton, WindowEvent};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{ComponentHandle, LogicalPosition, Rgb8Pixel};
-
 struct Backend(std::rc::Rc<MinimalSoftwareWindow>);
 
 impl slint::platform::Platform for Backend {
@@ -64,6 +63,8 @@ fn terminal(
         selection: ModelRc::from(Rc::new(VecModel::default())),
         sftp_path: "/home/me".into(),
         sftp_entries: ModelRc::from(Rc::new(VecModel::from(remote_entries))),
+        sftp_all_entries: ModelRc::from(Rc::new(VecModel::<SftpEntry>::default())),
+        sftp_filter: "".into(),
         sftp_status: "/home/me".into(),
         sftp_loading: false,
         sftp_tree_nodes: ModelRc::from(Rc::new(VecModel::default())),
@@ -91,6 +92,8 @@ fn terminal(
         sftp_local_sort_dir: 0,
         sftp_local_filter: "".into(),
         sftp_local_all_entries: ModelRc::from(Rc::new(VecModel::default())),
+        sftp_suggest: empty_suggestions(),
+        sftp_local_suggest: empty_suggestions(),
         font_size: 0,
         tunnels: ModelRc::from(Rc::new(VecModel::default())),
         sftp_collapsed: false,
@@ -373,6 +376,33 @@ fn split_view_survives_a_side_dock() {
 }
 
 #[test]
+fn split_view_uses_the_single_row_toolbar_in_a_side_dock() {
+    // The remote path bar lives in the right pane now, so the split view keeps
+    // one 34px toolbar row even when the dock is narrower than the 560px
+    // compact threshold. Rust's drop rect must mirror that: it used to assume
+    // the 62px two-row toolbar and started the local half 28px too low in a
+    // narrow side dock. Comparing a narrow and a wide dock avoids hard-coding
+    // the window chrome (the custom title bar differs per platform).
+    let pane_top = |panel_width: f32| {
+        std::thread::spawn(move || {
+            let (ui, _window) = build_ui(true, panel_width, 260.0, 1400, 800, "right");
+            let (_tab, rect) =
+                active_sftp_local_pane_rect(&ui).expect("split view should expose the local half");
+            rect.y
+        })
+        .join()
+        .unwrap()
+    };
+    let narrow = pane_top(520.0);
+    let wide = pane_top(900.0);
+    assert!(
+        (narrow - wide).abs() <= 0.5,
+        "local half starts at {narrow} in a 520px dock but {wide} in a 900px dock; \
+         the split view must use the same single-row toolbar in both"
+    );
+}
+
+#[test]
 fn os_drop_hit_test_matches_the_visible_split() {
     // The OS drop handler routes a file to the local half by geometry; it must
     // agree with the pane the user actually sees (even split by default).
@@ -398,6 +428,348 @@ fn os_drop_hit_test_matches_the_visible_split() {
         assert!(
             sftp_local_pane_hit(&ui, rect.x + 40.0, rect.y - 40.0).is_none(),
             "the toolbar is not a drop target"
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn remote_filter_narrows_the_right_listing() {
+    // The remote filter box writes through `sftp-set-filter` into the tab; the
+    // full listing stays in `sftp-all-entries`, so clearing the text restores
+    // every row without another SFTP round trip.
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let mut t = model.row_data(0).expect("tab");
+            let all = vec![
+                row("src", true, "", "2026-10-27 10:00"),
+                row("notes.txt", false, "1.2 KB", "2026-10-26 22:15"),
+                row("nginx.conf", false, "2.8 KB", "2026-10-19 17:42"),
+            ];
+            t.sftp_all_entries = ModelRc::from(Rc::new(VecModel::from(all.clone())));
+            t.sftp_entries = ModelRc::from(Rc::new(VecModel::from(all)));
+            model.set_row_data(0, t);
+        }
+
+        let names = |ui: &AppWindow| -> Vec<String> {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let t = model.row_data(0).expect("tab");
+            (0..t.sftp_entries.row_count())
+                .filter_map(|i| t.sftp_entries.row_data(i))
+                .map(|entry| entry.name.to_string())
+                .collect()
+        };
+
+        // Case-insensitive substring, with the folder-first order preserved.
+        set_remote_filter(&ui, "t1", "NGINX");
+        assert_eq!(names(&ui), ["nginx.conf"]);
+        // Visual QA: the right filter box shows the text, the listing shrinks.
+        let pixels = render_frame(&window, 1100, 800);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/sftp-filter-qa.png"),
+            &bytes,
+            1100,
+            800,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        let terminals = ui.get_terminals();
+        let model = terminals.as_any().downcast_ref::<VecModel<TerminalState>>().unwrap();
+        assert_eq!(model.row_data(0).unwrap().sftp_filter.as_str(), "NGINX");
+
+        // Clearing the filter brings the whole listing back.
+        set_remote_filter(&ui, "t1", "");
+        assert_eq!(names(&ui), ["src", "nginx.conf", "notes.txt"]);
+        assert!(names(&ui).len() == 3);
+
+        // A filter that matches nothing leaves an empty list, not everything.
+        set_remote_filter(&ui, "t1", "zzz");
+        assert!(names(&ui).is_empty());
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn path_completion_popup_renders_under_the_remote_path_bar() {
+    // The popup is driven by the tab's suggestion cache: focus the remote path
+    // field, type a character, and the rows Rust would have produced are shown
+    // below the field. The callback itself is not wired in this harness.
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let mut t = model.row_data(0).expect("tab");
+            t.sftp_suggest = SftpPathSuggestions {
+                dir: "/home/".into(),
+                prefix: "/home/".into(),
+                sep: "/".into(),
+                fragment: "".into(),
+                names: ModelRc::from(Rc::new(VecModel::from(vec![
+                    SharedString::from("alice"),
+                    SharedString::from("bob"),
+                ]))),
+                entries: ModelRc::from(Rc::new(VecModel::from(vec![
+                    SftpPathSuggestion {
+                        name: "alice".into(),
+                        path: "/home/alice/".into(),
+                    },
+                    SftpPathSuggestion {
+                        name: "bob".into(),
+                        path: "/home/bob/".into(),
+                    },
+                ]))),
+            };
+            model.set_row_data(0, t);
+        }
+        render_frame(&window, 1100, 800);
+        // Click the remote path field (300px local pane + divider, field spans
+        // the rest of the 1100px panel at the top of the split view).
+        press(&window, 500.0, 587.0);
+        release(&window, 500.0, 587.0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        let pixels = render_frame(&window, 1100, 800);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/sftp-complete-qa.png"),
+            &bytes,
+            1100,
+            800,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        // Two folder glyphs are accent-coloured; the file rows below sit behind
+        // the popup, so any accent pixels in this band belong to the popup.
+        let accent = (610..680)
+            .flat_map(|y| (335..560).map(move |x| (x, y)))
+            .filter(|(x, y)| is_accent(pixels[y * 1100 + x]))
+            .count();
+        assert!(
+            accent > 20,
+            "path completion popup painted almost no folder icons ({accent})"
+        );
+
+        // Clicking a row navigates to the completed path.
+        let picked = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let picked = picked.clone();
+            ui.on_sftp_navigate(move |_tab: SharedString, path: SharedString| {
+                picked.borrow_mut().push(path.to_string());
+            });
+        }
+        press(&window, 400.0, 639.0);
+        release(&window, 400.0, 639.0);
+        assert_eq!(picked.borrow().as_slice(), ["/home/bob/"]);
+
+        // The caret sits at the end of the completed path: typing appends, so
+        // Enter navigates to "/home/bob/x" (not "/home/bobx/").
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Return.into(),
+        });
+        assert_eq!(
+            picked.borrow().as_slice(),
+            ["/home/bob/", "/home/bob/x"],
+            "the caret should be at the end of a completed path"
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn path_completion_popup_works_in_the_local_pane() {
+    std::thread::spawn(|| {
+        let (ui, window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        {
+            let terminals = ui.get_terminals();
+            let model = terminals
+                .as_any()
+                .downcast_ref::<VecModel<TerminalState>>()
+                .expect("terminals model");
+            let mut t = model.row_data(0).expect("tab");
+            t.sftp_local_suggest = SftpPathSuggestions {
+                dir: "C:\\Users\\me\\".into(),
+                prefix: "C:\\Users\\me\\".into(),
+                sep: "\\".into(),
+                fragment: "".into(),
+                names: ModelRc::from(Rc::new(VecModel::from(vec![
+                    SharedString::from("Downloads"),
+                    SharedString::from("docs"),
+                ]))),
+                entries: ModelRc::from(Rc::new(VecModel::from(vec![
+                    SftpPathSuggestion {
+                        name: "Downloads".into(),
+                        path: "C:\\Users\\me\\Downloads\\".into(),
+                    },
+                    SftpPathSuggestion {
+                        name: "docs".into(),
+                        path: "C:\\Users\\me\\docs\\".into(),
+                    },
+                ]))),
+            };
+            model.set_row_data(0, t);
+        }
+        render_frame(&window, 1100, 800);
+        // Focus the local pane's path field and type: the popup opens with the
+        // rows Rust would have produced.
+        press(&window, 120.0, 587.0);
+        release(&window, 120.0, 587.0);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        let pixels = render_frame(&window, 1100, 800);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        image::save_buffer(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target/sftp-complete-local-qa.png"),
+            &bytes,
+            1100,
+            800,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
+        let accent = (610..680)
+            .flat_map(|y| (20..280).map(move |x| (x, y)))
+            .filter(|(x, y)| is_accent(pixels[y * 1100 + x]))
+            .count();
+        assert!(
+            accent > 20,
+            "local path completion popup painted almost no folder icons ({accent})"
+        );
+
+        // Picking a row completes the field and puts the caret at the end, so
+        // typing continues after the completed folder.
+        let picked = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let picked = picked.clone();
+            ui.on_sftp_local_navigate(move |_tab: SharedString, path: SharedString| {
+                picked.borrow_mut().push(path.to_string());
+            });
+        }
+        press(&window, 100.0, 639.0);
+        release(&window, 100.0, 639.0);
+        assert_eq!(picked.borrow().as_slice(), ["C:\\Users\\me\\docs\\"]);
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: "x".into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Escape.into(),
+        });
+        window.dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Return.into(),
+        });
+        assert_eq!(
+            picked.borrow().as_slice(),
+            ["C:\\Users\\me\\docs\\", "C:\\Users\\me\\docs\\x"],
+            "the local caret should be at the end of a completed path"
+        );
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn remote_peek_fills_the_suggestion_cache() {
+    // One SFTP peek answers the fragment typed since it was requested; a late
+    // listing for another folder is dropped.
+    std::thread::spawn(|| {
+        let (ui, _window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        let terminals = ui.get_terminals();
+        let model = terminals
+            .as_any()
+            .downcast_ref::<VecModel<TerminalState>>()
+            .expect("terminals model");
+        let mut t = model.row_data(0).expect("tab");
+        t.sftp_suggest = SftpPathSuggestions {
+            dir: "/home/".into(),
+            prefix: "/home/".into(),
+            sep: "/".into(),
+            fragment: "u".into(),
+            names: ModelRc::from(Rc::new(VecModel::default())),
+            entries: ModelRc::from(Rc::new(VecModel::default())),
+        };
+        apply_remote_peek(
+            &mut t,
+            "/home/",
+            &[
+                "var".to_string(),
+                "usr".to_string(),
+                "bob".to_string(),
+            ],
+        );
+        let paths = |t: &TerminalState| -> Vec<String> {
+            (0..t.sftp_suggest.entries.row_count())
+                .filter_map(|i| t.sftp_suggest.entries.row_data(i))
+                .map(|s| s.path.to_string())
+                .collect()
+        };
+        assert_eq!(paths(&t), ["/home/usr/"]);
+        apply_remote_peek(&mut t, "/tmp/", &["tmp".to_string()]);
+        assert_eq!(paths(&t), ["/home/usr/"], "stale listing must be dropped");
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn local_peek_fills_the_local_suggestion_cache() {
+    std::thread::spawn(|| {
+        let (ui, _window) = build_ui(true, 300.0, 300.0, 1100, 800, "bottom");
+        let terminals = ui.get_terminals();
+        let model = terminals
+            .as_any()
+            .downcast_ref::<VecModel<TerminalState>>()
+            .expect("terminals model");
+        let mut t = model.row_data(0).expect("tab");
+        t.sftp_local_suggest = SftpPathSuggestions {
+            dir: "/home/me/".into(),
+            prefix: "/home/me/".into(),
+            sep: "/".into(),
+            fragment: "Do".into(),
+            names: ModelRc::from(Rc::new(VecModel::default())),
+            entries: ModelRc::from(Rc::new(VecModel::default())),
+        };
+        apply_local_peek(
+            &mut t,
+            "/home/me/",
+            &["docs".to_string(), "Downloads".to_string()],
+        );
+        let paths = |t: &TerminalState| -> Vec<String> {
+            (0..t.sftp_local_suggest.entries.row_count())
+                .filter_map(|i| t.sftp_local_suggest.entries.row_data(i))
+                .map(|s| s.path.to_string())
+                .collect()
+        };
+        assert_eq!(paths(&t), ["/home/me/docs/", "/home/me/Downloads/"]);
+        apply_local_peek(&mut t, "/tmp/", &["tmp".to_string()]);
+        assert_eq!(
+            paths(&t),
+            ["/home/me/docs/", "/home/me/Downloads/"],
+            "stale listing must be dropped"
         );
     })
     .join()

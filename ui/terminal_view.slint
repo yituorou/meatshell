@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { SftpPanel, SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo } from "sftp_panel.slint";
+import { SftpPanel, SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo, SftpPathSuggestion } from "sftp_panel.slint";
 import { TabInfo } from "tabs.slint";
 import { DockExpandButton, ToolStrip } from "widgets.slint";
 
@@ -302,6 +302,9 @@ export component TerminalView inherits Rectangle {
 
     in property <string>  sftp-path: "/";
     in property <[SftpEntry]> sftp-entries;
+    in property <string>  sftp-filter;
+    in property <[SftpPathSuggestion]> sftp-suggestions;
+    in property <[SftpPathSuggestion]> sftp-local-suggestions;
     in property <string>  sftp-status: "";
     in property <bool>    sftp-loading: false;
     in property <[SftpTreeNode]> sftp-tree-nodes: [];
@@ -348,6 +351,9 @@ export component TerminalView inherits Rectangle {
     callback sftp-local-toggle-hidden();
     callback sftp-local-sort(string);
     callback sftp-local-set-filter(string);
+    callback sftp-set-filter(string);
+    callback sftp-complete-path(string);
+    callback sftp-local-complete-path(string);
     callback sftp-local-remove-recent(string);
     callback sftp-local-move-bookmark(string, int);
     callback sftp-local-reveal();
@@ -2404,6 +2410,9 @@ export component TerminalView inherits Rectangle {
             current-tab-id: root.tab-id;
             current-path:  root.sftp-path;
             entries:       root.sftp-entries;
+            filter:        root.sftp-filter;
+            suggestions:   root.sftp-suggestions;
+            local-suggestions: root.sftp-local-suggestions;
             status:        root.sftp-status;
             loading:       root.sftp-loading;
             tree-nodes:    root.sftp-tree-nodes;
@@ -2495,6 +2504,9 @@ export component TerminalView inherits Rectangle {
             local-toggle-hidden() => { root.sftp-local-toggle-hidden(); }
             local-sort(column) => { root.sftp-local-sort(column); }
             local-set-filter(text) => { root.sftp-local-set-filter(text); }
+            set-filter(text)      => { root.sftp-set-filter(text); }
+            complete-path(text)   => { root.sftp-complete-path(text); }
+            local-complete-path(text) => { root.sftp-local-complete-path(text); }
             local-remove-recent(path) => { root.sftp-local-remove-recent(path); }
             local-move-bookmark(path, delta) => { root.sftp-local-move-bookmark(path, delta); }
             local-reveal() => { root.sftp-local-reveal(); }
