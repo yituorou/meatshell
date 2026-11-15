@@ -431,8 +431,15 @@ pub(super) fn apply_session_event_to_window(
                     }
                 }
                 1 => t("已完成", "Done").to_string(),
-                // Remote-side prep (e.g. tar packing) before bytes start flowing (#100).
-                3 => t("文件准备中", "Preparing...").to_string(),
+                // Remote-side prep (e.g. tar packing) before bytes start flowing
+                // (#100), or waiting for a free transfer slot ("Queued", #554).
+                3 => {
+                    if msg.is_empty() {
+                        t("文件准备中", "Preparing...").to_string()
+                    } else {
+                        msg
+                    }
+                }
                 // User-cancelled transfer (#100).
                 4 => t("已取消", "Cancelled").to_string(),
                 _ => {

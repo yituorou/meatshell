@@ -501,7 +501,7 @@ async fn run_sftp(
     // Share the session + connection so transfers can run on their own task,
     // leaving the command loop free to list/switch directories meanwhile (#116-2).
     let sftp = std::sync::Arc::new(sftp);
-    let handle = std::sync::Arc::new(SftpLink { handle, elevation });
+    let handle = std::sync::Arc::new(SftpLink::new(handle, elevation));
 
     // Owner/group names live for the whole SFTP connection so every listing
     // after the first can paint names without another `getent` round-trip.
@@ -1863,6 +1863,12 @@ async fn stream_file_impl(
     const CHUNK: usize = 32 * 1024;
     const MAX_INFLIGHT: usize = 32;
 
+    // Drag-out files share the per-connection channel budget too (#554). The
+    // drag has one Transfers row for all its files, so queueing stays silent.
+    let Some(_slot) = wait_for_slot(&handle.transfer_slots, &progress.cancel, || {}, || {}).await
+    else {
+        return Err(anyhow!("{}", t("已取消", "Cancelled")));
+    };
     let stream = handle
         .elevation
         .open_stream(&handle.handle)
@@ -2327,6 +2333,68 @@ fn open_with_dialog(path: &str) -> Result<bool, String> {
             HRESULT_ERROR_CANCELLED => Ok(false),
             other => Err(format!("Open with dialog failed (0x{:08X})", other as u32)),
         }
+    }
+}
+
+#[cfg(test)]
+mod transfer_slot_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn a_free_slot_is_taken_without_queueing() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_TRANSFERS));
+        let queued = AtomicUsize::new(0);
+        let cancel = AtomicBool::new(false);
+        let mut held = Vec::new();
+        for _ in 0..MAX_PARALLEL_TRANSFERS {
+            let permit = wait_for_slot(&slots, &cancel, || { queued.fetch_add(1, Ordering::SeqCst); }, || {}).await;
+            held.push(permit.expect("a free slot"));
+        }
+        assert_eq!(queued.load(Ordering::SeqCst), 0);
+        assert_eq!(slots.available_permits(), 0);
+    }
+
+    #[tokio::test]
+    async fn extra_transfers_wait_their_turn_instead_of_failing() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let busy = slots.clone().try_acquire_owned().unwrap();
+        let queued = Arc::new(AtomicUsize::new(0));
+        let waiter = {
+            let (slots, queued) = (slots.clone(), queued.clone());
+            tokio::spawn(async move {
+                let cancel = AtomicBool::new(false);
+                wait_for_slot(&slots, &cancel, || { queued.fetch_add(1, Ordering::SeqCst); }, || {})
+                    .await
+                    .is_some()
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(queued.load(Ordering::SeqCst), 1, "shown as Queued");
+        assert!(!waiter.is_finished(), "still waiting while the slot is busy");
+        drop(busy);
+        assert!(waiter.await.unwrap(), "starts once a slot frees up");
+    }
+
+    #[tokio::test]
+    async fn a_queued_transfer_can_be_cancelled() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(1));
+        let _busy = slots.clone().try_acquire_owned().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let waiter = {
+            let (slots, cancel, cancelled) = (slots.clone(), cancel.clone(), cancelled.clone());
+            tokio::spawn(async move {
+                wait_for_slot(&slots, &cancel, || {}, || { cancelled.fetch_add(1, Ordering::SeqCst); })
+                    .await
+                    .is_none()
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.store(true, Ordering::SeqCst);
+        assert!(waiter.await.unwrap(), "gave up the place in the queue");
+        assert_eq!(cancelled.load(Ordering::SeqCst), 1);
+        assert_eq!(slots.available_permits(), 0, "the running transfer keeps its slot");
     }
 }
 
@@ -2964,6 +3032,10 @@ async fn download_impl(
     const CHUNK: usize = 32 * 1024;
     const MAX_INFLIGHT: usize = 32; // ~1 MB outstanding hides the RTT
 
+    // At most MAX_PARALLEL_TRANSFERS channels at once; the rest wait (#554).
+    let Some(_slot) = handle.transfer_slot(events, id, name, false, cancel).await else {
+        return Ok(false);
+    };
     let stream = handle
         .elevation
         .open_stream(&handle.handle)
@@ -3323,6 +3395,10 @@ async fn upload_pipelined(
     const CHUNK: usize = 32 * 1024; // safe SFTP write size
     const MAX_INFLIGHT: usize = 32; // ~1 MB of outstanding writes hides the RTT
 
+    // At most MAX_PARALLEL_TRANSFERS channels at once; the rest wait (#554).
+    let Some(_slot) = handle.transfer_slot(events, id, name, true, cancel).await else {
+        return Ok(false);
+    };
     let total = tokio::fs::metadata(local)
         .await
         .map(|m| m.len())
@@ -3447,6 +3523,74 @@ struct SftpClientHandler {
 struct SftpLink {
     handle: client::Handle<SftpClientHandler>,
     elevation: Elevation,
+    /// One permit per transfer that may run at once (#554); see
+    /// `MAX_PARALLEL_TRANSFERS`. Tokio's semaphore is fair, so files start in
+    /// the order they were queued.
+    transfer_slots: Arc<tokio::sync::Semaphore>,
+}
+
+/// Transfers that may run at once on one SFTP connection (#554). Each file
+/// opens its own SFTP channel, and servers cap the channels per connection
+/// (OpenSSH `MaxSessions`, default 10, also used by the browse channel and
+/// remote commands). Uploading many files at once opened one channel per file,
+/// so the extra ones failed with "open sftp upload channel"; now they wait.
+const MAX_PARALLEL_TRANSFERS: usize = 4;
+
+impl SftpLink {
+    fn new(handle: client::Handle<SftpClientHandler>, elevation: Elevation) -> Self {
+        Self {
+            handle,
+            elevation,
+            transfer_slots: Arc::new(tokio::sync::Semaphore::new(MAX_PARALLEL_TRANSFERS)),
+        }
+    }
+
+    /// Wait for a free transfer slot, held until the returned permit drops.
+    /// A file that has to wait shows "Queued" in the transfer panel and can
+    /// still be cancelled there: `None` = cancelled while queued (the row is
+    /// then marked cancelled).
+    async fn transfer_slot(
+        &self,
+        events: &UnboundedSender<SessionEvent>,
+        id: &str,
+        name: &str,
+        is_upload: bool,
+        cancel: &AtomicBool,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        wait_for_slot(&self.transfer_slots, cancel, || {
+            emit_transfer(events, id, name, is_upload, 0, 0, 3, t("排队等待中", "Queued"));
+        }, || {
+            emit_transfer(events, id, name, is_upload, 0, 0, 4, t("已取消", "Cancelled"));
+        })
+        .await
+    }
+}
+
+/// Take a permit from `slots`, calling `queued` once if it has to wait and
+/// `cancelled` if `cancel` is set while waiting (then `None`).
+async fn wait_for_slot(
+    slots: &Arc<tokio::sync::Semaphore>,
+    cancel: &AtomicBool,
+    queued: impl FnOnce(),
+    cancelled: impl FnOnce(),
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    if let Ok(permit) = slots.clone().try_acquire_owned() {
+        return Some(permit);
+    }
+    queued();
+    let acquire = slots.clone().acquire_owned();
+    tokio::pin!(acquire);
+    loop {
+        tokio::select! {
+            permit = &mut acquire => return permit.ok(),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if cancel.load(Ordering::Relaxed) {
+                    cancelled();
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 impl std::ops::Deref for SftpLink {
