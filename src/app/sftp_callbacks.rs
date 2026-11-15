@@ -1282,6 +1282,29 @@ pub(super) fn wire_sftp_callbacks(
             }
         });
     }
+    // "Choose program…" (#553): the program for this file only. Windows shows
+    // its own "Open with" list for the file's extension once the copy is
+    // downloaded; elsewhere a program is picked here first. Settings › SFTP
+    // keeps the default editor; this never changes it.
+    {
+        let sftp_handles = sftp_handles.clone();
+        let weak = window.as_weak();
+        window.on_sftp_open_with(move |tab_id: SharedString, path: SharedString, edit: bool| {
+            let with = if cfg!(windows) {
+                crate::sftp::OpenWith::Choose
+            } else {
+                let Some(program) = super::DialogOwner::of_weak(&weak).file().pick_file() else {
+                    return;
+                };
+                crate::sftp::OpenWith::Program(program.to_string_lossy().to_string())
+            };
+            if let Ok(handles) = sftp_handles.lock() {
+                if let Some(h) = handles.get(tab_id.as_str()) {
+                    h.open_temp_with(path.to_string(), edit, with);
+                }
+            }
+        });
+    }
 
     // Context-menu extensions (#69): one prompt dialog covers rename / chmod /
     // mkdir / touch; copy-path goes straight to the system clipboard.

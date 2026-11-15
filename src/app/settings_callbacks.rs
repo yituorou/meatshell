@@ -154,6 +154,45 @@ pub(super) fn wire_interface_toggles(
         });
     }
 
+    // Settings → SFTP → External editor (#553): the program "Edit with
+    // external editor" starts; empty = the OS default app.
+    sync_external_editor(&window, &store.borrow());
+    {
+        let store = store.clone();
+        let registry = registry.clone();
+        window.on_set_external_editor(move |program, args| {
+            let mut s = store.borrow_mut();
+            s.set_external_editor(&program, &args);
+            let _ = s.save();
+            drop(s);
+            registry.broadcast_config_changed();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let registry = registry.clone();
+        window.on_pick_external_editor(move || {
+            let mut dialog = super::DialogOwner::of_weak(&weak).file();
+            if cfg!(windows) {
+                dialog = dialog.add_filter("Programs", &["exe", "cmd", "bat", "com"]);
+            }
+            let Some(file) = dialog.pick_file() else {
+                return;
+            };
+            let Some(w) = weak.upgrade() else {
+                return;
+            };
+            let program = file.to_string_lossy().to_string();
+            w.set_external_editor(program.clone().into());
+            let mut s = store.borrow_mut();
+            s.set_external_editor(&program, &w.get_external_editor_args());
+            let _ = s.save();
+            drop(s);
+            registry.broadcast_config_changed();
+        });
+    }
+
     // Toolbar toggle: hide/show the quick-command bar (persisted globally).
     window.set_cmd_bar_hidden(store.borrow().cmd_bar_hidden());
     {
@@ -201,6 +240,13 @@ pub(super) fn sync_ssh_keepalive(window: &AppWindow, store: &ConfigStore) {
     window.set_ssh_keepalive_enabled(store.ssh_keepalive_enabled());
     window.set_ssh_keepalive_interval(store.ssh_keepalive_interval() as i32);
     window.set_ssh_keepalive_max(store.ssh_keepalive_max() as i32);
+}
+
+/// Show the saved external editor (#553) in Settings → SFTP.
+pub(super) fn sync_external_editor(window: &AppWindow, store: &ConfigStore) {
+    let (program, args) = store.external_editor();
+    window.set_external_editor(program.into());
+    window.set_external_editor_args(args.into());
 }
 
 /// Session logging settings (#265).

@@ -588,6 +588,7 @@ impl ConfigStore {
         };
         drop(load_lock);
         store.apply_ssh_keepalive();
+        store.apply_external_editor();
         // Persist the migration so it runs exactly once (and so a later opt-out —
         // e.g. turning the welcome sidebar back off — isn't reverted next launch).
         if migrated {
@@ -1002,6 +1003,27 @@ impl ConfigStore {
 
     pub fn editor_embedded(&self) -> bool {
         self.cache.editor_embedded
+    }
+
+    /// External editor for "Edit with external editor" (#553): (program, args).
+    pub fn external_editor(&self) -> (&str, &str) {
+        (&self.cache.external_editor, &self.cache.external_editor_args)
+    }
+
+    /// Store the external editor and use it for files opened from now on.
+    pub fn set_external_editor(&mut self, program: &str, args: &str) {
+        let program = program.trim().trim_matches('"').trim();
+        self.cache.external_editor = program.to_string();
+        self.cache.external_editor_args = if program.is_empty() {
+            String::new()
+        } else {
+            args.trim().to_string()
+        };
+        self.apply_external_editor();
+    }
+
+    fn apply_external_editor(&self) {
+        crate::sftp::set_external_editor(&self.cache.external_editor, &self.cache.external_editor_args);
     }
 
     pub fn set_editor_embedded(&mut self, embedded: bool) {

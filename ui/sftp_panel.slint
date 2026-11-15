@@ -73,13 +73,26 @@ component SftpMenuItem inherits Rectangle {
     in property <string> icon;
     in property <brush> tint: Theme.text-primary;
     in property <bool> enabled: true;   // disabled items grey out + ignore clicks
+    in property <bool> submenu: false;  // opens a second-level menu: show ›
+    in property <bool> highlighted: false;  // its submenu is the one shown
     callback clicked();
+    // Menus that stay open on clicks inside (close-on-click-outside) are told
+    // to close after an item runs; an item that opens a submenu keeps it open.
+    callback close-menu();
+    callback hovered();   // the pointer entered the row (#553)
     height: 26px;
     border-radius: Theme.radius-sm;
-    background: (root.enabled && ta.has-hover) ? Theme.bg-hover : transparent;
+    background: (root.enabled && (ta.has-hover || root.highlighted)) ? Theme.bg-hover : transparent;
+    property <bool> hovering: ta.has-hover;
+    changed hovering => { if (self.hovering) { root.hovered(); } }
     ta := TouchArea {
         mouse-cursor: root.enabled ? pointer : default;
-        clicked => { if (root.enabled) { root.clicked(); } }
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+                if (!root.submenu) { root.close-menu(); }
+            }
+        }
     }
     Text {
         x: 8px;
@@ -99,6 +112,16 @@ component SftpMenuItem inherits Rectangle {
         font-size: Theme.fs-sm;
         vertical-alignment: center;
         height: parent.height;
+    }
+    if root.submenu : Text {
+        x: parent.width - 18px;
+        width: 12px;
+        height: parent.height;
+        text: "›";
+        color: root.enabled ? Theme.text-secondary : Theme.text-muted;
+        font-size: Theme.fs-md;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 }
 
@@ -1204,6 +1227,9 @@ export component SftpPanel inherits Rectangle {
     // --- Properties --------------------------------------------------------
     in property <string>  current-path: "/";
     in property <[SftpEntry]>    entries;
+    // Width of the whole window (#553): the context menu's submenu column goes
+    // on the left when it would leave the window on the right.
+    in property <length> window-width;
     // Remote name filter (split view). Rust keeps the unfiltered listing in
     // TerminalState and republishes `entries` for the current text.
     in property <string>  filter: "";
@@ -1336,6 +1362,27 @@ export component SftpPanel inherits Rectangle {
     // out the item-specific actions (download/rename/…) but keeps new/refresh.
     property <length> menu-x;
     property <length> menu-y;
+    // Second-level menus (#553), shown on hover in a column of the same popup:
+    // "open" / "edit" (external program) or "copy" (copy to session); "" = none.
+    property <string> open-submenu;
+    property <length> submenu-y;
+    // The column goes left of the menu when there is no room on the right.
+    property <bool> submenu-on-left;
+    property <length> submenu-width: 170px;
+    property <length> file-menu-width: 186px;
+    property <length> file-menu-height: (15 + (root.dual ? 2 : 0)) * 27px + 8px;
+    property <length> copy-menu-height: max(1, root.transfer-targets.length) * 27px + 8px;
+    // Show submenu `key` beside the row at `row-y` (its offset in the menu),
+    // kept inside the popup; a disabled row closes any open submenu instead.
+    function show-submenu(key: string, enabled: bool, row-y: length) {
+        if (!enabled) {
+            root.open-submenu = "";
+            return;
+        }
+        let height = key == "copy" ? root.copy-menu-height : 2 * 27px + 8px;
+        root.submenu-y = max(0px, min(row-y - 4px, max(root.file-menu-height, root.copy-menu-height) - height));
+        root.open-submenu = key;
+    }
     property <string> menu-target;          // "" = whitespace
     property <string> menu-target-name;
     property <bool>   menu-target-is-dir;
@@ -1425,6 +1472,8 @@ export component SftpPanel inherits Rectangle {
     callback edit(string);          // open writable in the built-in editor
     callback open-external(string);     // open with the OS default app (#81)
     callback edit-external(string);     // open externally + watch/re-upload (#81)
+    // Open / edit with a program picked now, for this file only (#553).
+    callback open-with(string /* path */, bool /* edit */);
     callback sort-request(string /* name|size|modified */);
     callback clear-sort();
     callback tunnel-add(string /* name */, string /* kind */, string /* bind */, string /* bind-port */, string /* host */, string /* host-port */, bool /* save */, bool /* auto-start */);
@@ -2929,7 +2978,10 @@ export component SftpPanel inherits Rectangle {
                                             root.menu-target-is-dir = entry.is-dir;
                                             root.menu-target-mode = entry.mode;
                                             root.menu-on-selection = entry.selected && root.selected-count >= 2;
-                                            root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
+                                            root.open-submenu = "";
+                                            // Room for the submenu column: right of the menu, else left (#553).
+                                            root.submenu-on-left = root.window-width > 0px && self.absolute-position.x + self.mouse-x + root.file-menu-width + root.submenu-width > root.window-width;
+                                            root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x - (root.submenu-on-left ? root.submenu-width - 4px : 0px);
                                             root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
                                             file-menu.show();
                                         }
@@ -3049,7 +3101,10 @@ export component SftpPanel inherits Rectangle {
                                             root.selected-row = -1;
                                             root.menu-target = "";
                                             root.menu-on-selection = false;
-                                            root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x;
+                                            root.open-submenu = "";
+                                            // Room for the submenu column: right of the menu, else left (#553).
+                                            root.submenu-on-left = root.window-width > 0px && self.absolute-position.x + self.mouse-x + root.file-menu-width + root.submenu-width > root.window-width;
+                                            root.menu-x = self.absolute-position.x + self.mouse-x - file-area.absolute-position.x - (root.submenu-on-left ? root.submenu-width - 4px : 0px);
                                             root.menu-y = self.absolute-position.y + self.mouse-y - file-area.absolute-position.y;
                                             file-menu.show();
                                         }
@@ -3062,12 +3117,217 @@ export component SftpPanel inherits Rectangle {
                     // One context menu for the whole list (#84). Item actions are
                     // enabled only when an item was right-clicked (menu-target set);
                     // new/refresh are always available.
-                    copy-target-menu := PopupWindow {
-                        x: root.menu-x + 148px;
+                    //
+                    // Second-level menus (#553) live in the same popup, in a column
+                    // beside the main menu, so hovering a row can open and switch
+                    // them: Slint routes no pointer events to a parent popup while
+                    // a child PopupWindow is open. The column sits on the left when
+                    // the right side would leave the window.
+                    file-menu := PopupWindow {
+                        x: root.menu-x;
                         y: root.menu-y;
-                        width: 148px;
-                        height: max(1, root.transfer-targets.length) * 27px + 8px;
+                        close-policy: close-on-click-outside;
+                        width: root.file-menu-width + root.submenu-width - 4px;
+                        height: max(root.file-menu-height, root.copy-menu-height);
+                        // The empty part of the popup (where no submenu is
+                        // shown) closes the menu like a click outside would.
+                        TouchArea { clicked => { file-menu.close(); } }
                         Rectangle {
+                            x: root.submenu-on-left ? root.submenu-width - 4px : 0px;
+                            y: 0px;
+                            width: root.file-menu-width;
+                            height: root.file-menu-height;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 12px;
+                            drop-shadow-color: #00000060;
+                            VerticalLayout {
+                                padding: 4px;
+                                spacing: 1px;
+                                SftpMenuItem {
+                                    label: @tr("Download");
+                                    enabled: root.menu-target != "";
+                                    clicked => { root.download(root.menu-target); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                // Split view only: pull straight into the folder
+                                // the local pane is showing (no folder picker).
+                                if root.dual : SftpMenuItem {
+                                    label: @tr("Download to local folder");
+                                    enabled: root.menu-target != "";
+                                    clicked => { root.download-to-local(root.menu-target); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                if root.dual : SftpMenuItem {
+                                    label: @tr("Download checked to local folder");
+                                    enabled: root.selected-count > 0;
+                                    clicked => { root.download-selected-to-local(); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("View");
+                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
+                                    clicked => { root.view(root.menu-target); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Edit");
+                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
+                                    clicked => { root.edit(root.menu-target); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                // Hover (or click) opens the second level: the
+                                // default program, or one picked for this file.
+                                open-ext-item := SftpMenuItem {
+                                    label: @tr("Open externally");
+                                    submenu: true;
+                                    highlighted: root.open-submenu == "open";
+                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
+                                    hovered => { root.show-submenu("open", self.enabled, self.y); }
+                                    clicked => { root.show-submenu("open", true, self.y); }
+                                }
+                                edit-ext-item := SftpMenuItem {
+                                    label: @tr("Edit externally");
+                                    submenu: true;
+                                    highlighted: root.open-submenu == "edit";
+                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
+                                    hovered => { root.show-submenu("edit", self.enabled, self.y); }
+                                    clicked => { root.show-submenu("edit", true, self.y); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Rename");
+                                    enabled: root.menu-target != "";
+                                    clicked => { root.rename-request(root.menu-target, root.menu-target-name); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Permissions");
+                                    enabled: root.menu-target != "";
+                                    clicked => { root.chmod-request(root.menu-target, root.menu-target-name, root.menu-target-mode); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Copy path");
+                                    enabled: root.menu-target != "";
+                                    clicked => { root.copy-path(root.menu-target); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                copy-to-item := SftpMenuItem {
+                                    label: @tr("Copy to session...");
+                                    submenu: true;
+                                    highlighted: root.open-submenu == "copy";
+                                    enabled: (root.menu-target != "" || root.selected-count > 0) && root.transfer-targets.length > 1;
+                                    hovered => { root.show-submenu("copy", self.enabled, self.y); }
+                                    clicked => { root.show-submenu("copy", true, self.y); }
+                                }
+                                // Right-clicking one of several checked rows
+                                // deletes all of them; an unchecked row only
+                                // itself (#531). Both paths ask for confirmation.
+                                SftpMenuItem {
+                                    label: root.menu-on-selection ? @tr("Delete checked items") : @tr("Delete");
+                                    tint: #d86c6c;
+                                    enabled: root.menu-target != "";
+                                    clicked => {
+                                        if (root.menu-on-selection) {
+                                            root.delete-selected();
+                                        } else {
+                                            root.delete(root.menu-target);
+                                        }
+                                    }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                Rectangle { height: 1px; background: Theme.border-subtle; }
+                                // Upload copied files (#508): into the right-clicked
+                                // folder, else the folder being shown.
+                                SftpMenuItem {
+                                    label: @tr("Paste");
+                                    clicked => {
+                                        root.paste-upload(root.menu-target != "" && root.menu-target-is-dir
+                                            ? root.menu-target : root.current-path);
+                                    }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("New folder");
+                                    clicked => { root.new-folder(root.current-path); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("New file");
+                                    clicked => { root.new-file(root.current-path); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Refresh");
+                                    clicked => { root.refresh(root.current-path); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Clear sort");
+                                    enabled: root.sort-dir != 0;
+                                    clicked => { root.clear-sort(); }
+                                    hovered => { root.open-submenu = ""; }
+                                    close-menu => { file-menu.close(); }
+                                }
+                            }
+                        }
+
+                        // "Open externally" / "Edit externally" (#553).
+                        if root.open-submenu == "open" || root.open-submenu == "edit" : Rectangle {
+                            x: root.submenu-on-left ? 0px : root.file-menu-width - 4px;
+                            y: root.submenu-y;
+                            width: root.submenu-width;
+                            height: 2 * 27px + 8px;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 12px;
+                            drop-shadow-color: #00000060;
+                            VerticalLayout {
+                                padding: 4px;
+                                spacing: 1px;
+                                SftpMenuItem {
+                                    // Edit: the editor from Settings › SFTP, else the system app.
+                                    label: root.open-submenu == "edit" ? @tr("Default editor") : @tr("Default app");
+                                    clicked => {
+                                        if (root.open-submenu == "edit") {
+                                            root.edit-external(root.menu-target);
+                                        } else {
+                                            root.open-external(root.menu-target);
+                                        }
+                                    }
+                                    close-menu => { file-menu.close(); }
+                                }
+                                SftpMenuItem {
+                                    label: @tr("Choose program…");
+                                    clicked => { root.open-with(root.menu-target, root.open-submenu == "edit"); }
+                                    close-menu => { file-menu.close(); }
+                                }
+                            }
+                        }
+
+                        // "Copy to session…": the other connected sessions.
+                        if root.open-submenu == "copy" : Rectangle {
+                            x: root.submenu-on-left ? 0px : root.file-menu-width - 4px;
+                            y: root.submenu-y;
+                            width: root.submenu-width;
+                            height: max(1, root.transfer-targets.length) * 27px + 8px;
                             background: Theme.popup-bg;
                             border-radius: Theme.radius-sm;
                             border-width: 1px;
@@ -3089,124 +3349,7 @@ export component SftpPanel inherits Rectangle {
                                             root.copy-selected-to-target(target.id);
                                         }
                                     }
-                                }
-                            }
-                        }
-                    }
-
-                    file-menu := PopupWindow {
-                        x: root.menu-x;
-                        y: root.menu-y;
-                        width: 186px;
-                        height: (15 + (root.dual ? 2 : 0)) * 27px + 8px;
-                        Rectangle {
-                            background: Theme.popup-bg;
-                            border-radius: Theme.radius-sm;
-                            border-width: 1px;
-                            border-color: Theme.border-strong;
-                            drop-shadow-blur: 12px;
-                            drop-shadow-color: #00000060;
-                            VerticalLayout {
-                                padding: 4px;
-                                spacing: 1px;
-                                SftpMenuItem {
-                                    label: @tr("Download");
-                                    enabled: root.menu-target != "";
-                                    clicked => { root.download(root.menu-target); }
-                                }
-                                // Split view only: pull straight into the folder
-                                // the local pane is showing (no folder picker).
-                                if root.dual : SftpMenuItem {
-                                    label: @tr("Download to local folder");
-                                    enabled: root.menu-target != "";
-                                    clicked => { root.download-to-local(root.menu-target); }
-                                }
-                                if root.dual : SftpMenuItem {
-                                    label: @tr("Download checked to local folder");
-                                    enabled: root.selected-count > 0;
-                                    clicked => { root.download-selected-to-local(); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("View");
-                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
-                                    clicked => { root.view(root.menu-target); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Edit");
-                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
-                                    clicked => { root.edit(root.menu-target); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Open externally");
-                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
-                                    clicked => { root.open-external(root.menu-target); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Edit externally");
-                                    enabled: root.menu-target != "" && !root.menu-target-is-dir;
-                                    clicked => { root.edit-external(root.menu-target); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Rename");
-                                    enabled: root.menu-target != "";
-                                    clicked => { root.rename-request(root.menu-target, root.menu-target-name); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Permissions");
-                                    enabled: root.menu-target != "";
-                                    clicked => { root.chmod-request(root.menu-target, root.menu-target-name, root.menu-target-mode); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Copy path");
-                                    enabled: root.menu-target != "";
-                                    clicked => { root.copy-path(root.menu-target); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Copy to session...");
-                                    enabled: (root.menu-target != "" || root.selected-count > 0) && root.transfer-targets.length > 1;
-                                    clicked => { copy-target-menu.show(); }
-                                }
-                                // Right-clicking one of several checked rows
-                                // deletes all of them; an unchecked row only
-                                // itself (#531). Both paths ask for confirmation.
-                                SftpMenuItem {
-                                    label: root.menu-on-selection ? @tr("Delete checked items") : @tr("Delete");
-                                    tint: #d86c6c;
-                                    enabled: root.menu-target != "";
-                                    clicked => {
-                                        if (root.menu-on-selection) {
-                                            root.delete-selected();
-                                        } else {
-                                            root.delete(root.menu-target);
-                                        }
-                                    }
-                                }
-                                Rectangle { height: 1px; background: Theme.border-subtle; }
-                                // Upload copied files (#508): into the right-clicked
-                                // folder, else the folder being shown.
-                                SftpMenuItem {
-                                    label: @tr("Paste");
-                                    clicked => {
-                                        root.paste-upload(root.menu-target != "" && root.menu-target-is-dir
-                                            ? root.menu-target : root.current-path);
-                                    }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("New folder");
-                                    clicked => { root.new-folder(root.current-path); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("New file");
-                                    clicked => { root.new-file(root.current-path); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Refresh");
-                                    clicked => { root.refresh(root.current-path); }
-                                }
-                                SftpMenuItem {
-                                    label: @tr("Clear sort");
-                                    enabled: root.sort-dir != 0;
-                                    clicked => { root.clear-sort(); }
+                                    close-menu => { file-menu.close(); }
                                 }
                             }
                         }

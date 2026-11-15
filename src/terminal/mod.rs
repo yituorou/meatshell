@@ -1,6 +1,8 @@
 #[path = "struct/state.rs"]
 mod state;
 
+#[path = "impls/args.rs"]
+pub(crate) mod args;
 #[path = "impls/input.rs"]
 mod input;
 #[path = "impls/json_output.rs"]

@@ -773,6 +773,10 @@ export component InterfacePanel inherits Rectangle {
     in property <float> ui-scale;
     in-out property <bool> sftp-follow-cd;
     in-out property <bool> editor-embedded;
+    // Settings › SFTP › External editor (#553); empty = OS default app.
+    in-out property <string> external-editor;
+    in-out property <string> external-editor-args;
+    in property <bool> is-mac;
     in-out property <bool> collapse-sidebar-default;
     in-out property <bool> collapse-sftp-default;
     in-out property <bool> sync-upload-enabled;
@@ -911,6 +915,8 @@ export component InterfacePanel inherits Rectangle {
     callback set-renderer-mode(string);
     callback set-sftp-follow-cd(bool);
     callback set-editor-embedded(bool);
+    callback set-external-editor(string /* program */, string /* args */);
+    callback pick-external-editor();
     callback set-collapse-sidebar-default(bool);
     callback set-collapse-sftp-default(bool);
     callback set-sync-upload-enabled(bool);
@@ -2202,6 +2208,63 @@ export component InterfacePanel inherits Rectangle {
                     Switch {
                         on: root.editor-embedded;
                         toggled(v) => { root.editor-embedded = v; root.set-editor-embedded(v); }
+                    }
+                }
+                // External editor (#553), like Xshell / FinalShell.
+                VerticalLayout {
+                    padding-top: 14px;
+                    spacing: 8px;
+                    SectionHeader { text: root.lang-en ? "EXTERNAL EDITOR" : "外部编辑器"; height: 24px; }
+                    Text {
+                        text: root.lang-en
+                            ? "Used by \"Edit with external editor\". Leave it empty to use the system's default app for each file type (on Windows that can run .js / .vbs files instead of opening them)."
+                            : "用于「用外部编辑器编辑」。留空则按文件类型使用系统默认程序（Windows 下 .js / .vbs 等文件可能会被直接运行，而不是打开编辑）。";
+                        color: Theme.text-muted;
+                        font-size: 11px * Theme.panel-font;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LabeledInput {
+                            horizontal-stretch: 1;
+                            label: root.lang-en ? "Program" : "程序";
+                            placeholder: root.is-windows
+                                ? "C:\\Program Files\\Notepad++\\notepad++.exe"
+                                : (root.is-mac ? "/Applications/Visual Studio Code.app" : "/usr/bin/gedit");
+                            value <=> root.external-editor;
+                            accepted => { root.set-external-editor(root.external-editor, root.external-editor-args); }
+                        }
+                        VerticalLayout {
+                            alignment: end;
+                            GhostButton {
+                                text: root.lang-en ? "Browse…" : "选择程序…";
+                                clicked => { root.pick-external-editor(); }
+                            }
+                        }
+                    }
+                    LabeledInput {
+                        label: root.lang-en ? "Arguments (optional)" : "启动参数（可选）";
+                        placeholder: root.lang-en
+                            ? "e.g. -multiInst -nosession; {file} = the file, else it goes last"
+                            : "例如 -multiInst -nosession；{file} 代表文件，不写则放在最后";
+                        value <=> root.external-editor-args;
+                        accepted => { root.set-external-editor(root.external-editor, root.external-editor-args); }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        GhostButton {
+                            text: root.lang-en ? "Use system default" : "使用系统默认";
+                            clicked => {
+                                root.external-editor = "";
+                                root.external-editor-args = "";
+                                root.set-external-editor("", "");
+                            }
+                        }
+                        PrimaryButton {
+                            text: root.lang-en ? "Save" : "保存";
+                            clicked => { root.set-external-editor(root.external-editor, root.external-editor-args); }
+                        }
                     }
                 }
             }

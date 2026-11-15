@@ -1074,6 +1074,11 @@ export component AppWindow inherits Window {
     // or command bar) and can be dragged to split like any other tab.
     in-out property <bool> editor-embedded: false;
     callback set-editor-embedded(bool);       // apply + persist
+    // Settings › SFTP › External editor (#553).
+    in-out property <string> external-editor;
+    in-out property <string> external-editor-args;
+    callback set-external-editor(string, string);
+    callback pick-external-editor();
     in property <[EditorDoc]> editor-docs;
     callback open-editor-tab(string /* owner tab */, string /* path */, string /* name */,
                              string /* content */, bool /* readonly */);
@@ -1451,6 +1456,7 @@ export component AppWindow inherits Window {
     callback sftp-edit(string /* tab-id */, string /* path */);
     callback sftp-open-external(string /* tab-id */, string /* path */);
     callback sftp-edit-external(string /* tab-id */, string /* path */);
+    callback sftp-open-with(string /* tab-id */, string /* path */, bool /* edit */);
     callback sftp-sort-request(string /* tab-id */, string /* key */);
     callback sftp-clear-sort(string /* tab-id */);
     callback tunnel-add(string /* tab-id */, string /* name */, string /* kind */, string /* bind */, string /* bind-port */, string /* host */, string /* host-port */, bool /* save */, bool /* auto-start */);
@@ -2326,6 +2332,8 @@ export component AppWindow inherits Window {
                         active: term.id == root.active-tab-id;
                         // Fullscreen also hides the status strip (#495).
                         zen-mode: root.hide-panels;
+                        // Popup menus keep themselves inside the window (#553).
+                        window-width: root.width;
                         width: term.id == pane.active-id ? parent.width : 0px;
                         height: term.id == pane.active-id ? parent.height : 0px;
                         tab-id: term.id;
@@ -2536,6 +2544,7 @@ export component AppWindow inherits Window {
                         sftp-edit(path) => { root.sftp-edit(term.id, path); }
                         sftp-open-external(path) => { root.sftp-open-external(term.id, path); }
                         sftp-edit-external(path) => { root.sftp-edit-external(term.id, path); }
+                        sftp-open-with(path, edit) => { root.sftp-open-with(term.id, path, edit); }
                         sftp-sort-request(key) => { root.sftp-sort-request(term.id, key); }
                         sftp-clear-sort() => { root.sftp-clear-sort(term.id); }
                         tunnel-add(name, kind, bind, bind-port, host, host-port, save, auto-start) => {
@@ -5430,6 +5439,9 @@ export component AppWindow inherits Window {
                     ui-scale: root.ui-scale;
                     sftp-follow-cd <=> root.sftp-follow-cd;
                     editor-embedded <=> root.editor-embedded;
+                    external-editor <=> root.external-editor;
+                    external-editor-args <=> root.external-editor-args;
+                    is-mac: root.is-mac;
                     collapse-sidebar-default <=> root.collapse-sidebar-default;
                     collapse-sftp-default <=> root.collapse-sftp-default;
                     sync-upload-enabled <=> root.sync-upload-enabled;
@@ -5552,6 +5564,8 @@ export component AppWindow inherits Window {
                     set-renderer-mode(v) => { root.set-renderer-mode(v); }
                     set-sftp-follow-cd(v) => { root.set-sftp-follow-cd(v); }
                     set-editor-embedded(v) => { root.set-editor-embedded(v); }
+                    set-external-editor(program, args) => { root.set-external-editor(program, args); }
+                    pick-external-editor => { root.pick-external-editor(); }
                     set-collapse-sidebar-default(v) => { root.set-collapse-sidebar-default(v); }
                     set-collapse-sftp-default(v) => { root.set-collapse-sftp-default(v); }
                     set-sync-upload-enabled(v) => { root.set-sync-upload-enabled(v); }

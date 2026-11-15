@@ -878,3 +878,12 @@ msgstr "SSH agent"
 
 msgid "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."
 msgstr "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."
+
+msgid "Default app"
+msgstr "Default app"
+
+msgid "Default editor"
+msgstr "Default editor"
+
+msgid "Choose program…"
+msgstr "Choose program…"

@@ -274,6 +274,8 @@ export component QuickDockPanel inherits Rectangle {
 export component TerminalView inherits Rectangle {
     in property <bool> active: true;
     in property <bool> zen-mode: false;
+    // Width of the whole window, for popups that must stay inside it (#553).
+    in property <length> window-width;
     in property <float> terminal-line-spacing: 1.0;
     in property <bool> extra-paste-shortcuts-enabled: true;
     in property <bool> right-click-copy: false;
@@ -478,6 +480,7 @@ export component TerminalView inherits Rectangle {
     callback sftp-edit(string);
     callback sftp-open-external(string);
     callback sftp-edit-external(string);
+    callback sftp-open-with(string, bool);
     callback sftp-sort-request(string);
     callback sftp-clear-sort();
     callback tunnel-add(string, string, string, string, string, string, bool, bool);
@@ -2385,6 +2388,7 @@ export component TerminalView inherits Rectangle {
             height: root.sftp-horizontal ? parent.height : parent.sf-h;
             show-tree: !root.sftp-horizontal;   // hide the tree when narrow (vertical)
             tree-width: root.sftp-tree-width;
+            window-width: root.window-width;
             persist-tree-width(width) => { root.persist-sftp-tree-width(width); }
             show-type: root.sftp-show-type;
             show-size: root.sftp-show-size;
@@ -2465,6 +2469,7 @@ export component TerminalView inherits Rectangle {
             edit(path)          => { root.sftp-edit(path); }
             open-external(path) => { root.sftp-open-external(path); }
             edit-external(path) => { root.sftp-edit-external(path); }
+            open-with(path, edit) => { root.sftp-open-with(path, edit); }
             sort-request(key)   => { root.sftp-sort-request(key); }
             clear-sort()        => { root.sftp-clear-sort(); }
             tunnel-add(name, kind, bind, bind-port, host, host-port, save, auto-start) => {

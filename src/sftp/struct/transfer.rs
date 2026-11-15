@@ -73,8 +73,12 @@ pub enum SftpCommand {
     Delete(String),
     /// Download a file to a temp dir and open it with the OS default app
     /// ("Open/Edit externally", #81). When `edit` is set, watch the temp copy
-    /// and re-upload on every change.
-    OpenTemp { remote: String, edit: bool },
+    /// and re-upload on every change. `with` = which program opens it (#553).
+    OpenTemp {
+        remote: String,
+        edit: bool,
+        with: OpenWith,
+    },
     /// Rename / move a remote file or directory (#69).
     Rename { from: String, to: String },
     /// Change a remote path's permission bits (POSIX mode, e.g. 0o755) (#69).
@@ -168,6 +172,19 @@ impl DragTransfer {
             report: Default::default(),
         }
     }
+}
+
+/// Which program "Open / Edit externally" uses (#553).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenWith {
+    /// Viewing: the OS default app. Editing: the editor from Settings › SFTP,
+    /// else the OS default app.
+    Default,
+    /// A program picked for this file only.
+    Program(String),
+    /// Windows: ask with the system "Open with" dialog for the downloaded
+    /// copy, which lists the apps registered for its extension.
+    Choose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

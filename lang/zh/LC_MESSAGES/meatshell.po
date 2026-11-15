@@ -880,3 +880,12 @@ msgstr "SSH Agent"
 
 msgid "Signs in with a key from a running SSH agent: Bitwarden, 1Password, KeePassXC or the OpenSSH agent. Nothing secret is saved with this session. Approve the login in your password manager if it asks."
 msgstr "使用正在运行的 SSH Agent（Bitwarden、1Password、KeePassXC 或 OpenSSH Agent）中的密钥登录，此会话不保存任何密码或私钥。如密码管理器弹出确认，请批准登录。"
+
+msgid "Default app"
+msgstr "系统默认程序"
+
+msgid "Default editor"
+msgstr "默认编辑器"
+
+msgid "Choose program…"
+msgstr "选择程序…"

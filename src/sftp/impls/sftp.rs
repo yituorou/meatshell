@@ -34,7 +34,7 @@ use crate::ssh::{format_mtime, format_size, RemoteEntry, RemoteTreeNode, Session
 
 use super::elevation::Elevation;
 use super::transfer::{
-    numbered_name, DownloadConflict, DragReport, SftpCommand, SftpHandle, UploadConflict,
+    numbered_name, DownloadConflict, DragReport, OpenWith, SftpCommand, SftpHandle, UploadConflict,
 };
 
 impl SftpHandle {
@@ -105,7 +105,12 @@ impl SftpHandle {
         let _ = self.commands.send(SftpCommand::Delete(path));
     }
     pub fn open_temp(&self, remote: String, edit: bool) {
-        let _ = self.commands.send(SftpCommand::OpenTemp { remote, edit });
+        let _ = self.commands.send(SftpCommand::OpenTemp { remote, edit, with: OpenWith::Default });
+    }
+    /// Open / edit with a program picked for this file only, or (Windows)
+    /// chosen in the system "Open with" dialog (#553).
+    pub fn open_temp_with(&self, remote: String, edit: bool, with: OpenWith) {
+        let _ = self.commands.send(SftpCommand::OpenTemp { remote, edit, with });
     }
     pub fn rename(&self, from: String, to: String) {
         let _ = self.commands.send(SftpCommand::Rename { from, to });
@@ -1499,7 +1504,7 @@ async fn run_sftp(
                 }
             }
 
-            SftpCommand::OpenTemp { remote, edit } => {
+            SftpCommand::OpenTemp { remote, edit, with } => {
                 // Sanitize the remote-controlled name before it becomes a local
                 // file path that we later hand to the OS "open" call.
                 let filename = sanitize_filename(&base_name(&remote));
@@ -1524,18 +1529,57 @@ async fn run_sftp(
                 .await
                 {
                     Ok(_) => {
-                        open_with_os(&local_str);
-                        let _ = events.send(SessionEvent::SftpStatus(format!(
-                            "{}: {}",
-                            if edit {
-                                t("已打开编辑", "Opened for editing")
-                            } else {
-                                t("已打开", "Opened")
-                            },
-                            filename
-                        )));
-                        if edit {
-                            spawn_edit_watcher(self_tx.clone(), local_str, remote.clone());
+                        // A program picked in the menu wins; otherwise viewing
+                        // uses the OS default app and editing the editor chosen
+                        // in Settings › SFTP when set (#553).
+                        let launched = match &with {
+                            OpenWith::Program(program) => launch_editor(program, "", &local_str)
+                                .map(|_| true)
+                                .map_err(|error| format!("{program}: {error}")),
+                            OpenWith::Choose => choose_and_open(local_str.clone()).await,
+                            OpenWith::Default if edit => edit_with_editor(&local_str).map(|_| true),
+                            OpenWith::Default => {
+                                open_with_os(&local_str);
+                                Ok(true)
+                            }
+                        };
+                        match launched {
+                            // Cancelled in the "Open with" dialog: nothing opened.
+                            Ok(false) => {
+                                let _ = events.send(SessionEvent::SftpStatus(format!(
+                                    "{}: {}",
+                                    t("已取消打开", "Open cancelled"),
+                                    filename
+                                )));
+                                let _ = tokio::fs::remove_file(&local_str).await;
+                            }
+                            Ok(true) => {
+                                let _ = events.send(SessionEvent::SftpStatus(format!(
+                                    "{}: {}",
+                                    if edit {
+                                        t("已打开编辑", "Opened for editing")
+                                    } else {
+                                        t("已打开", "Opened")
+                                    },
+                                    filename
+                                )));
+                                if edit {
+                                    spawn_edit_watcher(self_tx.clone(), local_str, remote.clone());
+                                }
+                            }
+                            Err(error) => {
+                                let _ = events.send(SessionEvent::SftpStatus(format!(
+                                    "{}: {error}",
+                                    if with != OpenWith::Default {
+                                        t("无法启动所选程序", "Couldn't start the chosen program")
+                                    } else {
+                                        t(
+                                            "无法启动外部编辑器（请在 设置 › SFTP 中检查）",
+                                            "Couldn't start the external editor (check Settings › SFTP)",
+                                        )
+                                    }
+                                )));
+                            }
                         }
                     }
                     Err(e) => {
@@ -2151,6 +2195,176 @@ pub(crate) fn open_with_os(path: &str) {
 #[cfg(all(not(windows), not(target_os = "macos")))]
 pub(crate) fn open_with_os(path: &str) {
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+/// External editor chosen in Settings › SFTP (#553): program + argument line.
+/// Empty program = edit with the OS default app, as before.
+static EXTERNAL_EDITOR: std::sync::RwLock<(String, String)> =
+    std::sync::RwLock::new((String::new(), String::new()));
+
+/// Set by the config store on load and whenever the setting changes.
+pub(crate) fn set_external_editor(program: &str, args: &str) {
+    if let Ok(mut editor) = EXTERNAL_EDITOR.write() {
+        *editor = (program.to_string(), args.to_string());
+    }
+}
+
+/// The argv for opening `file` in `program`: the argument line split like a
+/// command line, with `{file}` replaced by the path; without `{file}` the path
+/// is appended as the last argument.
+fn editor_argv(args: &str, file: &str) -> Vec<String> {
+    let mut argv = crate::terminal::args::split_args(args);
+    let mut placed = false;
+    for arg in &mut argv {
+        if arg.contains("{file}") {
+            *arg = arg.replace("{file}", file);
+            placed = true;
+        }
+    }
+    if !placed {
+        argv.push(file.to_string());
+    }
+    argv
+}
+
+/// Start `program` on `file` directly — never through a shell, so a remote
+/// file name can't inject commands. On macOS an `.app` bundle is started
+/// with `open -a`.
+pub(crate) fn launch_editor(program: &str, args: &str, file: &str) -> std::io::Result<()> {
+    let argv = editor_argv(args, file);
+    #[cfg(target_os = "macos")]
+    if program.trim_end_matches('/').ends_with(".app") {
+        let mut command = std::process::Command::new("open");
+        command.arg("-a").arg(program).arg(file);
+        let extra: Vec<_> = argv.iter().filter(|a| a.as_str() != file).collect();
+        if !extra.is_empty() {
+            command.arg("--args").args(extra);
+        }
+        return command.spawn().map(|_| ());
+    }
+    std::process::Command::new(program).args(&argv).spawn().map(|_| ())
+}
+
+/// Open a downloaded copy for editing: in the editor chosen in Settings, else
+/// with the OS default app. A configured editor that fails to start is an
+/// error — never a fallback to the file association, which on Windows *runs*
+/// `.js` / `.vbs` files instead of opening them (#553).
+fn edit_with_editor(path: &str) -> Result<(), String> {
+    let (program, args) = EXTERNAL_EDITOR
+        .read()
+        .map(|editor| editor.clone())
+        .unwrap_or_default();
+    if program.trim().is_empty() {
+        open_with_os(path);
+        return Ok(());
+    }
+    launch_editor(program.trim(), &args, path).map_err(|error| format!("{program}: {error}"))
+}
+
+/// "Choose program…" on Windows (#553): ask with the system "Open with"
+/// dialog for `path`. It lists the apps registered for the file's extension
+/// (and "look for another app"), then opens the file in the one picked.
+/// `Ok(false)` = the user cancelled.
+async fn choose_and_open(path: String) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        // Shell dialogs need a single-threaded COM apartment; a thread of its
+        // own also keeps the modal dialog from blocking this SFTP worker.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(open_with_dialog(&path));
+        });
+        rx.await.map_err(|_| "the Open with dialog stopped unexpectedly".to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("the system Open with dialog is only available on Windows".to_string())
+    }
+}
+
+#[cfg(windows)]
+fn open_with_dialog(path: &str) -> Result<bool, String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    #[repr(C)]
+    struct OpenAsInfo {
+        file: *const u16,
+        class: *const u16,
+        flags: u32,
+    }
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHOpenWithDialog(hwnd_parent: isize, info: *const OpenAsInfo) -> i32;
+    }
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoInitializeEx(reserved: *mut core::ffi::c_void, co_init: u32) -> i32;
+        fn CoUninitialize();
+    }
+    // Open the file in the chosen app; never offer "always use this app", so
+    // picking an editor here doesn't change the system file association.
+    const OAIF_EXEC: u32 = 0x4;
+    const OAIF_HIDE_REGISTRATION: u32 = 0x20;
+    const COINIT_APARTMENTTHREADED: u32 = 0x2;
+    const HRESULT_ERROR_CANCELLED: i32 = 0x8007_04C7_u32 as i32;
+    let file: Vec<u16> = OsStr::new(path).encode_wide().chain(Some(0)).collect();
+    let info = OpenAsInfo {
+        file: file.as_ptr(),
+        class: std::ptr::null(),
+        flags: OAIF_EXEC | OAIF_HIDE_REGISTRATION,
+    };
+    // SAFETY: `info` and `file` outlive the (modal, synchronous) call, and
+    // every successful CoInitializeEx is balanced by CoUninitialize.
+    unsafe {
+        let init = CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
+        let result = SHOpenWithDialog(0, &info);
+        if init >= 0 {
+            CoUninitialize();
+        }
+        match result {
+            0 => Ok(true),
+            HRESULT_ERROR_CANCELLED => Ok(false),
+            other => Err(format!("Open with dialog failed (0x{:08X})", other as u32)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod external_editor_tests {
+    use super::editor_argv;
+
+    #[test]
+    fn the_file_is_appended_unless_placed_with_a_placeholder() {
+        assert_eq!(editor_argv("", "C:/t/a.js"), ["C:/t/a.js"]);
+        assert_eq!(editor_argv("-n --wait", "a.js"), ["-n", "--wait", "a.js"]);
+        assert_eq!(editor_argv("-multiInst \"{file}\" -n1", "a b.js"), ["-multiInst", "a b.js", "-n1"]);
+        assert_eq!(editor_argv("--goto={file}:1", "a.js"), ["--goto=a.js:1"]);
+    }
+
+    #[test]
+    fn a_missing_editor_is_an_error_not_a_fallback() {
+        let missing = std::env::temp_dir().join("meatshell-no-such-editor-553.exe");
+        let result = super::launch_editor(missing.to_str().unwrap(), "", "a.js");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn an_existing_editor_is_started_with_the_file() {
+        // A harmless stand-in editor that exits at once.
+        #[cfg(windows)]
+        let (program, args) = ("cmd.exe", "/c exit 0 {file}");
+        #[cfg(not(windows))]
+        let (program, args) = ("true", "");
+        assert!(super::launch_editor(program, args, "a.js").is_ok());
+    }
+
+    #[test]
+    fn a_file_name_stays_one_argument() {
+        // Spaces and shell characters in a (sanitised) name never split it.
+        let argv = editor_argv("-r", "my file & more.js");
+        assert_eq!(argv, ["-r", "my file & more.js"]);
+    }
 }
 
 /// Make a remote-supplied file name safe to use as a *local* file name (for

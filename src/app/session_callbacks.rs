@@ -1781,6 +1781,7 @@ pub(super) fn listen_for_config_changes(ctx: &WinCtx, sessions_model: &Rc<VecMod
                 super::settings_callbacks::sync_ssh_keepalive(&w, &store.borrow());
                 // Docked vs detached editor (#494) is a global preference.
                 w.set_editor_embedded(store.borrow().editor_embedded());
+                super::settings_callbacks::sync_external_editor(&w, &store.borrow());
                 if let Some(editor) = editor_weak.upgrade() {
                     sync_editor_theme(&w, &editor);
                     if editor.get_editor_open() {
