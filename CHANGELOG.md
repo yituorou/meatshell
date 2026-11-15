@@ -5,6 +5,35 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-15
+
+- **新增认证管理，多个会话可共用同一套登录信息（#526）。** 设置 › 认证管理 中保存一次用户名和登录方式（密码 / 键盘交互 / 私钥文件及私钥密码，或 SSH Agent），可编辑、删除，并显示每个认证被多少个会话使用。SSH 会话在编辑窗口中选择认证后，自身的登录字段会隐藏并跟随该认证；修改认证会同步到所有使用它的会话，密码和私钥加密保存且只存一份。删除认证时，相关会话各自保留一份登录信息，不会因此无法连接。导出文件保持独立完整，导入时不会关联本机的认证。
+- **Saved credentials shared by sessions (#526).** Settings › Credentials stores a username and login method once (password / keyboard-interactive / key file and passphrase, or SSH agent), with edit, delete and a count of the sessions using each one. An SSH session that picks a credential hides its own login fields and follows it; editing the credential updates every session that uses it, and the secrets are encrypted at rest and stored once. Deleting a credential leaves its sessions with their own copy of the login, so nothing stops working. Exports stay self-contained and imports never link to local credentials.
+
+- **支持通过 Bitwarden 等 SSH Agent 中的密钥登录（#528）。** 会话编辑窗口和认证管理新增“SSH Agent”认证方式，会话不保存任何密码或私钥。支持 Bitwarden、1Password、KeePassXC 和 OpenSSH Agent（Windows 下使用 Agent 管道，其他系统依次使用 `$SSH_AUTH_SOCK` 和 Bitwarden 自带的套接字）。会先逐个试探密钥，只有服务器接受的密钥才请求签名，因此 Bitwarden 只会弹出一次确认；等待批准最长 120 秒。RSA 密钥使用服务器支持的 rsa-sha2-256 / rsa-sha2-512 签名。
+- **Log in with keys from an SSH agent such as Bitwarden (#528).** The session editor and Settings › Credentials gain an "SSH agent" method; the session stores no password or key. Bitwarden, 1Password, KeePassXC and the OpenSSH agent work (the agent pipe on Windows, else `$SSH_AUTH_SOCK`, then Bitwarden's own socket). Keys are offered without a signature first, so the agent is only asked to sign, and Bitwarden only prompts, for the key the server accepts; approval may take up to 120 s. RSA keys sign with the rsa-sha2-256 / rsa-sha2-512 the server supports.
+
+- **新增终端配色方案，深色、浅色模式各选一套。** 内置 34 套 iTerm2-Color-Schemes 配色，并可导入、删除 `.itermcolors` 文件。配色决定终端背景、文字、光标、选区和 16 色 ANSI，终端跟随浅色 / 深色切换；“默认”保留原有颜色。选区颜色过亮时自动调淡，保证文字可读。新的 设置 › 终端配色 页面提供深色 / 浅色切换、实时预览、搜索和导入。
+- **Terminal colour schemes, one for dark mode and one for light.** 34 built-in schemes from iTerm2-Color-Schemes, plus importing and deleting `.itermcolors` files. A scheme sets the terminal background, text, cursor, selection and the 16 ANSI colours, and the terminal follows the light/dark switch; Default keeps the existing colours. Selection colours that are too bright are toned down so the text stays readable. The new Settings › Terminal colors page has dark/light chips, a live preview, search and import.
+
+- **支持 PowerShell 7、Git Bash、Nushell 及自定义本地终端（#533，#538）。** 自动检测 PowerShell 7（pwsh）、Nushell（nu）以及 Windows 下的 Git Bash，并显示在快速连接的 “system” 分组和新建标签菜单中；Git Bash 通过 Git 的安装目录查找，不会误用 WSL 的 `bash.exe`。设置 › 本地终端 中可按名称、程序、参数和启动目录添加任意终端。
+- **PowerShell 7, Git Bash, Nushell and custom local shells (#533, #538).** PowerShell 7 (pwsh), Nushell (nu) and, on Windows, Git Bash are detected and listed in Quick connect's "system" group and the new-tab menu; Git Bash is found through the Git installation, never WSL's `bash.exe`. Settings › Local shells adds any other shell by name, program, arguments and start folder.
+
+- **可在设置和右键菜单中选择外部编辑器（#553）。** 新增 设置 › SFTP › 外部编辑器：选择或填写程序路径和可选的启动参数（`{file}` 代表文件位置，不写则放在最后），“外部程序编辑”用它打开下载的副本，保存后仍自动上传；留空则使用系统默认程序。“外部程序查看 / 编辑”改为鼠标悬停展开的二级菜单，可选系统默认程序，或“选择程序…”只对当前文件使用其他程序（Windows 下弹出系统“打开方式”对话框，不会修改文件关联）。程序直接启动、不经过 shell，文件名无法注入命令。
+- **Choose the external editor, in Settings and from the menu (#553).** New Settings › SFTP › External editor: a program (browse or type it) and optional arguments (`{file}` marks where the file goes, otherwise it is appended). "Edit externally" opens the downloaded copy in it and still uploads every save; left empty, the system default app is used. "Open externally" and "Edit externally" open hover submenus: the default app, or "Choose program…" for that file only (on Windows the system "Open with" dialog, which never changes file associations). Programs start directly, never through a shell, so a file name cannot inject commands.
+
+- **终端支持右键复制或粘贴（可选，#557）。** 设置中开启后，在终端中右键：有选区时复制，否则粘贴；Shift+右键打开原来的菜单。多行粘贴仍按设置确认。感谢 @chan-commits。
+- **Opt-in right-click copy or paste in the terminal (#557).** When enabled in Settings, a right-click copies the selection, or pastes when nothing is selected; Shift+right-click opens the usual menu. Multi-line paste confirmation still applies. Thanks @chan-commits.
+
+- **传输列表的单行显示中加入每个任务的实时速度（#539）。** 感谢 @old-rubick。
+- **Per-transfer speed in the single-line transfer rows (#539).** Thanks @old-rubick.
+
+- **工具栏图标移入标题栏。** Windows / Linux 下右上角的工具栏图标现在位于标题栏中、窗口控制按钮左侧，不再浮在标签栏上方，标签栏不再为它们预留空间；设置与最小化按钮之间的间距加大，更不容易误点。macOS 保持不变。
+- **Toolbar icons move into the title bar.** On Windows and Linux the top-right toolbar icons now sit in the title bar next to the window controls instead of floating over the tab row, which no longer reserves room for them; a wider gap between Settings and Minimize makes them harder to mis-click. macOS is unchanged.
+
+- **优化预设主题配色。** 悬停、浮层和边框颜色带上一点预设强调色，不再发灰，选中项更醒目；暖黄暗色的强调色加深，按钮白字更清楚。选择预设或自定义颜色时自动关闭沉浸式配色，主题立即生效。
+- **Refined preset themes.** Hover, raised and border shades take a little of the preset's accent instead of going grey, and the selected item stands out more; the Warm Yellow dark accent is deeper so white button text reads better. Picking a preset or custom colour switches immersive colours off so the theme applies straight away.
+
 - **路径栏支持补全：本地和远端路径都可以按 Tab 或点击候选文件夹补全。** 在路径框里输入时，下方会列出匹配的文件夹（大小写不敏感，最多 8 个，隐藏目录需以 `.` 开头才显示）；↑/↓ 选择，Tab 补全并继续列出子目录，Enter 或单击直接进入，补全后光标停在路径末尾可直接继续输入；路径栏为空时按 Tab 列出当前目录。本地补全在后台线程读盘，远端补全向服务器临时列一次目录但不改变面板位置与状态；结果按 tab 缓存，改前缀不会重复请求。
 - **Path fields complete folders now, locally and remotely.** Typing in a path box lists the matching folders below it (case-insensitive, at most eight; hidden folders only when the fragment starts with a dot). ↑/↓ moves the selection, Tab completes and keeps drilling into the chosen folder, Enter or a click navigates there (the caret lands at the end of the completed folder, ready to keep typing), and Tab on an empty box lists the current folder. Local completion reads the folder on a background thread; remote completion asks the server for one directory listing without navigating the panel or touching its status, and the answer is cached per tab so changing the fragment costs no extra round trip.
 
@@ -21,6 +50,24 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 - **上传到远端时遇到同名文件会先询问（替换 / 保留两份 / 取消），不再静默覆盖。** 拖拽、粘贴、上传按钮、选择文件上传走同一套判断：目标目录已有同名项时只弹一次；“替换”覆盖同名文件（文件夹则合并），“保留两份”以“名称 (1)”上传（远端自动找空闲名字），取消则不上传并在状态栏提示。若确实覆盖了已有文件，完成提示会标注“（已覆盖）”。
 - **Uploading onto an existing remote name now asks first (replace / keep both / cancel) instead of overwriting silently.** Drag-and-drop, paste, the upload button and the file picker all go through the same check: one prompt per batch, "Replace" overwrites the files (folders merge), "Keep both" uploads as "name (1)" (the worker picks the first free remote name), and cancelling stops the upload with a status-line note. When a replacement did happen, the completion message says "(overwritten)".
+
+- **修复连接部分旧系统时报错 “wrong server signature” 的问题（#564）。** CentOS 5/6、旧的网络设备等仍在使用 1024 位 RSA 主机密钥，此前会在握手阶段被拒绝。SSH 库 russh 升级到 0.61 后可以正常连接；小于 1024 位的 RSA 主机密钥仍会被拒绝，与 OpenSSH 一致。已保存的会话、已信任的主机和私钥文件不受影响。此次升级同时包含安全公告 RUSTSEC-2026-0154 的修复。
+- **Fix "wrong server signature" when connecting to some older systems (#564).** CentOS 5/6, older network gear and similar still use 1024-bit RSA host keys, which were refused during the handshake. With the SSH library russh upgraded to 0.61 they connect; RSA host keys under 1024 bits are still refused, as in OpenSSH. Saved sessions, trusted hosts and key files are unaffected. The upgrade also contains the fix for advisory RUSTSEC-2026-0154.
+
+- **修复批量上传时部分文件报错 “open sftp upload channel” 的问题（#554）。** 每个文件都会单独打开一个 SFTP 通道，数量一多就超出服务器的 MaxSessions 限制。现在每个连接最多同时传输 4 个文件，其余按顺序排队、显示“排队等待中”，排队期间可以取消；单个文件仍保持高速传输，传输时也可以继续浏览目录。
+- **Fix some files failing with "open sftp upload channel" in batch uploads (#554).** Every file opened its own SFTP channel, and a large batch went past the server's MaxSessions limit. Each connection now transfers at most 4 files at a time; the rest wait in order, show "Queued" and can be cancelled while waiting. Each file still transfers at full speed, and browsing keeps working during transfers.
+
+- **修复 tmux 中显示中文时调整窗口大小导致程序闪退的问题（#544）。** 宽字符（中文 / emoji）在右边缘被截断时终端解析库会崩溃，现已升级修复；之后如再发生崩溃，原因会先写入 error.log。
+- **Fix a crash when resizing while tmux shows Chinese text (#544).** The terminal parser crashed when a resize cut a wide (CJK / emoji) glyph at the right edge; it is upgraded, and any crash is now written to error.log first.
+
+- **修复日志洪流时在回滚视图中选择文本，选区不断下滑的问题。** 回滚历史达到 10 万行上限后，选区和查找位置现在会随淘汰的旧行一起移动，始终停留在原来的文字上。
+- **Fix the selection sliding down while selecting in scrollback during a log flood.** Once the 100,000-line scrollback is full, the selection and the find position now move with the evicted lines and stay on their text.
+
+- **修复日志洪流时拖动滚动条卡顿数秒的问题。** 界面线程现在能及时拿到终端缓冲区，拖动保持流畅，输出解析速度不受影响。
+- **Fix the scrollbar stalling for seconds during a log flood.** The UI thread now gets the terminal buffer promptly, so dragging stays smooth without slowing output.
+
+- **修复 壁纸与主题 页面底部的遮罩滑块被遮挡的问题。**
+- **Fix the Overlay slider being hidden at the bottom of the Wallpaper & theme page.**
 
 ## [0.8.2] - 2026-11-08
 

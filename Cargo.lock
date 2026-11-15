@@ -3837,7 +3837,7 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "meatshell"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
