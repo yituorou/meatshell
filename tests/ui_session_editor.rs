@@ -60,9 +60,15 @@ slint::slint! {
         in-out property <string> rdp-cert: "ignore";
         in-out property <string> rdp-extra;
         in-out property <bool> rdp-sound: false;
+        in-out property <bool> x11-enabled: false;
+        in-out property <string> x11-display;
+        in-out property <string> x11-xauthority;
         out property <string> saved-rdp-cert;
         out property <string> saved-rdp-extra;
         out property <bool> saved-rdp-sound;
+        out property <bool> saved-x11-enabled;
+        out property <string> saved-x11-display;
+        out property <string> saved-x11-xauthority;
         callback save-current();
         save-current => { editor.submit-current(); }
         init => {
@@ -77,6 +83,9 @@ slint::slint! {
                 root.saved-rdp-cert = draft.rdp-cert-policy;
                 root.saved-rdp-extra = draft.rdp-extra-args;
                 root.saved-rdp-sound = draft.rdp-sound;
+                root.saved-x11-enabled = draft.x11-forwarding-enabled;
+                root.saved-x11-display = draft.x11-display;
+                root.saved-x11-xauthority = draft.x11-xauthority;
             }
             stop-test => { root.stop-count += 1; }
             closed => { root.closed-count += 1; }
@@ -92,6 +101,9 @@ slint::slint! {
             draft-rdp-cert-policy <=> root.rdp-cert;
             draft-rdp-extra-args <=> root.rdp-extra;
             draft-rdp-sound <=> root.rdp-sound;
+            draft-x11-forwarding-enabled <=> root.x11-enabled;
+            draft-x11-display <=> root.x11-display;
+            draft-x11-xauthority <=> root.x11-xauthority;
             draft-note: "Example route, no real credentials";
             allow-secret-reveal: true;
             jump-choices: ["Select a jump host", "Bastion A (demo@a.example.invalid:22)", "Bastion B (demo@b.example.invalid:22)"];
@@ -585,4 +597,44 @@ fn rdp_common_and_bilingual_advanced_fields_reach_the_saved_draft() {
         assert_eq!(ui.get_saved_rdp_extra().as_str(), "网络=局域网\n/bpp:24");
         assert!(ui.get_saved_rdp_sound());
     }).join().unwrap();
+}
+
+#[test]
+fn x11_forwarding_fields_reach_saved_draft_and_invalidate_snapshot() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend {
+            window,
+            clipboard: Rc::default(),
+        }))
+        .unwrap();
+        let ui = DialogFixture::new().unwrap();
+        slint::platform::update_timers_and_animations();
+
+        let mut changes = ui.get_changed_count();
+        ui.set_x11_enabled(true);
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+        changes = ui.get_changed_count();
+
+        ui.set_x11_display("localhost:10.0".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+        changes = ui.get_changed_count();
+
+        ui.set_x11_xauthority("/tmp/custom.Xauthority".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+
+        ui.invoke_save_current();
+        assert_eq!(ui.get_submit_count(), 1);
+        assert!(ui.get_saved_x11_enabled());
+        assert_eq!(ui.get_saved_x11_display().as_str(), "localhost:10.0");
+        assert_eq!(
+            ui.get_saved_x11_xauthority().as_str(),
+            "/tmp/custom.Xauthority"
+        );
+    })
+    .join()
+    .unwrap();
 }

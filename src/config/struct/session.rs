@@ -221,6 +221,15 @@ pub struct Session {
     /// is unaffected. Absent in older configs → true, preserving behaviour.
     #[serde(default = "default_true")]
     pub mcp_access: bool,
+    /// Forward remote X11 connections back to a local X server for this SSH session.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub x11_forwarding_enabled: bool,
+    /// Optional local X11 `DISPLAY` override (e.g. `:0.0` or `localhost:0.0`); empty uses `$DISPLAY`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub x11_display: String,
+    /// Optional `.Xauthority` file path override; empty uses `$XAUTHORITY` / `~/.Xauthority`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub x11_xauthority: String,
     #[serde(default)]
     pub last_used: Option<String>,
     /// Optional folder/group name to organize sessions in the list (#41).
@@ -416,6 +425,49 @@ fn default_true() -> bool {
     true
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[cfg(test)]
+mod x11_config_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_json_without_x11_fields_deserializes_with_defaults() {
+        let mut value = serde_json::to_value(Session::new_empty()).unwrap();
+        let obj = value.as_object_mut().unwrap();
+        obj.remove("x11_forwarding_enabled");
+        obj.remove("x11_display");
+        obj.remove("x11_xauthority");
+
+        let restored: Session = serde_json::from_value(value).unwrap();
+        assert!(!restored.x11_forwarding_enabled);
+        assert!(restored.x11_display.is_empty());
+        assert!(restored.x11_xauthority.is_empty());
+    }
+
+    #[test]
+    fn default_x11_fields_are_omitted_and_non_default_values_round_trip() {
+        let default_json = serde_json::to_value(Session::new_empty()).unwrap();
+        let default_obj = default_json.as_object().unwrap();
+        assert!(!default_obj.contains_key("x11_forwarding_enabled"));
+        assert!(!default_obj.contains_key("x11_display"));
+        assert!(!default_obj.contains_key("x11_xauthority"));
+
+        let mut custom = Session::new_empty();
+        custom.x11_forwarding_enabled = true;
+        custom.x11_display = ":0.0".to_string();
+        custom.x11_xauthority = "/tmp/.Xauthority".to_string();
+
+        let serialized = serde_json::to_value(&custom).unwrap();
+        let restored: Session = serde_json::from_value(serialized).unwrap();
+        assert!(restored.x11_forwarding_enabled);
+        assert_eq!(restored.x11_display, ":0.0");
+        assert_eq!(restored.x11_xauthority, "/tmp/.Xauthority");
+    }
+}
+
 #[cfg(test)]
 mod session_log_mode_tests {
     use super::*;
@@ -513,6 +565,9 @@ impl Session {
             jump_session_ids: Vec::new(),
             allow_secret_reveal: false,
             mcp_access: true,
+            x11_forwarding_enabled: false,
+            x11_display: String::new(),
+            x11_xauthority: String::new(),
             last_used: None,
             group: String::new(),
             kind: SessionKind::Ssh,

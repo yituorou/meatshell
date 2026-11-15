@@ -369,8 +369,8 @@ msgstr "搜索历史"
 msgid "Port forwarding"
 msgstr "端口转发"
 
-msgid "Advanced (encoding, proxy, tunnels)"
-msgstr "高级（字符集、代理、隧道）"
+msgid "Advanced (encoding, proxy, tunnels, X11 forwarding)"
+msgstr "高级（字符集、代理、隧道、X11转发）"
 
 msgid "Terminal character encoding"
 msgstr "终端字符集"
@@ -419,6 +419,24 @@ msgstr "-R：服务器端口 → 由本机访问的目标"
 
 msgid "-D: local SOCKS5 proxy"
 msgstr "-D：本地 SOCKS5 代理"
+
+msgid "X11 forwarding"
+msgstr "X11转发"
+
+msgid "Enable X11 forwarding"
+msgstr "启用X11转发"
+
+msgid "DISPLAY"
+msgstr "DISPLAY"
+
+msgid ":0.0 (Leave blank to use environment variables)"
+msgstr ":0.0 (留空则使用环境变量)"
+
+msgid "XAUTHORITY"
+msgstr "XAUTHORITY"
+
+msgid ".Xauthority (Leave blank to use environment variables)"
+msgstr ".Xauthority (留空则使用环境变量)"
 
 msgid "meatshell — a lightweight Rust + Slint SSH client by 'lil meatball'"
 msgstr "meatshell — 一个由「一坨肉」开发的轻量 Rust + Slint SSH 客户端"

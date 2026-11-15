@@ -1213,6 +1213,9 @@ export component AppWindow inherits Window {
     callback update-jump(int, int);
     callback delete-jump(int);
     callback move-jump(int, int);
+    in-out property <bool> dialog-x11-forwarding-enabled: false;
+    in-out property <string> dialog-x11-display: "";
+    in-out property <string> dialog-x11-xauthority: "";
     in-out property <string> dialog-kind: "ssh";
     in-out property <string> dialog-serial-port;
     // Existing serial port names (from Rust) for the dialog's serial port dropdown.
@@ -4949,6 +4952,9 @@ export component AppWindow inherits Window {
         update-jump(row, choice) => { root.update-jump(row, choice); }
         delete-jump(row) => { root.delete-jump(row); }
         move-jump(from, to) => { root.move-jump(from, to); }
+        draft-x11-forwarding-enabled <=> root.dialog-x11-forwarding-enabled;
+        draft-x11-display <=> root.dialog-x11-display;
+        draft-x11-xauthority <=> root.dialog-x11-xauthority;
         draft-kind <=> root.dialog-kind;
         draft-serial-port <=> root.dialog-serial-port;
         session-serial-ports: root.session-serial-ports;
