@@ -1,27 +1,12 @@
 # cargo-audit configuration (https://rustsec.org).
 #
-# ── RUSTSEC-2026-0154 — russh "unbounded 32-bit allocation" (DoS), russh < 0.60.3 ──
+# RUSTSEC-2026-0154 (russh "unbounded 32-bit allocation" DoS in SSH-agent frame
+# parsing, russh < 0.60.3) is fixed: meatshell is on russh 0.61. SSH-agent
+# login (#528) still uses meatshell's own minimal agent client
+# (src/ssh/impls/agent.rs) with the same 256 KiB frame cap.
 #
-# The flaw is in russh's SSH-AGENT frame parsing: it accepts an unchecked frame
-# length from a peer and allocates before validating, so a malicious peer can
-# force a large allocation (denial of service). The fix caps the agent frame at
-# 256 KiB.
-#
-# meatshell never uses russh's agent code (russh_keys::agent / AgentClient) and
-# has no agent forwarding. SSH-agent login (#528, Bitwarden etc.) goes through
-# meatshell's own minimal agent client, src/ssh/impls/agent.rs, which applies
-# the same 256 KiB frame cap as the fix before allocating (covered by the test
-# `oversized_frames_are_refused_before_allocating`) and hands signatures to
-# russh only through its public `Signer` trait. The vulnerable code path is
-# therefore never reached in this binary, so the advisory is not exploitable
-# here. Keep it that way: don't switch agent.rs to russh's AgentClient.
-#
-# We are deliberately NOT upgrading to the patched russh yet: the only fixed
-# release (>= 0.60.3) pulls in a stack of *pre-release* crypto crates
-# (ed25519-dalek 3.0.0-pre, curve25519-dalek 5.0.0-pre, aes-gcm 0.11.0-rc,
-# ecdsa / elliptic-curve / p256 rc, …). Swapping battle-tested, audited crypto
-# for unaudited release candidates in a production SSH client is a worse trade
-# than this unreachable DoS. Revisit once russh's crypto dependencies leave the
-# -rc / -pre channel; then do the API migration (see PR #151 for the shape of it).
+# russh 0.61 depends on release-candidate crypto crates (ssh-key 0.7.0-rc,
+# rsa 0.10.0-rc, ed25519-dalek 3.0.0-rc, p256 0.14.0-rc, ...). Move to the final
+# releases as soon as russh does.
 [advisories]
-ignore = ["RUSTSEC-2026-0154"]
+ignore = []

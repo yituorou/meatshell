@@ -4,11 +4,11 @@
 //! to approve first (Bitwarden shows a prompt).
 //!
 //! This is meatshell's own minimal agent client (RFC draft-miller-ssh-agent:
-//! REQUEST_IDENTITIES and SIGN_REQUEST only), not russh's. russh 0.49's agent
-//! client allocates whatever frame length the agent claims (RUSTSEC-2026-0154);
-//! here every frame is capped at 256 KiB like the upstream fix, so that code
-//! path stays unused — see audit.toml. russh only sees the agent through its
-//! public `Signer` trait.
+//! REQUEST_IDENTITIES and SIGN_REQUEST only), not russh's. It predates the
+//! russh 0.61 upgrade, when russh's agent client still allocated whatever frame
+//! length the agent claimed (RUSTSEC-2026-0154); every frame is capped at
+//! 256 KiB like the upstream fix. russh only sees the agent through its public
+//! `Signer` trait.
 //!
 //! Where the agent is found:
 //! * Windows: `SSH_AUTH_SOCK` when it names a pipe, else the OpenSSH agent
@@ -20,8 +20,6 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use russh::CryptoVec;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::i18n::t;
@@ -144,16 +142,20 @@ impl Agent {
     }
 
     /// Ask the agent to sign `data` with `key`; returns the signature blob
-    /// (`string algorithm || string signature`).
-    async fn sign(&mut self, key: &ssh_key::PublicKey, data: &[u8]) -> Result<Vec<u8>> {
+    /// (`string algorithm || string signature`). For RSA, `hash` picks
+    /// `rsa-sha2-256` / `rsa-sha2-512` (the name russh announced); `None` is
+    /// SHA-1 `ssh-rsa`. Other key types ignore it.
+    async fn sign(
+        &mut self,
+        key: &ssh_key::PublicKey,
+        hash: Option<ssh_key::HashAlg>,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
         let blob = key.to_bytes().context("encoding the public key")?;
         let mut request = vec![SIGN_REQUEST];
         put_string(&mut request, &blob);
         put_string(&mut request, data);
-        // No flags: russh 0.49 announces an agent RSA key as plain `ssh-rsa`
-        // and signs that name, so asking for rsa-sha2-256 would produce a
-        // signature the server rejects. Ed25519 / ECDSA are unaffected.
-        request.extend_from_slice(&0u32.to_be_bytes());
+        request.extend_from_slice(&sign_flags(key, hash).to_be_bytes());
         // No timeout here: the agent may wait for the user to approve.
         let reply = self.call(&request).await?;
         let mut r = Reader(&reply);
@@ -188,7 +190,7 @@ pub(crate) async fn login<H: russh::client::Handler>(
     user: &str,
     agent: &mut Agent,
 ) -> Result<bool> {
-    let mut keys = agent.identities().await?;
+    let keys = agent.identities().await?;
     if keys.is_empty() {
         bail!(
             "{} ({})",
@@ -199,14 +201,12 @@ pub(crate) async fn login<H: russh::client::Handler>(
             agent.location
         );
     }
-    // RSA keys can only be used as SHA-1 `ssh-rsa` through russh 0.49's
-    // signer hook, which newer servers refuse; offer every other key first.
-    keys.sort_by_key(|k| k.key.algorithm().is_rsa());
     for entry in keys.into_iter().take(MAX_KEYS) {
         tracing::debug!("offering SSH agent key {:?}", entry.comment);
+        let hash = super::ssh::rsa_hash(handle, entry.key.algorithm().is_rsa()).await;
         let attempt = tokio::time::timeout(
             APPROVAL_TIMEOUT,
-            handle.authenticate_publickey_with(user, entry.key, &mut *agent),
+            handle.authenticate_publickey_with(user, entry.key, hash, &mut *agent),
         )
         .await
         .map_err(|_| {
@@ -217,8 +217,8 @@ pub(crate) async fn login<H: russh::client::Handler>(
             )
         })?;
         match attempt {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
+            Ok(result) if result.success() => return Ok(true),
+            Ok(_) => continue,
             Err(AgentSignError::Agent(error)) => return Err(error),
             Err(AgentSignError::Send) => bail!("the SSH connection closed during login"),
         }
@@ -226,22 +226,36 @@ pub(crate) async fn login<H: russh::client::Handler>(
     Ok(false)
 }
 
-#[async_trait]
 impl russh::Signer for Agent {
     type Error = AgentSignError;
 
     /// russh hands over the data to sign and expects it back with the
     /// signature blob appended as an SSH string.
-    async fn auth_publickey_sign(
+    async fn auth_sign(
         &mut self,
-        key: &ssh_key::PublicKey,
-        to_sign: CryptoVec,
-    ) -> std::result::Result<CryptoVec, Self::Error> {
-        let signature = self.sign(key, &to_sign).await.map_err(AgentSignError::Agent)?;
+        key: &russh::keys::agent::AgentIdentity,
+        hash_alg: Option<ssh_key::HashAlg>,
+        to_sign: Vec<u8>,
+    ) -> std::result::Result<Vec<u8>, Self::Error> {
+        let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = key else {
+            return Err(AgentSignError::Agent(anyhow!("SSH agent certificates are not supported")));
+        };
+        let signature = self.sign(key, hash_alg, &to_sign).await.map_err(AgentSignError::Agent)?;
         let mut out = to_sign;
-        out.extend(&(signature.len() as u32).to_be_bytes());
-        out.extend(&signature);
+        put_string(&mut out, &signature);
         Ok(out)
+    }
+}
+
+/// SIGN_REQUEST flags: SSH_AGENT_RSA_SHA2_256 = 2, SSH_AGENT_RSA_SHA2_512 = 4.
+fn sign_flags(key: &ssh_key::PublicKey, hash: Option<ssh_key::HashAlg>) -> u32 {
+    if !key.algorithm().is_rsa() {
+        return 0;
+    }
+    match hash {
+        Some(ssh_key::HashAlg::Sha256) => 2,
+        Some(ssh_key::HashAlg::Sha512) => 4,
+        _ => 0,
     }
 }
 
@@ -405,7 +419,7 @@ mod tests {
         put_string(&mut body, &sig);
         let (mut agent, task) = exchange(frame(&body)).await;
         let signed = agent
-            .auth_publickey_sign(&key, CryptoVec::from_slice(b"session-data"))
+            .auth_sign(&identity(key), Some(ssh_key::HashAlg::Sha512), b"session-data".to_vec())
             .await
             .unwrap();
         let request = task.await.unwrap();
@@ -420,10 +434,21 @@ mod tests {
     async fn a_refused_signature_is_an_error() {
         use russh::Signer as _;
         let (mut agent, _task) = exchange(frame(&[FAILURE])).await;
-        let result = agent
-            .auth_publickey_sign(&ed25519(), CryptoVec::from_slice(b"x"))
-            .await;
+        let result = agent.auth_sign(&identity(ed25519()), None, b"x".to_vec()).await;
         assert!(matches!(result, Err(AgentSignError::Agent(_))));
+    }
+
+    fn identity(key: ssh_key::PublicKey) -> russh::keys::agent::AgentIdentity {
+        russh::keys::agent::AgentIdentity::PublicKey { key, comment: String::new() }
+    }
+
+    #[test]
+    fn rsa_sign_requests_ask_for_the_hash_russh_announced() {
+        let rsa = rsa_private().public_key().clone();
+        assert_eq!(sign_flags(&rsa, Some(ssh_key::HashAlg::Sha256)), 2);
+        assert_eq!(sign_flags(&rsa, Some(ssh_key::HashAlg::Sha512)), 4);
+        assert_eq!(sign_flags(&rsa, None), 0, "SHA-1 ssh-rsa");
+        assert_eq!(sign_flags(&ed25519(), Some(ssh_key::HashAlg::Sha512)), 0);
     }
 
     // ── End to end: a real russh server, a fake agent holding real keys ──
@@ -438,7 +463,7 @@ mod tests {
         keys: Vec<ssh_key::PrivateKey>,
         signs: Arc<AtomicUsize>,
     ) {
-        use russh_keys::signature::Signer as _;
+        use russh::keys::signature::Signer as _;
         loop {
             let mut len = [0u8; 4];
             if stream.read_exact(&mut len).await.is_err() {
@@ -460,12 +485,28 @@ mod tests {
                     let mut r = Reader(&request[1..]);
                     let blob = r.string().unwrap();
                     let data = r.string().unwrap();
+                    let flags = r.u32().unwrap();
                     let key = keys
                         .iter()
                         .find(|k| k.public_key().to_bytes().unwrap() == blob)
                         .expect("asked to sign with a key the agent doesn't hold");
                     signs.fetch_add(1, Ordering::SeqCst);
-                    let signature: ssh_key::Signature = key.try_sign(data).unwrap();
+                    // Like OpenSSH's agent: the flags pick the RSA hash.
+                    let signature: ssh_key::Signature = match key.key_data().rsa() {
+                        Some(rsa) => {
+                            let hash = match flags {
+                                2 => ssh_key::HashAlg::Sha256,
+                                4 => ssh_key::HashAlg::Sha512,
+                                // Tests expect SHA-2; a SHA-1 request fails the login.
+                                _ => {
+                                    stream.write_all(&frame(&[FAILURE])).await.unwrap();
+                                    continue;
+                                }
+                            };
+                            (rsa, Some(hash)).try_sign(data).unwrap()
+                        }
+                        None => key.try_sign(data).unwrap(),
+                    };
                     let mut sig = Vec::new();
                     put_string(&mut sig, signature.algorithm().as_str().as_bytes());
                     put_string(&mut sig, signature.as_bytes());
@@ -482,7 +523,6 @@ mod tests {
         trusted: ssh_key::PublicKey,
     }
 
-    #[async_trait]
     impl russh::server::Handler for TestServer {
         type Error = russh::Error;
         async fn auth_publickey_offered(
@@ -506,14 +546,13 @@ mod tests {
             if key.key_data() == self.trusted.key_data() {
                 russh::server::Auth::Accept
             } else {
-                russh::server::Auth::Reject { proceed_with_methods: None }
+                russh::server::Auth::Reject { proceed_with_methods: None, partial_success: false }
             }
         }
     }
 
     struct TestClient;
 
-    #[async_trait]
     impl russh::client::Handler for TestClient {
         type Error = russh::Error;
         async fn check_server_key(&mut self, _: &ssh_key::PublicKey) -> std::result::Result<bool, Self::Error> {
@@ -522,7 +561,17 @@ mod tests {
     }
 
     fn ed25519_private() -> ssh_key::PrivateKey {
-        ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519).unwrap()
+        use rand::RngCore as _;
+        let mut seed = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        ssh_key::private::Ed25519Keypair::from_seed(&seed).into()
+    }
+
+    /// The 2048-bit RSA fixture shared with the key-format tests.
+    fn rsa_private() -> ssh_key::PrivateKey {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ssh/impls/testdata/keys/rsa_openssh");
+        russh::keys::load_secret_key(path, None).unwrap()
     }
 
     /// Log in to a server trusting `trusted` with an agent holding `keys`.
@@ -530,7 +579,7 @@ mod tests {
         let (client_io, server_io) = duplex(1 << 16);
         let server_config = Arc::new(russh::server::Config {
             keys: vec![ed25519_private()],
-            methods: russh::MethodSet::PUBLICKEY,
+            methods: russh::MethodSet::from(&[russh::MethodKind::PublicKey][..]),
             auth_rejection_time: Duration::ZERO,
             auth_rejection_time_initial: Some(Duration::ZERO),
             ..Default::default()
@@ -565,6 +614,16 @@ mod tests {
             agent_login(trusted.public_key().clone(), vec![decoy, trusted.clone()]).await;
         assert!(result.unwrap(), "the server verified the agent's signature");
         assert_eq!(signs, 1, "the rejected decoy key must not be signed (no extra Bitwarden prompt)");
+    }
+
+    #[tokio::test]
+    async fn logs_in_with_an_rsa_agent_key_using_sha2() {
+        // russh 0.49 could only sign agent RSA logins as SHA-1 `ssh-rsa`;
+        // now the agent is asked for the rsa-sha2-* the server supports.
+        let trusted = rsa_private();
+        let (result, signs) = agent_login(trusted.public_key().clone(), vec![trusted]).await;
+        assert!(result.unwrap(), "the server verified the agent's RSA signature");
+        assert_eq!(signs, 1);
     }
 
     #[tokio::test]

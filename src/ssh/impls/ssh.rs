@@ -8,7 +8,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
 use russh::client::{self, Handle, Handler, Msg};
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::{decode_secret_key, load_secret_key, PrivateKey};
@@ -118,6 +117,20 @@ pub(crate) fn load_session_private_key(session: &Session, pass: &str) -> Result<
     }
     load_secret_key(Path::new(&key_path), pass)
         .with_context(|| format!("failed to load key {key_path}"))
+}
+
+/// The hash to sign a public-key login with. Only RSA needs one: the best
+/// `rsa-sha2-*` the server lists in `server-sig-algs`, or SHA-1 `ssh-rsa` for
+/// a server that lists neither. Servers that send no list get `rsa-sha2-256`
+/// (accepted since OpenSSH 7.2), as before the russh 0.61 upgrade.
+pub(crate) async fn rsa_hash<H: Handler>(handle: &Handle<H>, is_rsa: bool) -> Option<HashAlg> {
+    if !is_rsa {
+        return None;
+    }
+    match handle.best_supported_rsa_hash().await {
+        Ok(Some(best)) => best,
+        _ => Some(HashAlg::Sha256),
+    }
 }
 
 /// Format a byte count as a human-readable string.
@@ -1345,7 +1358,8 @@ pub(crate) async fn authenticate_session(
                 &format!("password authentication at {}:{}", session.host, session.port),
                 handle.authenticate_password(&user, password.as_str()),
             )
-            .await?;
+            .await?
+            .success();
             if !ok {
                 // russh can't switch auth methods on a handle whose first attempt
                 // already failed (it hangs), so reconnect on a fresh handle before
@@ -1384,16 +1398,14 @@ pub(crate) async fn authenticate_session(
             // session's password field for it (empty = unencrypted key) (#90).
             let pass = password.as_str();
             let keypair = load_session_private_key(session, pass)?;
-            // RSA keys must be signed with an explicit SHA-2 hash; every other
-            // key type carries its own algorithm, so no override is needed.
-            let hash = keypair.algorithm().is_rsa().then_some(HashAlg::Sha256);
-            let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(keypair), hash)
-                .context("invalid private key / hash algorithm combination")?;
+            let hash = rsa_hash(handle, keypair.algorithm().is_rsa()).await;
+            let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(keypair), hash);
             network_stage(
                 &format!("public-key authentication at {}:{}", session.host, session.port),
                 handle.authenticate_publickey(&user, key_with_hash),
             )
             .await?
+            .success()
         }
         AuthMethod::Agent => agent_auth(handle, &user, session, events).await?,
     };
@@ -3177,7 +3189,7 @@ where
     for _ in 0..16 {
         match res {
             Kb::Success => return Ok(true),
-            Kb::Failure => return Ok(false),
+            Kb::Failure { .. } => return Ok(false),
             Kb::InfoRequest { prompts, .. } => {
                 let mut responses = Vec::with_capacity(prompts.len());
                 for p in &prompts {
@@ -3246,6 +3258,19 @@ impl HandshakeHandler for ClientHandler {
     }
 }
 
+/// OpenSSH's default `RequiredRSASize`. ssh-key 0.7 verifies RSA keys of any
+/// size, so older servers with 1024-bit host keys connect again (#564), but a
+/// key small enough to factor is still refused, as OpenSSH does.
+const MIN_RSA_HOST_KEY_BITS: usize = 1024;
+
+/// Modulus size of an RSA key, `None` for other key types.
+fn rsa_key_bits(key: &PublicKey) -> Option<usize> {
+    // Exact bit length; ssh-key's `key_size()` rounds up to whole bytes.
+    let n = key.key_data().rsa()?.n().as_positive_bytes()?;
+    let first = *n.first()?;
+    Some(n.len() * 8 - first.leading_zeros() as usize)
+}
+
 /// Shared host-key check used by both the shell and SFTP connections: trust a
 /// matching stored key silently; otherwise ask the UI (via `events`) and, on
 /// acceptance, remember the key. A dropped/closed reply channel (UI gone)
@@ -3258,6 +3283,14 @@ pub(crate) async fn verify_host_key(
     host_key_wait: &HostKeyWait,
 ) -> bool {
     use crate::ssh::HostKeyStatus;
+    if let Some(bits) = rsa_key_bits(key).filter(|&bits| bits < MIN_RSA_HOST_KEY_BITS) {
+        tracing::warn!("{host}:{port} offered a {bits}-bit RSA host key");
+        let _ = events.send(SessionEvent::Status(format!(
+            "{} ({bits} bit, < {MIN_RSA_HOST_KEY_BITS})",
+            t("服务器的 RSA 主机密钥太短，已拒绝连接", "The server's RSA host key is too short; connection refused"),
+        )));
+        return false;
+    }
     match crate::ssh::known_hosts::verify(host, port, key) {
         HostKeyStatus::Match => true,
         status => {
@@ -3331,7 +3364,6 @@ pub(crate) async fn resolve_credentials(
     }
 }
 
-#[async_trait]
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
@@ -4070,5 +4102,134 @@ mod mfa_tests {
         ] {
             assert!(looks_like_mfa(p), "missed an MFA prompt: {p:?}");
         }
+    }
+}
+
+/// Older servers (CentOS 5/6, embedded gear) still use 1024-bit RSA host
+/// keys. ssh-key 0.6 (russh 0.49) rejected RSA keys under 2048 bits, which made
+/// every key exchange with such a server fail with "wrong server signature" (#564).
+#[cfg(test)]
+mod small_rsa_host_key_tests {
+    use super::{rsa_key_bits, MIN_RSA_HOST_KEY_BITS};
+    use russh::keys::signature::Verifier;
+    use ssh_key::public::{KeyData, RsaPublicKey};
+    use ssh_key::{Algorithm, HashAlg, Mpint, PublicKey, Signature};
+
+    // openssl genrsa 1024; openssl dgst -sha256 -sign over MESSAGE.
+    const N_1024: &str = "D6711314F83B770108FAC51D3679666E0E4F6BC760F20FE202099C9A99E5AF411C3169110B48FA485ECC048AF090495D6F5EB3FE100C802FC80EC38CAD797F62E99015602853B756CF115BE38472DDFAD45194A9ACFBB9317CDFB9F7EC6C311BC658A90AF1F963EC265F3639FDBB5908D4246CF598FC9F2E84AB210960EC1A87";
+    const SIG_SHA256: &str = "4d6f854631428de6bcd5dd0da1a0dbdd2938d3650736b09a711f9412cdeef1bbbbbf75d45fe6d78ebeb7ff5c0ce456e6a69c0440d0d106f26c68140de427c6b5829db84113befba9a1354ea1945d32f3e00e84ae6759e4ec67984021e8d0a7fa9b81586819e9aafb7912b8918743cd4682fe7e798ce7038546e14a0b55374238";
+    // 768 bits: below OpenSSH's RequiredRSASize too, so still refused.
+    const N_768: &str = "CC6F78B6724E849B623E985AFA4FE734FD15FB14BD6AD8A066545D23D9849050EA335C6D6455FEDFB86F1CF77F5EFEB1E68F2BBC5F63CFC13750D85D47A45E29F437516B288D3568ABD8E0065A52F8274E2B65404577EBEC5392471450B40F29";
+    const MESSAGE: &[u8] = b"meatshell #564 exchange hash";
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    fn rsa_key(n: &str) -> PublicKey {
+        let e = Mpint::from_positive_bytes(&[0x01, 0x00, 0x01]);
+        let n = Mpint::from_positive_bytes(&unhex(n));
+        PublicKey::from(KeyData::Rsa(RsaPublicKey::new(e, n).unwrap()))
+    }
+
+    fn sha256_sig(hex: &str) -> Signature {
+        Signature::new(Algorithm::Rsa { hash: Some(HashAlg::Sha256) }, unhex(hex)).unwrap()
+    }
+
+    #[test]
+    fn a_1024_bit_rsa_host_key_signature_verifies() {
+        let key = rsa_key(N_1024);
+        // The same check russh runs on the server's KEX signature.
+        assert!(Verifier::verify(&key, MESSAGE, &sha256_sig(SIG_SHA256)).is_ok());
+        assert!(Verifier::verify(&key, b"another exchange hash", &sha256_sig(SIG_SHA256)).is_err());
+    }
+
+    #[test]
+    fn key_sizes_are_measured_in_bits() {
+        assert_eq!(rsa_key_bits(&rsa_key(N_1024)), Some(1024));
+        assert_eq!(rsa_key_bits(&rsa_key(N_768)), Some(768));
+        assert_eq!(MIN_RSA_HOST_KEY_BITS, 1024);
+    }
+
+    #[tokio::test]
+    async fn rsa_host_keys_under_1024_bits_are_refused_without_a_prompt() {
+        let (events, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let wait = crate::ssh::HostKeyWait::default();
+        let ok = super::verify_host_key("old.example", 22, &rsa_key(N_768), &events, &wait).await;
+        assert!(!ok);
+        match rx.try_recv() {
+            Ok(crate::ssh::SessionEvent::Status(message)) => assert!(message.contains("768"), "{message}"),
+            _ => panic!("expected a status message, not a host-key prompt"),
+        }
+    }
+}
+
+/// Saved connections must keep working across russh upgrades: every key file
+/// format users already point sessions at still loads to the same key, both
+/// from a path and pasted inline. Fixtures in `testdata/keys` (passphrase
+/// `meatshell`) were made with Python `cryptography` and `openssl rsa -aes128`.
+#[cfg(test)]
+mod saved_key_compat_tests {
+    use super::load_session_private_key;
+    use crate::config::Session;
+
+    const PASS: &str = "meatshell";
+
+    fn dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ssh/impls/testdata/keys")
+    }
+
+    /// `type base64` of the matching `.pub` file, without the comment.
+    fn expected(public: &str) -> String {
+        let text = std::fs::read_to_string(dir().join(format!("{public}.pub"))).unwrap();
+        text.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+    }
+
+    fn loaded(session: &Session, pass: &str) -> String {
+        let key = load_session_private_key(session, pass)
+            .unwrap_or_else(|e| panic!("{e:#}"));
+        key.public_key().to_openssh().unwrap()
+    }
+
+    #[test]
+    fn every_supported_key_format_loads_from_a_path_and_inline() {
+        for (file, public, pass) in [
+            ("ed25519_openssh", "ed25519", ""),
+            ("ed25519_openssh_enc", "ed25519", PASS),
+            ("ed25519_pkcs8_enc", "ed25519", PASS),
+            ("rsa_openssh", "rsa", ""),
+            ("rsa_pkcs1", "rsa", ""),
+            ("rsa_pkcs1_aes128", "rsa", PASS),
+            ("rsa_pkcs8", "rsa", ""),
+            ("ecdsa_openssh", "ecdsa", ""),
+            ("ecdsa_pkcs8", "ecdsa", ""),
+        ] {
+            let path = dir().join(file);
+            let by_path = Session {
+                private_key_path: path.to_string_lossy().into_owned(),
+                ..Session::new_empty()
+            };
+            assert_eq!(loaded(&by_path, pass), expected(public), "{file} from a path");
+            // Sessions saved with the `.pub` file selected load the private key next to it.
+            let by_pub = Session {
+                private_key_path: format!("{}.pub", path.display()),
+                ..Session::new_empty()
+            };
+            assert_eq!(loaded(&by_pub, pass), expected(public), "{file} via .pub");
+            let inline = Session {
+                private_key_inline: crate::config::Secret::new(std::fs::read_to_string(&path).unwrap()),
+                ..Session::new_empty()
+            };
+            assert_eq!(loaded(&inline, pass), expected(public), "{file} pasted");
+        }
+    }
+
+    #[test]
+    fn a_wrong_passphrase_is_an_error() {
+        let session = Session {
+            private_key_path: dir().join("ed25519_openssh_enc").to_string_lossy().into_owned(),
+            ..Session::new_empty()
+        };
+        assert!(load_session_private_key(&session, "wrong").is_err());
     }
 }

@@ -115,10 +115,7 @@ pub(super) fn set_about_libraries(ctx: &WinCtx) {
     {
         let libs: Vec<SharedString> = [
             t("Slint — 图形界面框架 (GUI)", "Slint — GUI framework"),
-            t(
-                "russh / russh-keys — SSH 协议实现",
-                "russh / russh-keys — SSH protocol",
-            ),
+            t("russh — SSH 协议实现", "russh — SSH protocol"),
             t(
                 "russh-sftp — SFTP 文件传输",
                 "russh-sftp — SFTP file transfer",

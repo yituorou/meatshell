@@ -109,3 +109,36 @@ pub fn remember(host: &str, port: u16, key: &PublicKey) -> Result<()> {
     std::fs::write(&p, out).with_context(|| format!("write {}", p.display()))?;
     Ok(())
 }
+
+/// Hosts users already trusted must still match after a russh / ssh-key
+/// upgrade: the stored line and the fingerprint of a key received from the
+/// server have to stay byte-for-byte the same.
+#[cfg(test)]
+mod tests {
+    use super::{fingerprint, openssh_line};
+    use ssh_key::PublicKey;
+
+    fn pub_line(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/ssh/impls/testdata/keys")
+            .join(format!("{name}.pub"));
+        let text = std::fs::read_to_string(path).unwrap();
+        text.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+    }
+
+    #[test]
+    fn stored_lines_and_fingerprints_are_stable() {
+        for (name, want_fp) in [
+            ("ed25519", "SHA256:9ZHWrnRczr9AsKCWF2Uuv4u3m5k3YoWOgaJVoPY4X+4"),
+            ("rsa", "SHA256:59CvZUXNqNlt41gQtrymV/KtCDFadeMN4X037dqqz2s"),
+            ("ecdsa", "SHA256:KITxsj6Y/E38SM7f6yLgf/w/dZKbT4JyvNbytWjU6gY"),
+        ] {
+            let line = pub_line(name);
+            // The server sends the bare key blob, with no comment.
+            let wire = PublicKey::from_openssh(&line).unwrap().to_bytes().unwrap();
+            let key = PublicKey::from_bytes(&wire).unwrap();
+            assert_eq!(openssh_line(&key), line, "{name} stored line");
+            assert_eq!(fingerprint(&key), want_fp, "{name} fingerprint");
+        }
+    }
+}
