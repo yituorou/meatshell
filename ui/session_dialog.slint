@@ -1001,7 +1001,10 @@ export component SessionDialog inherits ModalLayer {
         // the body scrolls (the dialog grows with the advanced section / many
         // port forwards) (#56). Header (52px + 1px divider) and the pinned
         // action footer (1px divider + its row) stay outside the scroll (#525).
-        height: min(body.preferred-height + 54px + footer.preferred-height, parent.height - 40px);
+        // `body-end.y + 8px` reflects the true laid-out height after conditional
+        // sections wrap text at the 440px card width (Slint queries conditional
+        // sub-layouts without a cross-width constraint for `preferred-height`).
+        height: min(max(body.preferred-height, body-end.y + 8px) + 54px + footer.preferred-height, parent.height - 40px);
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         background: Theme.popup-bg;
@@ -1071,16 +1074,25 @@ export component SessionDialog inherits ModalLayer {
             background: Theme.border-subtle;
         }
 
-        Flickable {
+        flick := Flickable {
             // Keep mouse grabs with text selections and jump handles. Wheel
             // scrolling still works, as in the terminal tab strip (#408).
             interactive: false;
             width: 100%;
             vertical-stretch: 1;
             content-width: self.width;
-            content-height: body.preferred-height;
+            content-height: max(self.height, body.preferred-height, body-end.y + 8px);
             body := VerticalLayout {
-                padding: 20px;
+                x: 0px;
+                y: 0px;
+                width: flick.width;
+                height: self.preferred-height;
+                alignment: start;
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 20px;
+                // `body-end` adds 12px spacing before itself; 8px here keeps 20px total bottom padding.
+                padding-bottom: 8px;
                 spacing: 12px;
 
             // Connection type selector (always shown).
@@ -1987,6 +1999,7 @@ export component SessionDialog inherits ModalLayer {
                     color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
                 }
             }
+            body-end := Rectangle { height: 0px; }
         }
         }
 

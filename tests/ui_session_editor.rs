@@ -106,6 +106,7 @@ slint::slint! {
     export component ShortDialogFixture inherits Window {
         width: 700px; height: 600px;
         out property <int> submit-count: 0;
+        out property <int> add-trigger-count: 0;
         init => {
             Theme.ui-font-family = "Microsoft YaHei";
             Palette.color-scheme = ColorScheme.dark;
@@ -117,6 +118,7 @@ slint::slint! {
             draft-host: "target.example.invalid";
             draft-user: "demo";
             show-advanced: true;
+            add-trigger => { root.add-trigger-count += 1; }
             submit(draft) => { root.submit-count += 1; }
         }
     }
@@ -498,6 +500,50 @@ fn create_button_stays_reachable_with_advanced_options_in_a_short_window() {
         press(&window, 530., 553.);
         release(&window, 530., 553.);
         assert_eq!(ui.get_submit_count(), 1, "Create must sit at the bottom of the card");
+    }).join().unwrap();
+}
+
+#[test]
+fn advanced_session_body_scrolls_to_bottom_trigger_button_without_occlusion() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend { window: window.clone(), clipboard: Rc::default() })).unwrap();
+        let ui = ShortDialogFixture::new().unwrap();
+        ui.show().unwrap();
+        window.set_size(slint::PhysicalSize::new(700, 600));
+        let render_short = || {
+            slint::platform::update_timers_and_animations();
+            let mut pixels = vec![Rgb8Pixel::default(); 700 * 600];
+            window.request_redraw();
+            window.draw_if_needed(|r| { r.render(&mut pixels, 700); });
+            slint::platform::update_timers_and_animations();
+            pixels
+        };
+        render_short();
+        for _ in 0..40 {
+            window.dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(350., 300.),
+            });
+            window.dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(350., 300.),
+                delta_x: 0.0,
+                delta_y: -120.0,
+            });
+            render_short();
+        }
+        let pixels = render_short();
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/session-editor-short-bottom.png");
+        image::save_buffer(path, &bytes, 700, 600, image::ColorType::Rgb8).unwrap();
+
+        press(&window, 505., 456.);
+        release(&window, 505., 456.);
+        render_short();
+        assert_eq!(
+            ui.get_add_trigger_count(),
+            1,
+            "Add trigger button at the bottom of the scrolled SSH advanced body must be unoccluded and clickable"
+        );
     }).join().unwrap();
 }
 
