@@ -37,6 +37,7 @@ mod save_tab_session;
 mod session_callbacks;
 mod session_event;
 mod session_editor;
+mod jump_picker;
 mod session_models;
 mod session_runtime;
 mod session_trigger;
