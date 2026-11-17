@@ -53,7 +53,7 @@ export global Theme {
     in-out property <ThemePalette> palette-dark: {
         bg-root: #1b1d23, bg-panel: #23262d, bg-panel-alt: #2a2d35,
         bg-elevated: #30333c, bg-hover: #373a44, bg-active: #3f4350,
-        tab-active-bg: #171a20, tab-active-border: #06070a,
+        tab-active-bg: #000000, tab-active-border: #06070a,
         border-subtle: #3a3d46, border-strong: #4a4e59,
         text-primary: #e6e8ee, text-secondary: #b4b9c4, text-muted: #9196a3,
         accent: #4a90e2, accent-hover: #5aa0f2, accent-pressed: #3a80d2,
@@ -125,10 +125,13 @@ export global Theme {
     out property <brush> popup-bg: base-bg-panel;
     out property <brush> popup-bg-alt: base-bg-panel-alt;
 
-    // Active terminal tab: with wallpaper, pull from the image's average colour
-    // so the strip feels immersed; without wallpaper, make the active tab one
-    // clear step darker/lighter than the surrounding tab bar (#200).
-    out property <brush> tab-active-bg: root.immersive-active
+    // Active terminal tab (#200). Dark mode always keeps the palette's tab
+    // surface — black by default — even with a wallpaper: the immersive tint
+    // below used to win here and painted the selected tab in the image's
+    // tint/accent (pale blue), which made the palette colour look "ignored".
+    // Light mode keeps the tint: there it only shifts the white slightly, so
+    // the selection stays readable.
+    out property <brush> tab-active-bg: root.immersive-active && !root.dark
         ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
         : (root.wallpaper-active
             ? root.p.tab-active-bg.with-alpha(min(1.0, root.panel-alpha + 0.10))

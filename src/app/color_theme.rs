@@ -111,7 +111,7 @@ fn default_dark() -> Palette {
         bg_elevated: hex(0x30333c),
         bg_hover: hex(0x373a44),
         bg_active: hex(0x3f4350),
-        tab_active_bg: hex(0x171a20),
+        tab_active_bg: hex(0x000000),
         tab_active_border: hex(0x06070a),
         border_subtle: hex(0x3a3d46),
         border_strong: hex(0x4a4e59),

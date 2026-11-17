@@ -51,8 +51,8 @@ component SingleTab inherits Rectangle {
     height: 30px;
     width: self.preferred-width;
     border-radius: Theme.radius-sm;
-    border-width: active ? 2px : 0px;
-    border-color: active ? Theme.accent : transparent;
+    // No accent ring: the active tab is a black well (Theme.tab-active-bg),
+    // and the 2px #4a90e2 frame around it read as "the tab is still blue".
     background: lifted ? Theme.bg-active
         : (active ? Theme.tab-active-bg
         : (touch.has-hover ? Theme.bg-hover : transparent));
