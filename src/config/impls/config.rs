@@ -340,6 +340,17 @@ pub(crate) fn is_reserved_session_group(name: &str) -> bool {
     name.eq_ignore_ascii_case("default") || name.eq_ignore_ascii_case("system")
 }
 
+/// Display groups Quick Connect generates itself instead of reading from a
+/// stored folder: `default` (ungrouped rows), `system` (local shells) and
+/// `agents` (detected agent CLIs). Removing one of them from the list only
+/// hides it; nothing is deleted from disk.
+pub(crate) fn is_builtin_quick_connect_group(name: &str) -> bool {
+    let name = name.trim();
+    name.eq_ignore_ascii_case("default")
+        || name.eq_ignore_ascii_case("system")
+        || name.eq_ignore_ascii_case("agents")
+}
+
 /// Named display groups: explicit folders ∪ the groups sessions are filed
 /// under, with reserved names and ungrouped excluded, de-duplicated and
 /// sorted case-insensitively. The single source of truth for group display
@@ -1988,6 +1999,37 @@ impl ConfigStore {
         self.cache.collapsed_session_groups.as_deref()
     }
 
+    pub fn is_builtin_group_hidden(&self, name: &str) -> bool {
+        self.cache
+            .hidden_builtin_groups
+            .iter()
+            .any(|group| group.eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// Remove a built-in group (`system` / `agents`) from Quick Connect.
+    /// Returns false when the name is not a built-in group or it is already
+    /// hidden. User folders go through [`Self::remove_group`] instead.
+    pub fn hide_builtin_group(&mut self, name: &str) -> bool {
+        if !is_builtin_quick_connect_group(name) || self.is_builtin_group_hidden(name) {
+            return false;
+        }
+        self.cache
+            .hidden_builtin_groups
+            .push(name.trim().to_ascii_lowercase());
+        self.cache.hidden_builtin_groups.sort();
+        self.cache.hidden_builtin_groups.dedup();
+        true
+    }
+
+    /// Bring a hidden built-in group back to Quick Connect.
+    pub fn show_builtin_group(&mut self, name: &str) -> bool {
+        let before = self.cache.hidden_builtin_groups.len();
+        self.cache
+            .hidden_builtin_groups
+            .retain(|group| !group.eq_ignore_ascii_case(name.trim()));
+        self.cache.hidden_builtin_groups.len() != before
+    }
+
     /// Remember a Quick Connect folder's open/closed state. On the first
     /// interaction, materialise the default-collapsed state for every existing
     /// folder so expanding one folder does not accidentally expand the rest.
@@ -2056,8 +2098,8 @@ impl ConfigStore {
         }
     }
 
-    /// Delete a group. Any session still in it falls back to ungrouped — the UI
-    /// only offers delete on empty groups, but we clear sessions defensively.
+    /// Delete a group. Any session still in it falls back to ungrouped, so the
+    /// folder's contents survive as ungrouped rows.
     pub fn remove_group(&mut self, name: &str) {
         if is_reserved_session_group(name.trim()) {
             return;
@@ -2541,6 +2583,42 @@ mod tests {
             .unwrap()
             .iter()
             .any(|group| group == "production"));
+    }
+
+    #[test]
+    fn builtin_quick_connect_groups_can_be_hidden_and_restored() {
+        let mut store = temp_store();
+        assert!(!store.is_builtin_group_hidden("system"));
+
+        assert!(store.hide_builtin_group("system"));
+        assert!(store.is_builtin_group_hidden("system"));
+        assert!(store.is_builtin_group_hidden("SYSTEM"));
+        // Hiding twice is a no-op.
+        assert!(!store.hide_builtin_group("system"));
+
+        // Only the generated display groups are accepted (the implicit
+        // "default" included); user folders use remove_group instead.
+        assert!(store.hide_builtin_group("default"));
+        assert!(store.is_builtin_group_hidden("default"));
+        assert!(store.show_builtin_group("default"));
+        assert!(!store.is_builtin_group_hidden("default"));
+        assert!(!store.hide_builtin_group("production"));
+        assert!(!store.is_builtin_group_hidden("production"));
+
+        assert!(store.show_builtin_group("System"));
+        assert!(!store.is_builtin_group_hidden("system"));
+        assert!(!store.show_builtin_group("system"));
+
+        // Hidden groups are persisted, and an empty list stays out of the file.
+        assert!(store.hide_builtin_group("agents"));
+        let raw = serde_json::to_string(&store.cache).unwrap();
+        assert!(raw.contains("hidden_builtin_groups"));
+        let parsed: ConfigFile = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed.hidden_builtin_groups, vec!["agents".to_string()]);
+
+        store.cache.hidden_builtin_groups.clear();
+        let raw = serde_json::to_string(&store.cache).unwrap();
+        assert!(!raw.contains("hidden_builtin_groups"));
     }
 
     /// Display order for these tests: default(d1, d2), alpha(a1), beta(b1, b2)

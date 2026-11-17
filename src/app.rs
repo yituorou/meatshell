@@ -115,8 +115,8 @@ use tokio::runtime::Runtime;
 
 use crate::app::core::{AppCore, TabRoute, TabRoutes, WindowRegistry, WindowState};
 use crate::config::{
-    is_reserved_session_group, named_display_groups, AuthMethod, ConfigStore, OutputHighlightRule,
-    Secret, Session, SessionKind, SessionLogMode,
+    is_builtin_quick_connect_group, is_reserved_session_group, named_display_groups, AuthMethod,
+    ConfigStore, OutputHighlightRule, Secret, Session, SessionKind, SessionLogMode,
 };
 use crate::i18n::t;
 use crate::layout::{LogicalRect, TerminalWheelHit};

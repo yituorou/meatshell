@@ -356,6 +356,18 @@ fn local_program(session: &Session) -> (String, Vec<String>) {
             ("wsl.exe".to_string(), args)
         }
         #[cfg(windows)]
+        "bash" => match windows_git_bash() {
+            Some(path) => (
+                path.to_string_lossy().into_owned(),
+                // A login shell reads ~/.bash_profile like Git's own
+                // "Git Bash" shortcut does.
+                vec!["--login".to_string(), "-i".to_string()],
+            ),
+            // Git for Windows is not installed. `bash.exe` on PATH is then
+            // the WSL launcher, which still opens a usable bash.
+            None => ("bash.exe".to_string(), Vec::new()),
+        },
+        #[cfg(windows)]
         "powershell" | _ => {
             let mut script = POWERSHELL_UTF8_SETUP.to_string();
             // `-NoExit` keeps PowerShell open once the program returns, so an
@@ -389,6 +401,75 @@ fn local_program(session: &Session) -> (String, Vec<String>) {
             }
         }
     }
+}
+
+/// Program a local session would start, for the dialog's "Test connection".
+pub(crate) fn local_program_name(session: &Session) -> String {
+    local_program(session).0
+}
+
+/// Whether the program a local session starts can be found: a path is checked
+/// directly, a bare name is looked up on PATH (`.exe` on Windows).
+pub(crate) fn program_available(program: &str) -> bool {
+    let program = program.trim();
+    if program.is_empty() {
+        return false;
+    }
+    let path = std::path::Path::new(program);
+    if path.is_absolute() || program.contains(['/', '\\']) {
+        return path.is_file();
+    }
+    let Some(dirs) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&dirs).any(|dir| {
+        if dir.join(program).is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        if path.extension().is_none() {
+            return dir.join(format!("{program}.exe")).is_file();
+        }
+        false
+    })
+}
+
+/// Windows Git Bash (`<Git>\bin\bash.exe`): the Git install that owns the
+/// `git.exe` on PATH, then the default install folders. A bare `bash` PATH
+/// lookup is deliberately avoided — that is usually `System32\bash.exe`, the
+/// WSL launcher, not a POSIX shell on Windows.
+#[cfg(windows)]
+fn windows_git_bash() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let git = dir.join("git.exe");
+            if !git.is_file() {
+                continue;
+            }
+            // <root>\cmd\git.exe, <root>\bin\git.exe or <root>\mingw64\bin\git.exe
+            let mut cur = git.parent().map(|p| p.to_path_buf());
+            for _ in 0..3 {
+                let Some(dir) = cur else { break };
+                roots.push(dir.clone());
+                cur = dir.parent().map(|p| p.to_path_buf());
+            }
+            break;
+        }
+    }
+    for base in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        if let Some(pf) = std::env::var_os(base) {
+            roots.push(PathBuf::from(pf).join("Git"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("Programs").join("Git"));
+    }
+    roots
+        .iter()
+        .map(|root| root.join("bin").join("bash.exe"))
+        .find(|path| path.is_file())
 }
 
 const POWERSHELL_UTF8_SETUP: &str = "$utf8 = New-Object System.Text.UTF8Encoding $false; \
@@ -675,6 +756,30 @@ mod tests {
         let script = args.last().unwrap();
         assert!(script.contains("OutputEncoding"));
         assert!(script.ends_with(r"; & 'C:\Users\me\AppData\Roaming\npm\codex.cmd'"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bash_does_not_fall_through_to_powershell() {
+        let mut session = Session::new_empty();
+        session.kind = crate::config::SessionKind::Local;
+        session.host = "bash".to_string();
+        let (program, args) = local_program(&session);
+        let lower = program.to_lowercase();
+        assert!(
+            !lower.contains("powershell"),
+            "a bash session must not start PowerShell: {program}"
+        );
+        assert!(
+            lower.ends_with("bash") || lower.ends_with("bash.exe"),
+            "unexpected bash program: {program}"
+        );
+        // Git Bash gets `--login -i` so it reads ~/.bash_profile like the
+        // Start-menu shortcut; the WSL-launcher fallback has no arguments.
+        assert!(
+            args.is_empty() || args == ["--login", "-i"],
+            "unexpected bash arguments: {args:?}"
+        );
     }
 
     #[cfg(windows)]

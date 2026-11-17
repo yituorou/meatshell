@@ -88,6 +88,12 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
         .map(|window| !window.get_sidebar_collapsed() && !window.get_zen_mode())
         .unwrap_or(true);
     handle.set_resource_monitoring(monitoring_enabled);
+    // Keep what the post-connect command sequence needs: the handle itself
+    // moves into the shared map, but the channel and the settings can be
+    // cloned/copied before that.
+    let startup_input = handle.commands.clone();
+    let startup_commands = session.startup_commands.clone();
+    let startup_encoding = session.encoding.clone();
     ctx.handles.borrow_mut().insert(tab_id.to_string(), handle);
 
     // Delivery route for this tab. Both pump threads hold the Arc and
@@ -147,12 +153,36 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
         (None, None)
     };
 
+    // --- Commands typed automatically once the shell is ready ---
+    // Waits for the transport's `Connected` event (SSH handshake, PTY spawn,
+    // Telnet/serial open) plus a short settle delay, then types each line in
+    // order. Covering every kind here keeps SSH / Telnet / Serial / Local on
+    // one code path.
+    let shell_ready_tx = if startup_commands.is_empty() {
+        None
+    } else {
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+        ctx.runtime.spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await;
+            tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+            let encoder = crate::terminal::TerminalEncoding::new(&startup_encoding);
+            for command in startup_commands {
+                let mut bytes = command.into_bytes();
+                bytes.push(b'\r');
+                let _ = startup_input.send(SessionCommand::RawInput(encoder.encode(&bytes)));
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        });
+        Some(ready_tx)
+    };
+
     // --- Shell event pump (dedicated thread) ---
     {
         let route_pump = route.clone();
         let rt_pump = ctx.runtime.clone();
         let tab_id_pump = tab_id.to_string();
         std::thread::spawn(move || {
+            let mut shell_ready_tx = shell_ready_tx;
             let mut shell_rx = rx;
             let mut sftp_ready_tx = sftp_ready_tx;
             let mut cwd_debounce: Option<tokio::task::JoinHandle<()>> = None;
@@ -223,6 +253,10 @@ pub(super) fn start_session_in_tab(tab_id: &str, session: Session, ctx: &Connect
                     match evt {
                         SessionEvent::Connected => {
                             if let Some(ready) = sftp_ready_tx.take() {
+                                let _ = ready.send(());
+                            }
+                            // Release the post-connect command sequence.
+                            if let Some(ready) = shell_ready_tx.take() {
                                 let _ = ready.send(());
                             }
                             ui_batch.push(SessionEvent::Connected);

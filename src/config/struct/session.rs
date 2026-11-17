@@ -347,6 +347,13 @@ pub struct Session {
     #[serde(default)]
     pub triggers: Vec<SessionTrigger>,
 
+    /// Commands typed into the shell automatically once the session has
+    /// connected, in order, one per entry. Applies to every transport that
+    /// hosts an interactive shell (SSH / Telnet / Serial / Local); RDP has no
+    /// shell and ignores it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub startup_commands: Vec<String>,
+
     /// Skip shell-integration setup (the cwd-follow hook + remote resource
     /// monitor). Those assume a POSIX shell and can interfere with Windows
     /// shells or interactive auto-login scripts. SFTP remains available.
@@ -490,6 +497,34 @@ mod term_type_tests {
     }
 }
 
+#[cfg(test)]
+mod startup_commands_tests {
+    use super::*;
+
+    #[test]
+    fn missing_field_deserializes_as_empty() {
+        let mut value = serde_json::to_value(Session::new_empty()).unwrap();
+        value.as_object_mut().unwrap().remove("startup_commands");
+        let session: Session = serde_json::from_value(value).unwrap();
+        assert!(session.startup_commands.is_empty());
+    }
+
+    #[test]
+    fn empty_list_is_left_out_of_the_file() {
+        let value = serde_json::to_value(Session::new_empty()).unwrap();
+        assert!(value.get("startup_commands").is_none());
+    }
+
+    #[test]
+    fn saved_commands_round_trip() {
+        let mut session = Session::new_empty();
+        session.startup_commands = vec!["cd /srv".into(), "ls -la".into()];
+        let json = serde_json::to_string(&session).unwrap();
+        let back: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.startup_commands, ["cd /srv", "ls -la"]);
+    }
+}
+
 impl Session {
     /// The terminal type to announce for this session (#498).
     pub fn effective_term_type(&self) -> &str {
@@ -546,6 +581,7 @@ impl Session {
             session_log: SessionLogMode::Default,
             forwards: Vec::new(),
             triggers: Vec::new(),
+            startup_commands: Vec::new(),
             disable_shell_integration: false,
             sftp_mode: String::new(),
             sftp_command: String::new(),

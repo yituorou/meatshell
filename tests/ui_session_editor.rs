@@ -60,9 +60,16 @@ slint::slint! {
         in-out property <string> rdp-cert: "ignore";
         in-out property <string> rdp-extra;
         in-out property <bool> rdp-sound: false;
+        in-out property <string> local-shell: "powershell";
+        in-out property <string> local-distribution;
+        in-out property <string> startup;
         out property <string> saved-rdp-cert;
         out property <string> saved-rdp-extra;
         out property <bool> saved-rdp-sound;
+        out property <string> saved-kind;
+        out property <string> saved-local-shell;
+        out property <string> saved-local-distribution;
+        out property <string> saved-startup;
         callback save-current();
         save-current => { editor.submit-current(); }
         init => {
@@ -77,6 +84,10 @@ slint::slint! {
                 root.saved-rdp-cert = draft.rdp-cert-policy;
                 root.saved-rdp-extra = draft.rdp-extra-args;
                 root.saved-rdp-sound = draft.rdp-sound;
+                root.saved-kind = draft.kind;
+                root.saved-local-shell = draft.local-shell;
+                root.saved-local-distribution = draft.local-distribution;
+                root.saved-startup = draft.startup-commands;
             }
             stop-test => { root.stop-count += 1; }
             closed => { root.closed-count += 1; }
@@ -92,6 +103,9 @@ slint::slint! {
             draft-rdp-cert-policy <=> root.rdp-cert;
             draft-rdp-extra-args <=> root.rdp-extra;
             draft-rdp-sound <=> root.rdp-sound;
+            draft-local-shell <=> root.local-shell;
+            draft-local-distribution <=> root.local-distribution;
+            draft-startup-commands <=> root.startup;
             draft-note: "Example route, no real credentials";
             allow-secret-reveal: true;
             jump-choices: ["Select a jump host", "Bastion A (demo@a.example.invalid:22)", "Bastion B (demo@b.example.invalid:22)"];
@@ -540,3 +554,26 @@ fn rdp_common_and_bilingual_advanced_fields_reach_the_saved_draft() {
         assert!(ui.get_saved_rdp_sound());
     }).join().unwrap();
 }
+
+#[test]
+fn local_session_draft_carries_shell_and_startup_commands() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend { window, clipboard: Rc::default() })).unwrap();
+        let ui = DialogFixture::new().unwrap();
+        // A local session has no host, so the dialog must not block the save.
+        ui.set_kind("local".into());
+        ui.set_host("".into());
+        ui.set_local_shell("wsl".into());
+        ui.set_local_distribution("Ubuntu".into());
+        ui.set_startup("cd /srv\nls -la".into());
+        ui.invoke_save_current();
+        assert_eq!(ui.get_submit_count(), 1);
+        assert_eq!(ui.get_saved_kind().as_str(), "local");
+        assert_eq!(ui.get_saved_local_shell().as_str(), "wsl");
+        assert_eq!(ui.get_saved_local_distribution().as_str(), "Ubuntu");
+        assert_eq!(ui.get_saved_startup().as_str(), "cd /srv\nls -la");
+    }).join().unwrap();
+}
+
+

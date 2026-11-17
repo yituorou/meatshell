@@ -349,6 +349,138 @@ component CollapseButton inherits Rectangle {
     }
 }
 
+// --- Quick connect menu ----------------------------------------------------
+// Dropdown sitting next to the "New session" button: create a group, or
+// show/hide the generated groups. A tick means the group is visible; clicking
+// a ticked row hides it and vice versa.
+component QuickConnectMenuButton inherits Rectangle {
+    in property <bool> hidden-system;
+    in property <bool> hidden-agents;
+    callback new-group();
+    callback toggle-group(string /* name */);
+
+    width: 30px;
+    height: 30px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+    background: ta.has-hover ? Theme.bg-hover : Theme.bg-elevated;
+
+    Text {
+        text: "\u{E5CF}";   // expand_more
+        font-family: "Material Icons";
+        color: Theme.text-primary;
+        font-size: Theme.fs-md;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { menu.show(); }
+    }
+
+    menu := PopupWindow {
+        // Right-align the menu with the button: the popup is wider than the
+        // 30px trigger, so shift it left by the difference (never hard-code
+        // -154px — that silently breaks the moment the width changes).
+        x: root.width - self.width;
+        y: parent.height + 2px;
+        width: 184px;
+        // Follow the content instead of counting rows by hand: the row count
+        // is fixed today, but a hand-computed height clipped the last row.
+        height: menu-vl.preferred-height;
+        Rectangle {
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000050;
+            menu-vl := VerticalLayout {
+                padding: 4px;
+                spacing: 1px;
+                // New group
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: ng-ta.has-hover ? Theme.bg-hover : transparent;
+                    ng-ta := TouchArea { mouse-cursor: pointer; clicked => { root.new-group(); menu.close(); } }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 8px;
+                        Rectangle { width: 16px; }
+                        Text { text: @tr("New group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                // System group — tick = visible. Toggling deliberately does NOT
+                // close the menu (unlike "New group", which opens a dialog), so
+                // both groups can be flipped in one visit; the tick follows
+                // `hidden-system`, i.e. it updates while the menu stays open.
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: sg-ta.has-hover ? Theme.bg-hover : transparent;
+                    sg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-group("system"); } }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            // A fixed-height item in a HorizontalLayout keeps
+                            // y = 0 (the layout only stretches free items), so
+                            // centre it by hand or the tick rides high.
+                            y: (parent.height - self.height) / 2;
+                            // A plain tick marks "visible"; hidden groups leave
+                            // the slot empty — no checkbox frame.
+                            Text {
+                                text: "\u{E5CA}";   // check
+                                visible: !root.hidden-system;
+                                font-family: "Material Icons";
+                                color: Theme.text-primary;
+                                font-size: 16px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text { text: @tr("System group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+                // Agents group — tick = visible.
+                Rectangle {
+                    height: 28px;
+                    border-radius: Theme.radius-sm;
+                    background: ag-ta.has-hover ? Theme.bg-hover : transparent;
+                    ag-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-group("agents"); } }
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        spacing: 8px;
+                        Rectangle {
+                            width: 16px;
+                            height: 16px;
+                            // Same plain tick (and same manual centring) as the
+                            // System row.
+                            y: (parent.height - self.height) / 2;
+                            Text {
+                                text: "\u{E5CA}";   // check
+                                visible: !root.hidden-agents;
+                                font-family: "Material Icons";
+                                color: Theme.text-primary;
+                                font-size: 16px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text { text: @tr("Agents group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // --- Welcome ---------------------------------------------------------------
 export component Welcome inherits Rectangle {
     in property <[SessionInfo]> sessions;
@@ -387,6 +519,13 @@ export component Welcome inherits Rectangle {
     callback new-group();
     callback edit-group(string /* current-name */);
     callback delete-group(string /* name */);
+    // Groups the user removed from the list: the implicit "default" group and
+    // the generated "system" / "agents" ones. Their rows stay hidden until
+    // restored from a group's context menu.
+    in property <bool> hidden-default;
+    in property <bool> hidden-system;
+    in property <bool> hidden-agents;
+    callback restore-group(string /* name */);
     callback remove-session(string);
     callback search-changed(string);
     callback cycle-tab(bool /* reverse */);
@@ -522,11 +661,39 @@ export component Welcome inherits Rectangle {
                             text: @tr("+ New session");
                             clicked => { root.new-session(); }
                         }
+                        if !root.compact : QuickConnectMenuButton {
+                            hidden-system: root.hidden-system;
+                            hidden-agents: root.hidden-agents;
+                            new-group => { root.new-group(); }
+                            toggle-group(name) => {
+                                if (name == "system") {
+                                    if (root.hidden-system) { root.restore-group("system"); } else { root.delete-group("system"); }
+                                } else {
+                                    if (root.hidden-agents) { root.restore-group("agents"); } else { root.delete-group("agents"); }
+                                }
+                            }
+                        }
                     }
                 }
-                if root.compact : PrimaryButton {
-                    text: @tr("+ New session");
-                    clicked => { root.new-session(); }
+                if root.compact : HorizontalLayout {
+                    spacing: 4px;
+                    PrimaryButton {
+                        text: @tr("+ New session");
+                        horizontal-stretch: 1;
+                        clicked => { root.new-session(); }
+                    }
+                    QuickConnectMenuButton {
+                        hidden-system: root.hidden-system;
+                        hidden-agents: root.hidden-agents;
+                        new-group => { root.new-group(); }
+                        toggle-group(name) => {
+                            if (name == "system") {
+                                if (root.hidden-system) { root.restore-group("system"); } else { root.delete-group("system"); }
+                            } else {
+                                if (root.hidden-agents) { root.restore-group("agents"); } else { root.delete-group("agents"); }
+                            }
+                        }
+                    }
                 }
 
                 // Filter saved and built-in sessions by display name or host.
@@ -657,6 +824,28 @@ export component Welcome inherits Rectangle {
                             font-size: Theme.fs-sm;
                             horizontal-alignment: center;
                         }
+                        // Way back for an empty list after both built-in groups
+                        // were removed (there is no group header to right-click).
+                        if root.hidden-default || root.hidden-system || root.hidden-agents : Rectangle {
+                            height: 26px;
+                            border-radius: Theme.radius-sm;
+                            background: restore-all-ta.has-hover ? Theme.bg-hover : transparent;
+                            restore-all-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if (root.hidden-default) { root.restore-group("default"); }
+                                    if (root.hidden-system) { root.restore-group("system"); }
+                                    if (root.hidden-agents) { root.restore-group("agents"); }
+                                }
+                            }
+                            Text {
+                                text: @tr("Restore hidden groups");
+                                color: Theme.accent;
+                                font-size: Theme.fs-sm;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
 
@@ -720,7 +909,7 @@ export component Welcome inherits Rectangle {
                                     }
                                 }
                                 pointer-event(e) => {
-                                    if (!session.builtin && e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
+                                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.right) {
                                         gmx = self.mouse-x;
                                         gmy = self.mouse-y;
                                         grp-menu.show();
@@ -730,9 +919,19 @@ export component Welcome inherits Rectangle {
                             grp-menu := PopupWindow {
                                 x: gmx;
                                 y: gmy;
-                                width: 140px;
-                                // edit + new always; delete only for an empty group.
-                                height: (session.id == "" ? 3 : 2) * 28px + 9px;
+                                width: 168px;
+                                // Every group can be deleted except the implicit
+                                // "default" group; user folders also offer edit +
+                                // new. Removing a built-in group only hides it.
+                                // Restore entries appear while one is hidden.
+                                property <int> item-count:
+                                    (!session.builtin ? 1 : 0)                                 // new group
+                                    + (!session.builtin && session.group != "default" ? 1 : 0) // edit
+                                    + 1                                                        // delete
+                                    + (root.hidden-default ? 1 : 0)
+                                    + (root.hidden-system ? 1 : 0)
+                                    + (root.hidden-agents ? 1 : 0);
+                                height: item-count * 28px + 9px;
                                 Rectangle {
                                     background: Theme.popup-bg;
                                     border-radius: Theme.radius-sm;
@@ -743,8 +942,9 @@ export component Welcome inherits Rectangle {
                                     VerticalLayout {
                                         padding: 4px;
                                         spacing: 1px;
-                                        // Edit (rename) group
-                                        Rectangle {
+                                        // Edit (rename) group — user folders only
+                                        // (the implicit "default" group can't be renamed).
+                                        if !session.builtin && session.group != "default" : Rectangle {
                                             height: 28px;
                                             border-radius: Theme.radius-sm;
                                             background: eg-ta.has-hover ? Theme.bg-hover : transparent;
@@ -755,8 +955,11 @@ export component Welcome inherits Rectangle {
                                                 Text { text: @tr("Edit group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
                                             }
                                         }
-                                        // Delete group — only when it has no sessions (id == "")
-                                        if session.id == "" : Rectangle {
+                                        // Delete — every group. A user folder is
+                                        // dissolved (its sessions fall back to
+                                        // ungrouped); a generated group is only
+                                        // hidden from this list.
+                                        Rectangle {
                                             height: 28px;
                                             border-radius: Theme.radius-sm;
                                             background: dg-ta.has-hover ? #cc333320 : transparent;
@@ -764,11 +967,16 @@ export component Welcome inherits Rectangle {
                                             HorizontalLayout {
                                                 padding-left: 10px; spacing: 8px;
                                                 Text { text: "\u{E872}"; font-family: "Material Icons"; color: #cc3333; font-size: Theme.fs-sm; vertical-alignment: center; }
-                                                Text { text: @tr("Delete group"); color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                                                Text {
+                                                    text: session.builtin || session.group == "default"
+                                                        ? @tr("Delete group (hide)")
+                                                        : @tr("Delete group");
+                                                    color: #cc3333; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1;
+                                                }
                                             }
                                         }
-                                        // New group
-                                        Rectangle {
+                                        // New group — user folders only.
+                                        if !session.builtin : Rectangle {
                                             height: 28px;
                                             border-radius: Theme.radius-sm;
                                             background: ng-ta.has-hover ? Theme.bg-hover : transparent;
@@ -777,6 +985,40 @@ export component Welcome inherits Rectangle {
                                                 padding-left: 10px; spacing: 8px;
                                                 Text { text: "\u{E2CC}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
                                                 Text { text: @tr("New group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                                            }
+                                        }
+                                        // Restore a hidden group.
+                                        if root.hidden-default : Rectangle {
+                                            height: 28px;
+                                            border-radius: Theme.radius-sm;
+                                            background: rd-ta.has-hover ? Theme.bg-hover : transparent;
+                                            rd-ta := TouchArea { mouse-cursor: pointer; clicked => { root.restore-group("default"); } }
+                                            HorizontalLayout {
+                                                padding-left: 10px; spacing: 8px;
+                                                Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                                Text { text: @tr("Restore Ungrouped group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                                            }
+                                        }
+                                        if root.hidden-system : Rectangle {
+                                            height: 28px;
+                                            border-radius: Theme.radius-sm;
+                                            background: rs-ta.has-hover ? Theme.bg-hover : transparent;
+                                            rs-ta := TouchArea { mouse-cursor: pointer; clicked => { root.restore-group("system"); } }
+                                            HorizontalLayout {
+                                                padding-left: 10px; spacing: 8px;
+                                                Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                                Text { text: @tr("Restore System group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                                            }
+                                        }
+                                        if root.hidden-agents : Rectangle {
+                                            height: 28px;
+                                            border-radius: Theme.radius-sm;
+                                            background: ra-ta.has-hover ? Theme.bg-hover : transparent;
+                                            ra-ta := TouchArea { mouse-cursor: pointer; clicked => { root.restore-group("agents"); } }
+                                            HorizontalLayout {
+                                                padding-left: 10px; spacing: 8px;
+                                                Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                                                Text { text: @tr("Restore Agents group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
                                             }
                                         }
                                     }

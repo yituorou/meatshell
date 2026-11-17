@@ -59,6 +59,10 @@ pub(super) fn sync_sessions_for_window(
     let Some(window) = window.upgrade() else {
         return;
     };
+    // Drive the group context menu's "restore" entries.
+    window.set_hidden_default(store.is_builtin_group_hidden("default"));
+    window.set_hidden_system(store.is_builtin_group_hidden("system"));
+    window.set_hidden_agents(store.is_builtin_group_hidden("agents"));
     let query = window.get_host_search_query().to_string();
     // Prefer in-place row updates: they keep the list's scroll position and
     // any running drag alive and skip the reallocation. A full set_vec
@@ -247,6 +251,10 @@ pub(super) fn wire_session_callbacks(
             w.set_dialog_sftp_mode("".into());
             w.set_dialog_sftp_command("".into());
             w.set_dialog_note("".into());
+            w.set_dialog_startup_commands("".into());
+            w.set_dialog_local_shell("powershell".into());
+            w.set_dialog_local_distribution("".into());
+            w.set_dialog_local_working_dir("".into());
             w.set_dialog_editing(false);
             w.set_dialog_open(true);
         }
@@ -535,6 +543,19 @@ pub(super) fn wire_session_callbacks(
                 w.set_dialog_sftp_mode(session.sftp_mode.clone().into());
                 w.set_dialog_sftp_command(session.sftp_command.clone().into());
                 w.set_dialog_note(session.note.clone().into());
+                w.set_dialog_startup_commands(session.startup_commands.join("\n").into());
+                // A local session keeps its program in `host` ("powershell" /
+                // "cmd" / "wsl" / "bash").
+                w.set_dialog_local_shell(
+                    if session.kind == SessionKind::Local {
+                        session.host.clone()
+                    } else {
+                        "powershell".to_string()
+                    }
+                    .into(),
+                );
+                w.set_dialog_local_distribution(session.local_distribution.clone().into());
+                w.set_dialog_local_working_dir(session.local_working_dir.clone().into());
                 w.set_dialog_editing(true);
                 w.set_dialog_open(true);
             }
@@ -804,7 +825,7 @@ pub(super) fn wire_session_callbacks(
             SharedString::new()
         });
     }
-    // Group delete (#41) — UI only offers this on empty groups.
+    // Group delete (#41) — empty folders and built-in groups.
     {
         let weak = window.as_weak();
         let store = store.clone();
@@ -813,7 +834,37 @@ pub(super) fn wire_session_callbacks(
         window.on_delete_group(move |name: SharedString| {
             {
                 let mut s = store.borrow_mut();
-                s.remove_group(&name.to_string());
+                let name = name.to_string();
+                if is_builtin_quick_connect_group(&name) {
+                    // Built-in groups are generated from the machine's shells
+                    // and agent CLIs, so "delete" only drops them from this
+                    // list; the rows stay reachable from the tab bar and
+                    // Settings, and the group can be restored later.
+                    s.hide_builtin_group(&name);
+                } else {
+                    s.remove_group(&name);
+                }
+                if let Err(err) = s.save() {
+                    tracing::warn!("failed to save config: {err:#}");
+                }
+            }
+            sync_sessions_for_window(&weak, &store.borrow(), &sessions_model);
+            registry.broadcast_config_changed();
+            if let Some(w) = weak.upgrade() {
+                let _ = w.get_sessions();
+            }
+        });
+    }
+    // Restore a built-in group removed from Quick connect.
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let sessions_model = sessions_model.clone();
+        let registry = registry.clone();
+        window.on_restore_group(move |name: SharedString| {
+            {
+                let mut s = store.borrow_mut();
+                s.show_builtin_group(&name);
                 if let Err(err) = s.save() {
                     tracing::warn!("failed to save config: {err:#}");
                 }
@@ -947,6 +998,20 @@ pub(super) fn wire_session_callbacks(
                     session_editor::finish_test(weak_done, window_id, ticket, message);
                 });
                 active_test.borrow_mut().attach(task.abort_handle());
+                return;
+            }
+
+            if kind == "local" {
+                // No endpoint to dial: report whether the chosen shell can
+                // actually be started on this machine.
+                let probe = session_from_draft(&draft, None, Vec::new(), Vec::new());
+                let program = crate::terminal::local::local_program_name(&probe);
+                let message = if crate::terminal::local::program_available(&program) {
+                    t("连接正常", "Connection OK").to_string()
+                } else {
+                    format!("{}: {program}", t("连接失败", "Connection failed"))
+                };
+                session_editor::finish_test(weak.clone(), window_id, ticket, message);
                 return;
             }
 

@@ -53,6 +53,10 @@ export struct SessionDraft {
     stop-bits: int,
     parity: string,        // "none" | "odd" | "even"
     flow-control: string,  // "none" | "hardware" | "software"
+    // Local-only (ignored unless kind == "local")
+    local-shell: string,          // "powershell" | "cmd" | "wsl" | "bash"
+    local-distribution: string,   // WSL distribution ("" = default)
+    local-working-dir: string,    // start folder ("" = shell default)
     // RDP-only (ignored unless kind == "rdp")
     rdp-domain: string,      // Windows logon domain ("" = none)
     rdp-resolution: string,  // "fullscreen" | "custom" | "WxH"
@@ -85,6 +89,8 @@ export struct SessionDraft {
     sftp-command: string,
     // Free-form note (B站 suggestion).
     note: string,
+    // Commands typed into the shell after connecting, one per line.
+    startup-commands: string,
     // Explicit first-hop-first route, owned by this session (#211).
     jumps: [JumpHop],
     allow-secret-reveal: bool,
@@ -776,6 +782,9 @@ export component JumpRow inherits Rectangle {
 // properties and emits `submit` / `cancel` callbacks up to the main window.
 export component SessionDialog inherits ModalLayer {
     in-out property <bool> is-editing: false;
+    // Which shells the local-session picker offers (PowerShell/CMD/WSL exist
+    // on Windows; macOS/Linux start their own bash/login shell).
+    in property <bool> is-windows: false;
     in-out property <string> draft-id;
     in-out property <string> draft-name;
     in-out property <string> draft-kind: "ssh";
@@ -858,6 +867,13 @@ export component SessionDialog inherits ModalLayer {
     in-out property <string> draft-sftp-mode: "";
     in-out property <string> draft-sftp-command: "";
     in-out property <string> draft-note;
+    // Commands typed into the shell automatically after connecting, one per
+    // line, in order. Shown for every connection type.
+    in-out property <string> draft-startup-commands;
+    // --- Local shell session (kind == "local") ---------------------------
+    in-out property <string> draft-local-shell: "powershell";
+    in-out property <string> draft-local-distribution;
+    in-out property <string> draft-local-working-dir;
     in-out property <string> test-status;
 
     // Port forwards / tunnels (#56). Every row is an editable form (#277).
@@ -901,8 +917,9 @@ export component SessionDialog inherits ModalLayer {
 
     public function submit-current() {
         root.stop-test();
-        // SSH/Telnet need a host; block submit and flag it (#110).
-        if (root.draft-kind != "serial" && root.draft-host == "") {
+        // SSH/Telnet need a host; block submit and flag it (#110). Serial and
+        // local sessions identify their endpoint elsewhere.
+        if (root.draft-kind != "serial" && root.draft-kind != "local" && root.draft-host == "") {
             root.host-missing = true;
             return;
         }
@@ -955,6 +972,10 @@ export component SessionDialog inherits ModalLayer {
             sftp-mode: root.draft-sftp-mode,
             sftp-command: root.draft-sftp-command,
             note: root.draft-note,
+            startup-commands: root.draft-startup-commands,
+            local-shell: root.draft-local-shell,
+            local-distribution: root.draft-local-distribution,
+            local-working-dir: root.draft-local-working-dir,
             jumps: root.jumps,
             allow-secret-reveal: root.allow-secret-reveal,
             allow-mcp-access: root.allow-mcp-access,
@@ -1129,6 +1150,11 @@ export component SessionDialog inherits ModalLayer {
                             root.draft-kind = "rdp";
                         }
                     }
+                    SegOption {
+                        label: @tr("Local");
+                        active: root.draft-kind == "local";
+                        clicked => { root.draft-kind = "local"; }
+                    }
                 }
             }
 
@@ -1158,8 +1184,8 @@ export component SessionDialog inherits ModalLayer {
                 value <=> root.draft-note;
             }
 
-            // ── SSH / Telnet share host + port ──────────────────────────────
-            if root.draft-kind != "serial" : HorizontalLayout {
+            // ── SSH / Telnet / RDP share host + port ────────────────────────
+            if root.draft-kind != "serial" && root.draft-kind != "local" : HorizontalLayout {
                 spacing: 10px;
                 LabeledInput {
                     input-background: Theme.bg-elevated;
@@ -1181,10 +1207,65 @@ export component SessionDialog inherits ModalLayer {
             }
 
             // Inline error when a host-less SSH/Telnet session is submitted (#110).
-            if root.host-missing && root.draft-host == "" && root.draft-kind != "serial" : Text {
+            if root.host-missing && root.draft-host == "" && root.draft-kind != "serial" && root.draft-kind != "local" : Text {
                 text: @tr("Please enter a host / IP address.");
                 color: Theme.danger;
                 font-size: Theme.fs-sm;
+            }
+
+            // ── Local: which shell this tab starts ─────────────────────────
+            if root.draft-kind == "local" : VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: @tr("Local shell");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    if root.is-windows : SegOption {
+                        label: "PowerShell";
+                        active: root.draft-local-shell == "powershell";
+                        clicked => { root.draft-local-shell = "powershell"; }
+                    }
+                    if root.is-windows : SegOption {
+                        label: "CMD";
+                        active: root.draft-local-shell == "cmd";
+                        clicked => { root.draft-local-shell = "cmd"; }
+                    }
+                    if root.is-windows : SegOption {
+                        label: "WSL";
+                        active: root.draft-local-shell == "wsl";
+                        clicked => { root.draft-local-shell = "wsl"; }
+                    }
+                    SegOption {
+                        label: @tr("Bash");
+                        active: root.draft-local-shell == "bash" || !root.is-windows;
+                        clicked => { root.draft-local-shell = "bash"; }
+                    }
+                }
+                Text {
+                    text: root.is-windows
+                        ? @tr("Bash opens Git for Windows' bash; install Git for Windows to use it.")
+                        : @tr("Bash starts your login shell ($SHELL).");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    wrap: word-wrap;
+                }
+                if root.is-windows && root.draft-local-shell == "wsl" : LabeledInput {
+                    input-background: Theme.bg-elevated;
+                    idle-border: Theme.border-strong;
+                    label: @tr("WSL distribution (optional)");
+                    placeholder: @tr("e.g. Ubuntu; blank = default distribution");
+                    value <=> root.draft-local-distribution;
+                }
+                LabeledInput {
+                    input-background: Theme.bg-elevated;
+                    idle-border: Theme.border-strong;
+                    label: @tr("Start folder (optional)");
+                    placeholder: "~";
+                    value <=> root.draft-local-working-dir;
+                }
             }
 
             // ── SSH: saved credential (#526) ────────────────────────────────
@@ -1703,7 +1784,7 @@ export component SessionDialog inherits ModalLayer {
             // ── Advanced (collapsed by default): proxy + port forwarding ────
             // Not offered for serial (nothing to configure) or RDP (its extras
             // live in the main section, and the SSH-only parts do not apply).
-            if root.draft-kind != "serial" && root.draft-kind != "rdp" : Rectangle {
+            if root.draft-kind != "rdp" : Rectangle {
                 height: 26px;
                 adv-ta := TouchArea {
                     mouse-cursor: pointer;
@@ -1712,7 +1793,7 @@ export component SessionDialog inherits ModalLayer {
                 HorizontalLayout {
                     spacing: 4px;
                     Text {
-                        text: @tr("Advanced (encoding, proxy, tunnels)");
+                        text: @tr("Advanced (encoding, proxy, tunnels, auto-run)");
                         color: adv-ta.has-hover ? Theme.text-primary : Theme.text-secondary;
                         font-size: Theme.fs-sm;
                         vertical-alignment: center;
@@ -1987,6 +2068,51 @@ export component SessionDialog inherits ModalLayer {
                     color: Theme.text-muted; font-size: Theme.fs-xs; wrap: word-wrap;
                 }
             }
+
+            // ── Commands run automatically after connecting (every kind) ────
+            // Inside the Advanced section (collapsed by default) so the card's
+            // default height stays unchanged — the UI tests pin several fields
+            // by pixel — while still applying to every connection type.
+            if root.show-advanced : VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: @tr("Commands to run after connecting");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                }
+                Rectangle {
+                    height: 72px;
+                    horizontal-stretch: 1;
+                    border-radius: Theme.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    background: Theme.bg-elevated;
+                    clip: true;
+                    startup-input := TextInput {
+                        x: 8px;
+                        y: 6px;
+                        width: parent.width - 16px;
+                        height: parent.height - 12px;
+                        text <=> root.draft-startup-commands;
+                        single-line: false;
+                        wrap: word-wrap;
+                        color: Theme.text-primary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.fs-sm;
+                    }
+                }
+                Text {
+                    text: @tr("One command per line; typed in order once connected. RDP has no shell.");
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    wrap: word-wrap;
+                    // Reserve two lines: the wrapped height is computed from the
+                    // font metrics and rounding on some systems clipped the last
+                    // line, so callers saw an incomplete hint.
+                    min-height: Theme.fs-xs * 3;
+                }
+            }
+
         }
         }
 
@@ -2009,7 +2135,7 @@ export component SessionDialog inherits ModalLayer {
                 GhostButton {
                     text: @tr("Test connection");
                     clicked => {
-                        if (root.draft-kind != "serial" && root.draft-host == "") {
+                        if (root.draft-kind != "serial" && root.draft-kind != "local" && root.draft-host == "") {
                             root.host-missing = true;
                             return;
                         }

@@ -987,6 +987,13 @@ export component AppWindow inherits Window {
     in-out property <string> group-dialog-name;
     in-out property <string> group-dialog-error;
     callback delete-group(string /* name */);
+    // Quick Connect groups the user removed from the list (the implicit
+    // "default" one and the generated "system" / "agents"). Their rows stay
+    // hidden until restored from a group's context menu.
+    in-out property <bool> hidden-default;
+    in-out property <bool> hidden-system;
+    in-out property <bool> hidden-agents;
+    callback restore-group(string /* name */);
     callback submit-group(string /* orig */, string /* name */) -> string;
     callback toggle-theme();               // flip dark ↔ light
     // Session sync / broadcast input (#78 pt.4): mirror keystrokes to every
@@ -1247,6 +1254,13 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-sftp-mode: "";
     in-out property <string> dialog-sftp-command: "";
     in-out property <string> dialog-note;
+    // Commands typed into the shell automatically after connecting, one per
+    // line (every connection type).
+    in-out property <string> dialog-startup-commands;
+    // Local shell session (kind == "local").
+    in-out property <string> dialog-local-shell: "powershell";
+    in-out property <string> dialog-local-distribution;
+    in-out property <string> dialog-local-working-dir;
     in-out property <string> dialog-test-status;
 
     // Delete-confirmation modal state (#28).
@@ -1943,6 +1957,10 @@ export component AppWindow inherits Window {
                         root.group-dialog-open = true;
                     }
                     delete-group(name) => { root.delete-group(name); }
+                    restore-group(name) => { root.restore-group(name); }
+                    hidden-default: root.hidden-default;
+                    hidden-system: root.hidden-system;
+                    hidden-agents: root.hidden-agents;
                     remove-session(id) => { root.remove-session(id); }
                 }
                 Rectangle {
@@ -2316,6 +2334,10 @@ export component AppWindow inherits Window {
                             root.group-dialog-open = true;
                         }
                         delete-group(name) => { root.delete-group(name); }
+                        restore-group(name) => { root.restore-group(name); }
+                        hidden-default: root.hidden-default;
+                        hidden-system: root.hidden-system;
+                        hidden-agents: root.hidden-agents;
                         remove-session(id) => { root.remove-session(id); }
                         cycle-tab(reverse) => { root.cycle-tab(reverse); }
                         match-shortcut(t, c, m, a, s, alt-screen) => {
@@ -2903,6 +2925,10 @@ export component AppWindow inherits Window {
                         root.group-dialog-open = true;
                     }
                     delete-group(name) => { root.delete-group(name); }
+                    restore-group(name) => { root.restore-group(name); }
+                    hidden-default: root.hidden-default;
+                    hidden-system: root.hidden-system;
+                    hidden-agents: root.hidden-agents;
                     remove-session(id) => { root.remove-session(id); }
                 }
                 if gp.kind == "quick" : QuickDockPanel {
@@ -4921,6 +4947,7 @@ export component AppWindow inherits Window {
         is-open <=> root.dialog-open;
         is-editing <=> root.dialog-editing;
         is-mac: root.is-mac;
+        is-windows: root.is-windows;
         covered: root.active-modal != ModalKind.session;
         draft-id <=> root.dialog-id;
         draft-name <=> root.dialog-name;
@@ -4980,6 +5007,10 @@ export component AppWindow inherits Window {
         draft-sftp-mode <=> root.dialog-sftp-mode;
         draft-sftp-command <=> root.dialog-sftp-command;
         draft-note <=> root.dialog-note;
+        draft-startup-commands <=> root.dialog-startup-commands;
+        draft-local-shell <=> root.dialog-local-shell;
+        draft-local-distribution <=> root.dialog-local-distribution;
+        draft-local-working-dir <=> root.dialog-local-working-dir;
         test-status <=> root.dialog-test-status;
         forwards: root.dialog-forwards;
         triggers: root.dialog-triggers;

@@ -190,6 +190,11 @@ pub struct ConfigFile {
     /// `Some([])` means the user explicitly expanded every folder.
     #[serde(default)]
     pub collapsed_session_groups: Option<Vec<String>>,
+    /// Built-in Quick Connect groups (`system`, `agents`) removed from the
+    /// list. They keep working elsewhere (tab bar, Settings) and can be
+    /// restored from any group's context menu.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_builtin_groups: Vec<String>,
     /// Stored inverted ("don't follow") so both serde and the Default derive
     /// yield `false` = the feature defaults to ON: the SFTP panel follows the
     /// terminal's cd (OSC 7) unless the user opts out in Interface settings.

@@ -189,6 +189,7 @@ fn build_session_rows(
     collapsed_groups: Option<&[String]>,
     builtin_sessions: &[Session],
     query: &str,
+    hide_default: bool,
 ) -> Vec<SessionInfo> {
     // Group sessions by their `group` (named groups alphabetically, ungrouped
     // last), then by name within each group, and tag the first row of every
@@ -228,7 +229,9 @@ fn build_session_rows(
     named.dedup();
 
     let mut display_groups: Vec<String> = Vec::new();
-    if has_default {
+    // The implicit "default" group can be removed from the list like any other;
+    // its (ungrouped) sessions are then hidden until it is restored.
+    if has_default && !hide_default {
         display_groups.push("default".to_string());
     }
     display_groups.extend(named);
@@ -341,6 +344,7 @@ pub(super) fn sync_sessions_to_model_with_filter(
         store.collapsed_session_groups(),
         &builtin_sessions,
         query,
+        store.is_builtin_group_hidden("default"),
     ));
 }
 
@@ -363,6 +367,7 @@ pub(super) fn refresh_session_rows_in_place(
         store.collapsed_session_groups(),
         &builtin_sessions,
         query,
+        store.is_builtin_group_hidden("default"),
     );
     if rows.len() == model.row_count() {
         for (i, row) in rows.into_iter().enumerate() {
@@ -380,10 +385,17 @@ pub(super) fn sync_sessions_to_model(store: &ConfigStore, model: &VecModel<Sessi
 }
 
 /// Generated rows at the top of Quick connect: the "system" shells, then the
-/// "agents" group of detected and custom agent CLIs (#427).
+/// "agents" group of detected and custom agent CLIs (#427). A group the user
+/// removed from the list is skipped; its rows still work elsewhere (the tab
+/// bar's "+" menu, Settings), so hiding it deletes nothing.
 fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {
-    let mut sessions = system_shell_sessions(store);
-    sessions.extend(super::agents::agent_sessions(store));
+    let mut sessions = Vec::new();
+    if !store.is_builtin_group_hidden("system") {
+        sessions.extend(system_shell_sessions(store));
+    }
+    if !store.is_builtin_group_hidden("agents") {
+        sessions.extend(super::agents::agent_sessions(store));
+    }
     sessions
 }
 
@@ -621,6 +633,21 @@ pub(super) fn session_from_draft(
         draft.private_key_path.to_string().replace('\\', "/")
     };
     let kind = SessionKind::from_str(&draft.kind.to_string());
+    // A local session runs one of the shells offered by the dialog; its
+    // `host` doubles as the program selector understood by
+    // `crate::terminal::local` ("powershell" / "cmd" / "wsl" / "bash").
+    let local_shell = match draft.local_shell.trim() {
+        "" => "powershell".to_string(),
+        shell => shell.to_string(),
+    };
+    // macOS/Linux only offer the login shell, so a saved local session always
+    // records "bash" there regardless of the picker's default.
+    #[cfg(not(windows))]
+    let local_shell = if kind == SessionKind::Local {
+        "bash".to_string()
+    } else {
+        local_shell
+    };
     // An SSH agent session (#528) keeps no secrets of its own: the agent
     // holds the key, so drop any password / key left from another method.
     let agent = kind == SessionKind::Ssh && AuthMethod::from_str(&draft.auth.to_string()) == AuthMethod::Agent;
@@ -629,9 +656,11 @@ pub(super) fn session_from_draft(
     } else {
         (password, private_key_inline, private_key_path)
     };
-    // Auto-name: serial uses the device; otherwise user@host or just host (#110).
+    // Auto-name: serial uses the device; a local session uses its shell;
+    // otherwise user@host or just host (#110).
     let auto_name = match kind {
         SessionKind::Serial => format!("{} @{}", draft.serial_port, draft.baud_rate),
+        SessionKind::Local => local_shell_label(&local_shell, &draft.local_distribution),
         _ if draft.user.trim().is_empty() => draft.host.to_string(),
         _ => format!("{}@{}", draft.user, draft.host),
     };
@@ -653,7 +682,11 @@ pub(super) fn session_from_draft(
         } else {
             draft.name.to_string()
         },
-        host: draft.host.to_string(),
+        host: if kind == SessionKind::Local {
+            local_shell
+        } else {
+            draft.host.to_string()
+        },
         port: if draft.port <= 0 {
             default_port
         } else {
@@ -674,8 +707,16 @@ pub(super) fn session_from_draft(
         last_used: None,
         group: draft.group.to_string(),
         kind,
-        local_distribution: String::new(),
-        local_working_dir: String::new(),
+        local_distribution: if kind == SessionKind::Local {
+            draft.local_distribution.trim().to_string()
+        } else {
+            String::new()
+        },
+        local_working_dir: if kind == SessionKind::Local {
+            draft.local_working_dir.trim().to_string()
+        } else {
+            String::new()
+        },
         local_command: String::new(),
         local_program: String::new(),
         local_args: Vec::new(),
@@ -695,6 +736,18 @@ pub(super) fn session_from_draft(
         session_log: SessionLogMode::from_str(draft.session_log.as_str()),
         forwards,
         triggers,
+        // One command per line, blank lines dropped. RDP never gets a shell.
+        startup_commands: if kind == SessionKind::Rdp {
+            Vec::new()
+        } else {
+            draft
+                .startup_commands
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        },
         disable_shell_integration: draft.disable_shell_integration,
         sftp_mode: if kind == SessionKind::Ssh {
             normalized_sftp_mode(&draft.sftp_mode, &draft.sftp_command)
@@ -730,6 +783,30 @@ pub(super) fn session_from_draft(
         rdp_clipboard: draft.rdp_clipboard,
         rdp_gfx: draft.rdp_gfx,
         rdp_extra_args: draft.rdp_extra_args.to_string(),
+    }
+}
+
+/// Display label for a local session's shell choice, used as the automatic
+/// session name when the user leaves "Name" blank.
+pub(super) fn local_shell_label(shell: &str, distribution: &str) -> String {
+    match shell {
+        "cmd" => "CMD".to_string(),
+        "wsl" => {
+            let distro = distribution.trim();
+            if distro.is_empty() {
+                "WSL".to_string()
+            } else {
+                format!("WSL: {distro}")
+            }
+        }
+        "bash" => {
+            if cfg!(windows) {
+                "Git Bash".to_string()
+            } else {
+                "Bash".to_string()
+            }
+        }
+        _ => "PowerShell".to_string(),
     }
 }
 
@@ -849,7 +926,7 @@ mod search_tests {
         let groups = vec!["empty".to_string(), "prod".to_string()];
         let collapsed = vec!["prod".to_string(), "system".to_string()];
 
-        let rows = build_session_rows(&saved, &groups, Some(&collapsed), &builtins, "prod");
+        let rows = build_session_rows(&saved, &groups, Some(&collapsed), &builtins, "prod", false);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name.as_str(), "Prod API");
@@ -867,6 +944,7 @@ mod search_tests {
             Some(&["system".to_string()]),
             &builtins,
             "LOCALHOST",
+            false,
         );
 
         assert_eq!(rows.len(), 1);
@@ -874,6 +952,20 @@ mod search_tests {
         assert_eq!(rows[0].group_header.as_str(), "system");
         assert!(rows[0].builtin);
         assert!(!rows[0].collapsed);
+    }
+
+    #[test]
+    fn hiding_the_default_group_drops_ungrouped_rows() {
+        let saved = vec![session("1", "Ungrouped", "10.0.0.5", "")];
+
+        let shown = build_session_rows(&saved, &[], Some(&[]), &[], "", false);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].group_header.as_str(), "default");
+
+        // "Delete" on the implicit default group hides its rows; the sessions
+        // themselves stay saved.
+        let hidden = build_session_rows(&saved, &[], Some(&[]), &[], "", true);
+        assert!(hidden.is_empty());
     }
 
     #[test]
@@ -892,7 +984,7 @@ mod search_tests {
         ];
         let collapsed = vec!["system".to_string()];
 
-        let rows = build_session_rows(&[], &[], Some(&collapsed), &builtins, "");
+        let rows = build_session_rows(&[], &[], Some(&collapsed), &builtins, "", false);
 
         let headers: Vec<_> = rows.iter().map(|r| r.group_header.as_str()).collect();
         assert_eq!(headers, ["system", "agents", ""]);
@@ -921,7 +1013,7 @@ mod search_tests {
         let saved = vec![session("1", "Prod API", "10.0.0.8", "prod")];
         let builtins = vec![session("local", "Local terminal", "localhost", "system")];
 
-        let rows = build_session_rows(&saved, &[], None, &builtins, "staging");
+        let rows = build_session_rows(&saved, &[], None, &builtins, "staging", false);
 
         assert!(rows.is_empty());
     }
@@ -932,7 +1024,7 @@ mod search_tests {
         let groups = vec!["empty".to_string(), "prod".to_string()];
         let collapsed = vec!["prod".to_string()];
 
-        let rows = build_session_rows(&saved, &groups, Some(&collapsed), &[], "");
+        let rows = build_session_rows(&saved, &groups, Some(&collapsed), &[], "", false);
 
         assert!(rows
             .iter()
@@ -961,7 +1053,7 @@ mod serial_display_tests {
             session.data_bits = bits;
             session.parity = parity.into();
             session.stop_bits = stops;
-            let rows = build_session_rows(&[session], &[], None, &[], "");
+            let rows = build_session_rows(&[session], &[], None, &[], "", false);
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0].serial_detail.as_str(), expected);
         }
@@ -975,7 +1067,7 @@ mod serial_display_tests {
             session.host = "example.com".into();
             session.port = 2222;
             session.user = "alice".into();
-            let rows = build_session_rows(&[session], &[], None, &[], "");
+            let rows = build_session_rows(&[session], &[], None, &[], "", false);
             assert!(rows[0].serial_detail.is_empty());
             assert_eq!(rows[0].host.as_str(), "example.com");
             assert_eq!(rows[0].port, 2222);

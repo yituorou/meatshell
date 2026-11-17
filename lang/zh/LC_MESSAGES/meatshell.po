@@ -889,3 +889,64 @@ msgstr "默认编辑器"
 
 msgid "Choose program…"
 msgstr "选择程序…"
+
+msgid "Local shell"
+msgstr "本地终端"
+
+msgid "Bash"
+msgstr "Bash"
+
+msgid "Bash opens Git for Windows' bash; install Git for Windows to use it."
+msgstr "Bash 使用 Git for Windows 自带的 bash；请先安装 Git for Windows。"
+
+msgid "Bash starts your login shell ($SHELL)."
+msgstr "Bash 启动你的登录 shell（$SHELL）。"
+
+msgid "WSL distribution (optional)"
+msgstr "WSL 发行版（可选）"
+
+msgid "e.g. Ubuntu; blank = default distribution"
+msgstr "例如 Ubuntu；留空使用默认发行版"
+
+msgid "Start folder (optional)"
+msgstr "起始目录（可选）"
+
+msgid "Commands to run after connecting"
+msgstr "连接后自动执行命令"
+
+msgid "One command per line. They are typed in order once the session is ready. RDP has no shell and ignores this."
+msgstr "每行一条命令。会话就绪后按顺序自动输入。RDP 没有 shell，会忽略此项。"
+
+
+msgid "Advanced (encoding, proxy, tunnels, auto-run)"
+msgstr "高级（字符集、代理、隧道、自动执行）"
+
+
+msgid "One command per line; typed in order once connected. RDP has no shell."
+msgstr "每行一条命令，连接后按顺序自动输入。RDP 没有 shell。"
+
+
+msgid "Delete group (hide)"
+msgstr "删除分组（隐藏）"
+
+msgid "Restore System group"
+msgstr "恢复系统分组"
+
+msgid "Restore Agents group"
+msgstr "恢复智能体分组"
+
+
+msgid "Restore hidden groups"
+msgstr "恢复已隐藏的分组"
+
+
+msgid "Restore Ungrouped group"
+msgstr "恢复未分组"
+
+
+msgid "System group"
+msgstr "系统分组"
+
+msgid "Agents group"
+msgstr "智能体分组"
+
