@@ -404,6 +404,37 @@ mod freerdp {
         "/opt/homebrew/bin/xfreerdp",
     ];
 
+    /// FreeRDP 3's SDL client, tried first on macOS (#570): it opens a native
+    /// window, while `xfreerdp` is an X11 program that needs XQuartz and
+    /// `DISPLAY`, which a macOS GUI app never has. Homebrew installs it as
+    /// `sdl-freerdp`; FreeRDP's own builds call it `sdl-freerdp3`.
+    pub(super) const SDL_CLIENTS: [&str; 6] = [
+        "sdl-freerdp3",
+        "sdl-freerdp",
+        "/opt/homebrew/bin/sdl-freerdp3",
+        "/opt/homebrew/bin/sdl-freerdp",
+        "/usr/local/bin/sdl-freerdp3",
+        "/usr/local/bin/sdl-freerdp",
+    ];
+
+    /// The SDL client only exists in FreeRDP 3.
+    pub(super) fn is_sdl(client: &str) -> bool {
+        client.rsplit('/').next().is_some_and(|name| name.starts_with("sdl-freerdp"))
+    }
+
+    /// Clients to try, in order. `display`: `DISPLAY` or `WAYLAND_DISPLAY` is
+    /// set, so the X11 clients can open a window. `None`: nothing can.
+    pub(super) fn clients(macos: bool, display: bool) -> Option<Vec<&'static str>> {
+        let mut clients = Vec::new();
+        if macos {
+            clients.extend(SDL_CLIENTS);
+        }
+        if display {
+            clients.extend(CLIENTS);
+        }
+        (!clients.is_empty()).then_some(clients)
+    }
+
     /// Read the major version out of a `--version` banner such as
     /// "This is FreeRDP version 3.21.0 (3.21.0)". `None` means the text says
     /// nothing usable; the caller then assumes the older, always-valid flag.
@@ -930,6 +961,24 @@ mod freerdp {
             assert!(CLIENTS.contains(&"xfreerdp3"));
             assert!(CLIENTS.contains(&"/app/bin/xfreerdp3"));
         }
+
+        #[test]
+        fn macos_uses_the_sdl_client_without_an_x_display() {
+            // #570: a macOS GUI app has neither DISPLAY nor WAYLAND_DISPLAY.
+            let mac = clients(true, false).expect("macOS needs no X display");
+            assert!(mac.iter().all(|client| is_sdl(client)), "{mac:?}");
+            assert!(mac.contains(&"/opt/homebrew/bin/sdl-freerdp"));
+
+            // With XQuartz, xfreerdp stays available after the SDL client.
+            let xquartz = clients(true, true).unwrap();
+            assert!(is_sdl(xquartz[0]));
+            assert!(xquartz.contains(&"/opt/homebrew/bin/xfreerdp"));
+
+            // Linux / BSD keep needing a display and never try SDL.
+            assert!(clients(false, false).is_none());
+            assert_eq!(clients(false, true).unwrap(), CLIENTS.to_vec());
+            assert!(!is_sdl("/usr/bin/xfreerdp3"));
+        }
     }
 }
 
@@ -973,20 +1022,28 @@ fn early_exit(child: &mut std::process::Child) -> Option<String> {
     Some(stderr.trim().to_string())
 }
 
-/// Linux / macOS / BSD: drive FreeRDP's `xfreerdp3` / `xfreerdp`.
+/// Linux / BSD: drive FreeRDP's `xfreerdp3` / `xfreerdp`. macOS: its native
+/// SDL client first, then `xfreerdp` when XQuartz provides `DISPLAY` (#570).
 #[cfg(not(windows))]
 fn start_client(account: &Account<'_>, _session_id: &str) -> Result<String, String> {
-    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    let display = std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let Some(clients) = freerdp::clients(cfg!(target_os = "macos"), display) else {
         return Err(t(
             "当前环境没有图形显示（DISPLAY / WAYLAND_DISPLAY），无法打开远程桌面窗口",
             "no graphical display here (DISPLAY / WAYLAND_DISPLAY) — cannot open a remote desktop window",
         )
         .to_string());
-    }
-    for client in freerdp::CLIENTS {
+    };
+    for client in clients {
         // Unknown version (or a client that does not answer): assume the older
-        // dialect, whose flag is accepted by both.
-        let dialect = freerdp::probe_dialect(client).unwrap_or(freerdp::Dialect::V2);
+        // dialect, whose flag is accepted by both — except for the SDL client,
+        // which is always FreeRDP 3.
+        let fallback = if freerdp::is_sdl(client) {
+            freerdp::Dialect::V3
+        } else {
+            freerdp::Dialect::V2
+        };
+        let dialect = freerdp::probe_dialect(client).unwrap_or(fallback);
         let mut command = Command::new(client);
         command
             .args(freerdp::args(account, dialect))
