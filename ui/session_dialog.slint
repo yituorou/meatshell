@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { ModalLayer } from "modal.slint";
-import { ComboBox, CheckBox } from "std-widgets.slint";
+import { ComboBox, CheckBox, ScrollView } from "std-widgets.slint";
 import { LabeledInput, PrimaryButton, GhostButton, IconButton } from "widgets.slint";
 
 // One SSH port-forward row shown in the session dialog (#56). `summary` is a
@@ -2081,24 +2081,59 @@ export component SessionDialog inherits ModalLayer {
                     font-size: Theme.fs-sm;
                 }
                 Rectangle {
-                    height: 72px;
+                    // Tall enough for a handful of commands; longer lists
+                    // scroll inside the box instead of being clipped.
+                    height: 96px;
                     horizontal-stretch: 1;
                     border-radius: Theme.radius-sm;
                     border-width: 1px;
-                    border-color: Theme.border-strong;
+                    border-color: startup-input.has-focus ? Theme.accent : Theme.border-strong;
                     background: Theme.bg-elevated;
                     clip: true;
-                    startup-input := TextInput {
-                        x: 8px;
-                        y: 6px;
-                        width: parent.width - 16px;
-                        height: parent.height - 12px;
-                        text <=> root.draft-startup-commands;
-                        single-line: false;
-                        wrap: word-wrap;
-                        color: Theme.text-primary;
-                        font-family: Theme.font-mono;
-                        font-size: Theme.fs-sm;
+                    // The TextInput owns the pointer grab while selecting and
+                    // rejects wheel events, so catch them behind it and drive
+                    // the scroll view by hand (#388).
+                    TouchArea {
+                        scroll-event(event) => {
+                            startup-scroll.content-y = clamp(
+                                startup-scroll.content-y + event.delta-y,
+                                min(0px, startup-scroll.visible-height - startup-scroll.content-height),
+                                0px);
+                            accept
+                        }
+                    }
+                    startup-scroll := ScrollView {
+                        width: 100%;
+                        height: 100%;
+                        content-width: self.visible-width;
+                        content-height: max(self.visible-height, startup-input.preferred-height + 12px);
+                        startup-input := TextInput {
+                            x: 8px;
+                            y: 6px;
+                            width: max(1px, startup-scroll.visible-width - 16px);
+                            height: max(startup-scroll.visible-height - 12px, self.preferred-height);
+                            text <=> root.draft-startup-commands;
+                            single-line: false;
+                            wrap: word-wrap;
+                            page-height: startup-scroll.visible-height;
+                            color: Theme.text-primary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.fs-sm;
+                            // Keep the caret visible when it moves by keyboard,
+                            // paste or a drag selection past the visible area.
+                            cursor-position-changed(position) => {
+                                let cursor-y = position.y + self.y + startup-scroll.content-y;
+                                if (cursor-y < 6px) {
+                                    startup-scroll.content-y = min(0px,
+                                        startup-scroll.content-y + 6px - cursor-y);
+                                } else if (cursor-y > startup-scroll.visible-height - 6px) {
+                                    startup-scroll.content-y = max(
+                                        min(0px, startup-scroll.visible-height - startup-scroll.content-height),
+                                        startup-scroll.content-y
+                                            - (cursor-y - startup-scroll.visible-height + 6px));
+                                }
+                            }
+                        }
                     }
                 }
                 Text {
