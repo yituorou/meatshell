@@ -22,8 +22,8 @@ export struct RecentSession {
 // materials: translucent white on dark, translucent black on light.
 global RecentStyle {
     out property <brush> hairline: Theme.dark ? #ffffff1a : #0000001a;
-    out property <brush> hover: Theme.dark ? #ffffff12 : #0000000d;
-    out property <brush> pressed: Theme.dark ? #ffffff1f : #00000017;
+    out property <brush> hover: Theme.dark ? #ffffff1a : #0000000d;
+    out property <brush> pressed: Theme.dark ? #ffffff29 : #00000017;
 }
 
 component TypeIcon inherits Rectangle {
@@ -43,8 +43,14 @@ component TypeIcon inherits Rectangle {
 }
 
 // Round × that replaces the time while the pointer is over an entry.
+//
+// It stays in the tree and is only hidden: the pointer moving onto it takes
+// the hover away from the entry underneath, so an `if entry-hovered` button
+// would vanish under the pointer and the click would connect instead. Its
+// own `hovered` keeps it (and the entry's highlight) up meanwhile.
 component RemoveButton inherits Rectangle {
     callback clicked();
+    out property <bool> hovered: ta.has-hover;
     width: 22px;
     height: 22px;
     border-radius: self.width / 2;
@@ -67,10 +73,13 @@ component RemoveButton inherits Rectangle {
 
 // "Recent connections" ······ "Clear"
 component Header inherits HorizontalLayout {
+    // The shelf's header sits straight on the wallpaper, not on a panel:
+    // use the stronger colours there, like the page title above it.
+    in property <bool> on-wallpaper: false;
     callback clear();
     Text {
         text: @tr("Recent connections");
-        color: Theme.text-secondary;
+        color: root.on-wallpaper ? Theme.text-primary : Theme.text-secondary;
         font-size: Theme.fs-sm;
         font-weight: 600;
         vertical-alignment: center;
@@ -89,7 +98,7 @@ component Header inherits HorizontalLayout {
         }
         clear-text := Text {
             text: @tr("Clear");
-            color: clear-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+            color: clear-ta.has-hover || root.on-wallpaper ? Theme.text-primary : Theme.text-muted;
             font-size: Theme.fs-xs;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -101,9 +110,9 @@ component RecentRow inherits Rectangle {
     in property <RecentSession> item;
     callback connect();
     callback remove();
-    height: 48px;
+    property <bool> hovered: ta.has-hover || rm.hovered;
     border-radius: 10px;
-    background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
+    background: ta.pressed ? RecentStyle.pressed : (root.hovered ? RecentStyle.hover : transparent);
     animate background { duration: 120ms; }
     accessible-role: button;
     accessible-label: root.item.name;
@@ -142,7 +151,7 @@ component RecentRow inherits Rectangle {
         Rectangle {
             width: max(when.preferred-width, 22px);
             when := Text {
-                visible: !ta.has-hover;
+                visible: !root.hovered;
                 width: parent.width;
                 height: parent.height;
                 text: root.item.when;
@@ -151,7 +160,8 @@ component RecentRow inherits Rectangle {
                 horizontal-alignment: right;
                 vertical-alignment: center;
             }
-            if ta.has-hover : RemoveButton {
+            rm := RemoveButton {
+                visible: root.hovered;
                 x: parent.width - self.width;
                 y: (parent.height - self.height) / 2;
                 clicked => { root.remove(); }
@@ -163,6 +173,13 @@ component RecentRow inherits Rectangle {
 // Floating card for the empty main area (welcome-sidebar layout).
 export component RecentsCard inherits Rectangle {
     in property <[RecentSession]> items;
+    // Rows that fit where the card is placed; the rest are left out rather
+    // than pushing the card up over the wallpaper.
+    in property <int> max-rows: 6;
+    // Height of the card for `n` rows (header + padding included), so the
+    // caller can work out `max-rows` before the card exists.
+    out property <length> row-height: 48px;
+    out property <length> chrome-height: 46px;
     callback connect(string);
     callback remove(string);
     callback clear();
@@ -193,17 +210,21 @@ export component RecentsCard inherits Rectangle {
         triggered => { root.refresh(); }
     }
 
+    // 10 top + 22 header + 6 gap + 8 bottom = chrome-height.
     card-layout := VerticalLayout {
         padding: 8px;
         padding-top: 10px;
-        spacing: 2px;
+        spacing: 0px;
         Header {
+            height: 28px;
             padding-left: 9px;
             padding-right: 3px;
-            padding-bottom: 4px;
+            padding-bottom: 6px;
             clear => { root.clear(); }
         }
-        for item in root.items : RecentRow {
+        for item[i] in root.items : RecentRow {
+            visible: i < root.max-rows;
+            height: self.visible ? root.row-height : 0px;
             item: item;
             connect => { root.connect(item.id); }
             remove => { root.remove(item.id); }
@@ -215,18 +236,19 @@ component RecentTile inherits Rectangle {
     in property <RecentSession> item;
     callback connect();
     callback remove();
+    property <bool> hovered: ta.has-hover || rm.hovered;
     height: 60px;
     border-radius: 12px;
     background: Theme.bg-panel;
     border-width: 1px;
-    border-color: ta.has-hover ? Theme.accent.with-alpha(0.55) : RecentStyle.hairline;
+    border-color: root.hovered ? Theme.accent.with-alpha(0.55) : RecentStyle.hairline;
     animate border-color { duration: 120ms; }
     accessible-role: button;
     accessible-label: root.item.name;
 
     Rectangle {
         border-radius: parent.border-radius;
-        background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
+        background: ta.pressed ? RecentStyle.pressed : (root.hovered ? RecentStyle.hover : transparent);
         animate background { duration: 120ms; }
     }
     ta := TouchArea {
@@ -261,7 +283,7 @@ component RecentTile inherits Rectangle {
                     font-size: Theme.fs-xs;
                     vertical-alignment: center;
                     // Keep the slot while hovered so the name doesn't shift.
-                    opacity: ta.has-hover ? 0 : 1;
+                    opacity: root.hovered ? 0 : 1;
                 }
             }
             Text {
@@ -272,7 +294,8 @@ component RecentTile inherits Rectangle {
             }
         }
     }
-    if ta.has-hover : RemoveButton {
+    rm := RemoveButton {
+        visible: root.hovered;
         x: parent.width - self.width - 6px;
         y: 6px;
         clicked => { root.remove(); }
@@ -303,6 +326,7 @@ export component RecentsShelf inherits VerticalLayout {
     }
 
     Header {
+        on-wallpaper: true;
         padding-left: 2px;
         clear => { root.clear(); }
     }

@@ -60,9 +60,13 @@ slint::slint! {
                 background: Theme.bg-root;
                 card := RecentsCard {
                     property <length> margin: 24px;
+                    property <length> top: parent.height * 0.56;
+                    property <int> fit-rows: floor((parent.height - self.top - self.margin
+                        - self.chrome-height) / self.row-height);
+                    max-rows: max(3, min(6, self.fit-rows));
                     width: min(380px, parent.width - 2 * self.margin);
                     x: (parent.width - self.width) / 2;
-                    y: max(self.margin, min(parent.height * 0.56,
+                    y: max(self.margin, min(self.top,
                         parent.height - self.height - self.margin));
                     items: root.recents;
                     connect(id) => { root.connect(id); }
@@ -219,21 +223,21 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         std::thread::sleep(std::time::Duration::from_millis(300));
         frame(&window);
 
-        // Card geometry, as laid out in app.slint: main area x 298..1100.
+        // Card geometry, as laid out in app.slint: main area x 298..1100,
+        // 660 high → 4 rows fit below the 56% line (369.6px).
         let card_x = 298. + (802. - 380.) / 2.;
-        let card_h = 10. + 22. + 4. + 2. + 6. * 48. + 5. * 2. + 8.;
-        let card_y = (660f32 * 0.56).min(660. - card_h - 24.).max(24.);
-        let first_row_y = card_y + 10. + 26. + 2. + 24.;
+        let card_y = 660f32 * 0.56;
+        let first_row_y = card_y + 10. + 28. + 24.;
 
         snapshot(&window, "recents-card-dark-wallpaper.png");
         pointer(&window, card_x + 150., first_row_y);
         snapshot(&window, "recents-card-hover.png");
 
         click(&window, card_x + 150., first_row_y);
-        assert_eq!(events.borrow().last().unwrap(), "connect pve");
+        assert_eq!(*events.borrow(), ["connect pve"]);
         // × sits where the time was, at the row's right edge.
         click(&window, card_x + 380. - 8. - 9. - 11., first_row_y);
-        assert_eq!(events.borrow().last().unwrap(), "remove pve");
+        assert_eq!(*events.borrow(), ["connect pve", "remove pve"]);
         assert_eq!(model.row_count(), 5);
 
         ui.set_dark(false);
@@ -254,8 +258,8 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         frame(&window);
         snapshot(&window, "recents-shelf-light.png");
 
-        // Header "Clear" sits at the right end of the shelf header.
-        click(&window, 1100. - 24. - 16., 24. + 34. + 4. + 20. + 11.);
+        // "Clear" sits at the right end of the shelf header, under the title.
+        click(&window, 1100. - 24. - 18., 107.);
         assert_eq!(events.borrow().last().unwrap(), "clear", "{:?}", events.borrow());
     })
     .join()
