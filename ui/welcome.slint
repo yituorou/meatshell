@@ -349,15 +349,77 @@ component CollapseButton inherits Rectangle {
     }
 }
 
+// One generated-group row of the quick-connect menu. Hover is forwarded from
+// TouchArea.has-hover (Slint has no `hovered` callback there); the caller reads
+// the row's layout position only when the callback actually fires, so no
+// `changed` binding needs to touch layout results (#553).
+component QuickGroupRow inherits Rectangle {
+    in property <bool> group-visible;
+    in property <bool> submenu-open;
+    in property <string> label;
+    callback toggled();
+    callback hovered();
+
+    height: 28px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover || root.submenu-open ? Theme.bg-hover : transparent;
+    property <bool> hovering: ta.has-hover;
+    changed hovering => { if (self.hovering) { root.hovered(); } }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        spacing: 8px;
+        Rectangle {
+            width: 16px;
+            height: 16px;
+            // A fixed-height layout item keeps y = 0; centre it by hand.
+            y: (parent.height - self.height) / 2;
+            Text {
+                text: "\u{E5CA}";   // check
+                visible: root.group-visible;
+                font-family: "Material Icons";
+                color: Theme.text-primary;
+                font-size: 16px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        Text { text: root.label; color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+        Text { text: "\u{E5CC}"; font-family: "Material Icons"; color: Theme.text-muted; font-size: 14px; vertical-alignment: center; }
+    }
+}
+
 // --- Quick connect menu ----------------------------------------------------
-// Dropdown sitting next to the "New session" button: create a group, or
-// show/hide the generated groups. A tick means the group is visible; clicking
-// a ticked row hides it and vice versa.
+// Dropdown sitting next to the "New session" button: create a group, or hover
+// a generated group to open its sessions in a second-level menu. Clicking the
+// group row keeps its original meaning: show / hide that group.
 component QuickConnectMenuButton inherits Rectangle {
     in property <bool> hidden-system;
     in property <bool> hidden-agents;
+    // Unfiltered generated shell / agent rows for the second level, including
+    // sessions of hidden groups. Clicking one opens it directly.
+    in property <[SessionInfo]> builtin-sessions;
+    // Window width, used only to decide which side the extra column goes on.
+    in property <length> window-width;
     callback new-group();
     callback toggle-group(string /* name */);
+    callback connect-session(string /* id */);
+
+    // Second level: a column inside the SAME popup, like the SFTP menu — Slint
+    // stops delivering pointer events to a parent popup while a child
+    // PopupWindow is open. "" = no group open.
+    property <string> open-submenu;
+    property <length> sub-width: 160px;
+    property <length> main-width: 184px;
+    // Where each group row starts inside the parent column: padding 4px, then
+    // "New group" (28px), a 1px separator and one 1px gap between items. Used as
+    // the submenu column's top spacer — constants, because a row's layout `y`
+    // turned out not to match the row's rendered position inside the popup.
+    property <length> system-row-y: 4px + 28px + 1px + 1px;
+    property <length> agents-row-y: root.system-row-y + 28px + 1px;
 
     width: 30px;
     height: 30px;
@@ -377,20 +439,47 @@ component QuickConnectMenuButton inherits Rectangle {
 
     ta := TouchArea {
         mouse-cursor: pointer;
-        clicked => { menu.show(); }
+        clicked => {
+            // Reset before showing: a submenu left over from the previous
+            // dismissal would be drawn again on the first frame otherwise.
+            root.open-submenu = "";
+            menu.show();
+        }
     }
 
+    // NOTE: there is no "popup closed" hook we can use to clear the second
+    // level (Slint's `changed is-open` on a PopupWindow crashes the compiler),
+    // so every exit path resets `open-submenu` itself and `show()` resets it
+    // again before opening. Dismissing the popup thereby never leaves a stale
+    // submenu behind.
     menu := PopupWindow {
-        // Right-align the menu with the button: the popup is wider than the
-        // 30px trigger, so shift it left by the difference (never hard-code
-        // -154px — that silently breaks the moment the width changes).
-        x: root.width - self.width;
-        y: parent.height + 2px;
-        width: 184px;
-        // Follow the content instead of counting rows by hand: the row count
-        // is fixed today, but a hand-computed height clipped the last row.
-        height: menu-vl.preferred-height;
+        // EVERYTHING inside is positioned by the `cols` layout below; only the
+        // popup itself is anchored here, so the two columns cannot drift apart.
+        //
+        // The parent column's right edge sits on the trigger's right edge. When
+        // the extra column would overflow the window, the popup slides left by
+        // exactly that overflow (it fits in the compact sidebar; in a full-width
+        // welcome tab there is no room next to a right-edge button).
+        x: root.window-width <= 0px
+            ? root.width - root.main-width
+            : min(root.width - root.main-width,
+                root.window-width - root.absolute-position.x - cols.preferred-width);
+        // Directly under the trigger: `root.height` is the 30px button.
+        // `parent.height` resolved to the surrounding row and left a big gap.
+        y: root.height + 2px;
+        width: cols.preferred-width;
+        height: cols.preferred-height;
+        // Clicks in the empty part of the popup dismiss it, as in the SFTP menu.
+        TouchArea { clicked => { root.open-submenu = ""; menu.close(); } }
+        function show-submenu(name: string) {
+            root.open-submenu = name;
+        }
+        cols := HorizontalLayout {
+        // Parent column: fixed width, its own content height (top-aligned, so a
+        // longer submenu never stretches it).
         Rectangle {
+            width: root.main-width;
+            height: menu-vl.preferred-height;
             background: Theme.popup-bg;
             border-radius: Theme.radius-sm;
             border-width: 1px;
@@ -405,7 +494,10 @@ component QuickConnectMenuButton inherits Rectangle {
                     height: 28px;
                     border-radius: Theme.radius-sm;
                     background: ng-ta.has-hover ? Theme.bg-hover : transparent;
-                    ng-ta := TouchArea { mouse-cursor: pointer; clicked => { root.new-group(); menu.close(); } }
+                    ng-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.open-submenu = ""; root.new-group(); menu.close(); }
+                    }
                     HorizontalLayout {
                         padding-left: 8px;
                         spacing: 8px;
@@ -414,69 +506,97 @@ component QuickConnectMenuButton inherits Rectangle {
                     }
                 }
                 Rectangle { height: 1px; background: Theme.border-subtle; }
-                // System group — tick = visible. Toggling deliberately does NOT
-                // close the menu (unlike "New group", which opens a dialog), so
-                // both groups can be flipped in one visit; the tick follows
-                // `hidden-system`, i.e. it updates while the menu stays open.
+                // Hover opens the second level; clicking a row keeps the old
+                // meaning: toggle that group's visibility.
+                sg-row := QuickGroupRow {
+                    label: @tr("System group");
+                    group-visible: !root.hidden-system;
+                    submenu-open: root.open-submenu == "system";
+                    hovered => { show-submenu("system"); }
+                    toggled => { root.toggle-group("system"); show-submenu("system"); }
+                }
+                ag-row := QuickGroupRow {
+                    label: @tr("Agents group");
+                    group-visible: !root.hidden-agents;
+                    submenu-open: root.open-submenu == "agents";
+                    hovered => { show-submenu("agents"); }
+                    toggled => { root.toggle-group("agents"); show-submenu("agents"); }
+                }
+            }
+        }
+
+        // Second-level column, right of the parent menu. It lives in this popup
+        // (not a child PopupWindow) so pointer events keep reaching both columns
+        // — the same trick the SFTP file menu uses (#553).
+        if root.open-submenu != "" : VerticalLayout {
+            // Spacer: pushes the card down so its top edge lands exactly on the
+            // hovered group row (constant row offsets, see system-row-y).
+            Rectangle {
+                height: root.open-submenu == "system" ? root.system-row-y : root.agents-row-y;
+            }
+            Rectangle {
+            width: root.sub-width;
+            height: sub-vl.preferred-height;
+            background: Theme.popup-bg;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 10px;
+            drop-shadow-color: #00000050;
+            sub-vl := VerticalLayout {
+                padding: 4px;
+                spacing: 1px;
+                // Keep the old feature reachable: hide / restore the group.
                 Rectangle {
                     height: 28px;
                     border-radius: Theme.radius-sm;
-                    background: sg-ta.has-hover ? Theme.bg-hover : transparent;
-                    sg-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-group("system"); } }
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        spacing: 8px;
-                        Rectangle {
-                            width: 16px;
-                            height: 16px;
-                            // A fixed-height item in a HorizontalLayout keeps
-                            // y = 0 (the layout only stretches free items), so
-                            // centre it by hand or the tick rides high.
-                            y: (parent.height - self.height) / 2;
-                            // A plain tick marks "visible"; hidden groups leave
-                            // the slot empty — no checkbox frame.
-                            Text {
-                                text: "\u{E5CA}";   // check
-                                visible: !root.hidden-system;
-                                font-family: "Material Icons";
-                                color: Theme.text-primary;
-                                font-size: 16px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                    background: toggle-ta.has-hover ? Theme.bg-hover : transparent;
+                    toggle-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.toggle-group(root.open-submenu);
+                            root.open-submenu = "";
+                            menu.close();
                         }
-                        Text { text: @tr("System group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 8px;
+                        Text { text: "\u{E2C7}"; font-family: "Material Icons"; color: Theme.text-secondary; font-size: Theme.fs-sm; vertical-alignment: center; }
+                        Text {
+                            text: root.open-submenu == "system"
+                                ? (root.hidden-system ? @tr("Restore System group") : @tr("Delete group (hide)"))
+                                : (root.hidden-agents ? @tr("Restore Agents group") : @tr("Delete group (hide)"));
+                            color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1;
+                        }
                     }
                 }
-                // Agents group — tick = visible.
-                Rectangle {
-                    height: 28px;
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                // Every generated session of the hovered group, including
+                // hidden ones — this model has no hidden-group filter.
+                for s in root.builtin-sessions : Rectangle {
+                    visible: s.builtin && s.group == root.open-submenu;
+                    height: self.visible ? 28px : 0px;
                     border-radius: Theme.radius-sm;
-                    background: ag-ta.has-hover ? Theme.bg-hover : transparent;
-                    ag-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-group("agents"); } }
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        spacing: 8px;
-                        Rectangle {
-                            width: 16px;
-                            height: 16px;
-                            // Same plain tick (and same manual centring) as the
-                            // System row.
-                            y: (parent.height - self.height) / 2;
-                            Text {
-                                text: "\u{E5CA}";   // check
-                                visible: !root.hidden-agents;
-                                font-family: "Material Icons";
-                                color: Theme.text-primary;
-                                font-size: 16px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                    background: ses-ta.has-hover ? Theme.bg-hover : transparent;
+                    ses-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        // Open straight into a terminal tab, no click on the
+                        // card in the (possibly filtered / scrolled) list.
+                        clicked => {
+                            root.connect-session(s.id);
+                            root.open-submenu = "";
+                            menu.close();
                         }
-                        Text { text: @tr("Agents group"); color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        Text { text: s.name; color: Theme.text-primary; font-size: Theme.fs-md; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                     }
                 }
             }
+            }
+        }
         }
     }
 }
@@ -484,6 +604,12 @@ component QuickConnectMenuButton inherits Rectangle {
 // --- Welcome ---------------------------------------------------------------
 export component Welcome inherits Rectangle {
     in property <[SessionInfo]> sessions;
+    // Generated rows without the hidden-group filter: the group submenu uses
+    // this so a hidden group's sessions are still listed and openable.
+    in property <[SessionInfo]> builtin-sessions;
+    // Window width, forwarded to the quick-connect menu so its second-level
+    // column can pick a side instead of running off the window edge.
+    in property <length> window-width;
     in property <string> import-hint;        // result text after an import
     in-out property <string> search-query;
     callback new-session();
@@ -664,6 +790,9 @@ export component Welcome inherits Rectangle {
                         if !root.compact : QuickConnectMenuButton {
                             hidden-system: root.hidden-system;
                             hidden-agents: root.hidden-agents;
+                            builtin-sessions: root.builtin-sessions;
+                            window-width: root.window-width;
+                            connect-session(id) => { root.connect-session(id); }
                             new-group => { root.new-group(); }
                             toggle-group(name) => {
                                 if (name == "system") {
@@ -685,6 +814,9 @@ export component Welcome inherits Rectangle {
                     QuickConnectMenuButton {
                         hidden-system: root.hidden-system;
                         hidden-agents: root.hidden-agents;
+                        builtin-sessions: root.builtin-sessions;
+                        window-width: root.window-width;
+                        connect-session(id) => { root.connect-session(id); }
                         new-group => { root.new-group(); }
                         toggle-group(name) => {
                             if (name == "system") {

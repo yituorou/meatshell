@@ -187,6 +187,10 @@ pub(super) fn open_window(
     let sessions_model: Rc<VecModel<SessionInfo>> = Rc::new(VecModel::default());
     window.set_sessions(ModelRc::from(sessions_model.clone()));
     sync_sessions_to_model(&store.borrow(), &sessions_model);
+    // Unfiltered generated rows for the group submenu (see
+    // `builtin_sessions_model`); later config changes refresh it through
+    // `sync_sessions_for_window`.
+    window.set_builtin_sessions(builtin_sessions_model(&store.borrow()));
     window.set_wsl_profiles(wsl_profile_model(&store.borrow()));
     window.set_launch_shells(launch_shell_model(&store.borrow()));
     super::local_shells::wire_custom_shells(&ctx);

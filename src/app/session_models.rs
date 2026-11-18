@@ -183,6 +183,33 @@ fn session_matches_query(session: &Session, query: &str) -> bool {
     session_matches_normalized_query(session, &query)
 }
 
+/// Convert one generated built-in session into a Quick connect row. Shared
+/// with `builtin_sessions_model` so the group submenu shows exactly the same
+/// name, group and collapsed state as the main list.
+fn builtin_session_row(s: &Session, first_in_group: bool, collapsed: bool) -> SessionInfo {
+    // Agent rows show the program they run (kept in `note`, see agents.rs)
+    // instead of the hosting shell.
+    let host = if s.note.is_empty() { &s.host } else { &s.note };
+    SessionInfo {
+        id: s.id.clone().into(),
+        name: s.name.clone().into(),
+        host: host.into(),
+        serial_detail: "".into(),
+        port: 0,
+        user: s.user.clone().into(),
+        auth: s.kind.as_str().into(),
+        last_used: "".into(),
+        group: s.group.clone().into(),
+        group_header: if first_in_group {
+            s.group.clone().into()
+        } else {
+            "".into()
+        },
+        collapsed,
+        builtin: true,
+    }
+}
+
 fn build_session_rows(
     sessions: &[Session],
     explicit_groups: &[String],
@@ -260,27 +287,7 @@ fn build_session_rows(
     for s in builtin_sessions.iter().filter(|session| matches(session)) {
         let first_in_group = prev_group != Some(s.group.as_str());
         prev_group = Some(s.group.as_str());
-        // Agent rows show the program they run (kept in `note`, see
-        // agents.rs) instead of the hosting shell.
-        let host = if s.note.is_empty() { &s.host } else { &s.note };
-        rows.push(SessionInfo {
-            id: s.id.clone().into(),
-            name: s.name.clone().into(),
-            host: host.into(),
-            serial_detail: "".into(),
-            port: 0,
-            user: s.user.clone().into(),
-            auth: s.kind.as_str().into(),
-            last_used: "".into(),
-            group: s.group.clone().into(),
-            group_header: if first_in_group {
-                s.group.clone().into()
-            } else {
-                "".into()
-            },
-            collapsed: group_is_collapsed(&s.group),
-            builtin: true,
-        });
+        rows.push(builtin_session_row(s, first_in_group, group_is_collapsed(s.group.as_str())));
     }
     for group in &display_groups {
         let gs: Vec<&Session> = if group == "default" {
@@ -397,6 +404,25 @@ fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {
         sessions.extend(super::agents::agent_sessions(store));
     }
     sessions
+}
+
+/// Same generated rows, but WITHOUT the hidden-group filter: the quick-connect
+/// group submenu must still list a hidden group's sessions so they can be
+/// opened directly. The main list keeps using `quick_connect_builtin_sessions`.
+pub(super) fn builtin_sessions_model(store: &ConfigStore) -> ModelRc<SessionInfo> {
+    let mut sessions = system_shell_sessions(store);
+    sessions.extend(super::agents::agent_sessions(store));
+    let mut prev_group: Option<&str> = None;
+    let rows: Vec<SessionInfo> = sessions
+        .iter()
+        .map(|s| {
+            let first_in_group = prev_group != Some(s.group.as_str());
+            prev_group = Some(s.group.as_str());
+            // Submenu rows are flat and never collapsed.
+            builtin_session_row(s, first_in_group, false)
+        })
+        .collect();
+    ModelRc::from(Rc::new(VecModel::from(rows)))
 }
 
 /// Every entry of the "system" group: the built-in shells, then the detected

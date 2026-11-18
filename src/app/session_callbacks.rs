@@ -63,6 +63,10 @@ pub(super) fn sync_sessions_for_window(
     window.set_hidden_default(store.is_builtin_group_hidden("default"));
     window.set_hidden_system(store.is_builtin_group_hidden("system"));
     window.set_hidden_agents(store.is_builtin_group_hidden("agents"));
+    // Unfiltered copy for the quick-connect group submenu: a hidden group's
+    // sessions must stay openable from there (the three flags above only
+    // filter the main list).
+    window.set_builtin_sessions(builtin_sessions_model(store));
     let query = window.get_host_search_query().to_string();
     // Prefer in-place row updates: they keep the list's scroll position and
     // any running drag alive and skip the reallocation. A full set_vec

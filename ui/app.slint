@@ -1103,6 +1103,9 @@ export component AppWindow inherits Window {
 
     // --- Session list ------------------------------------------------------
     in property <[SessionInfo]> sessions;
+    // Unfiltered generated shell / agent rows: the quick-connect group
+    // submenu lists these even when the group is hidden from `sessions`.
+    in property <[SessionInfo]> builtin-sessions;
     // New-tab launch menu (#427): local shells and the agent CLIs found here.
     in property <[LaunchItem]> launch-shells;
     in property <[LaunchItem]> agents;
@@ -1908,6 +1911,8 @@ export component AppWindow inherits Window {
                     compact: true;
                     dock-edge: root.welcome-sidebar-dock;
                     sessions: root.sessions;
+                    builtin-sessions: root.builtin-sessions;
+                    window-width: root.width;
                     import-hint: root.ssh-import-hint;
                     search-query <=> root.host-search-query;
                     sessions-revision: root.sessions-revision;
@@ -2308,6 +2313,8 @@ export component AppWindow inherits Window {
                         width: parent.width;
                         height: parent.height;
                         sessions: root.sessions;
+                        builtin-sessions: root.builtin-sessions;
+                        window-width: root.width;
                         import-hint: root.ssh-import-hint;
                         search-query <=> root.host-search-query;
                         sessions-revision: root.sessions-revision;
@@ -2881,6 +2888,8 @@ export component AppWindow inherits Window {
                     compact: true;
                     dock-edge: gp.edge;
                     sessions: root.sessions;
+                    builtin-sessions: root.builtin-sessions;
+                    window-width: root.width;
                     import-hint: root.ssh-import-hint;
                     search-query <=> root.host-search-query;
                     sessions-revision: root.sessions-revision;
