@@ -103,6 +103,9 @@ pub(super) fn wire_session_callbacks(
     tab_titles: Rc<RefCell<HashMap<String, String>>>,
     editor_win: Rc<EditorWindow>,
 ) {
+    window.global::<crate::ui::JumpSearch>().on_matches(|label, query| {
+        super::jump_picker::matches(label.as_str(), query.as_str())
+    });
     // Working set of port forwards (#56) for the session being created/edited.
     // The forward add/delete callbacks mutate it; saving reads it into
     // Session.forwards; opening the dialog (new/edit) resets it.

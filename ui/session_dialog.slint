@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { JumpCombo } from "jump_combo.slint";
 import { ModalLayer } from "modal.slint";
 import { ComboBox, CheckBox } from "std-widgets.slint";
 import { LabeledInput, PrimaryButton, GhostButton, IconButton } from "widgets.slint";
@@ -413,100 +414,6 @@ component GroupCombo inherits VerticalLayout {
                             x: 10px;
                             width: parent.width - 20px;
                             text: g;
-                            color: Theme.text-primary;
-                            font-size: Theme.fs-md;
-                            vertical-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Read-only dropdown picking an SSH jump host from a fixed list of saved
-// sessions (#211). Index-based: `choices[0]` is the unselected entry, and
-// `selected-index` maps into the parallel `ids` list held by the caller.
-component JumpCombo inherits VerticalLayout {
-    in property <string> label;
-    in property <[string]> choices;      // display labels; index 0 = unselected
-    in-out property <int> selected-index: 0;
-    callback selected(int);
-    spacing: 4px;
-
-    Text {
-        text: root.label;
-        color: Theme.text-secondary;
-        font-size: Theme.fs-sm;
-    }
-
-    Rectangle {
-        height: 32px;
-        border-radius: Theme.radius-sm;
-        border-width: 1px;
-    border-color: jump-ta.has-hover ? Theme.accent : Theme.border-strong;
-    background: Theme.bg-elevated;
-
-        jump-ta := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { jump-popup.show(); }
-        }
-
-        Text {
-            x: 10px;
-            width: parent.width - 44px;
-            height: parent.height;
-            text: (root.selected-index >= 0 && root.selected-index < root.choices.length)
-                ? root.choices[root.selected-index] : "";
-            color: root.selected-index > 0 ? Theme.text-primary : Theme.text-muted;
-            font-size: Theme.fs-md;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
-        Rectangle {
-            x: parent.width - 36px;
-            width: 28px;
-            height: 28px;
-            border-radius: Theme.radius-sm;
-            background: jump-ta.has-hover ? Theme.bg-hover : transparent;
-            Text {
-                text: "▼";
-                color: Theme.text-secondary;
-                font-size: Theme.fs-xs;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        jump-popup := PopupWindow {
-            x: 0;
-            y: parent.height + 3px;
-            width: parent.width;
-            Rectangle {
-                background: Theme.popup-bg-alt;
-                border-radius: Theme.radius-sm;
-                border-width: 1px;
-                border-color: Theme.border-subtle;
-                VerticalLayout {
-                    padding: 4px;
-                    spacing: 1px;
-                    for c[idx] in root.choices : Rectangle {
-                        height: 28px;
-                        border-radius: Theme.radius-sm;
-                        background: c-ta.has-hover ? Theme.bg-hover : transparent;
-                        c-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            // Report the choice BEFORE closing: statements after
-                            // close() in a popup's own handler never run, so the
-                            // hop showed as picked but saved empty (#509).
-                            clicked => { root.selected-index = idx; root.selected(idx); jump-popup.close(); }
-                        }
-                        Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: c;
                             color: Theme.text-primary;
                             font-size: Theme.fs-md;
                             vertical-alignment: center;
