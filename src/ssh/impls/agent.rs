@@ -14,8 +14,11 @@
 //! * Windows: `SSH_AUTH_SOCK` when it names a pipe, else the OpenSSH agent
 //!   pipe `\\.\pipe\openssh-ssh-agent` (Bitwarden and 1Password serve it too).
 //! * Elsewhere: `SSH_AUTH_SOCK`, then Bitwarden's own socket
-//!   (`~/.bitwarden-ssh-agent.sock`, and its Flatpak / Snap locations), since
-//!   apps started from the desktop often don't inherit `SSH_AUTH_SOCK`.
+//!   (`~/.bitwarden-ssh-agent.sock`, and its Flatpak / Snap / macOS App Store
+//!   locations), since apps started from the desktop often don't inherit
+//!   `SSH_AUTH_SOCK`. An agent that answers but holds no keys is passed over
+//!   for the next one: on macOS `SSH_AUTH_SOCK` is launchd's own agent, which
+//!   is usually empty while Bitwarden listens on its own socket.
 
 use std::time::Duration;
 
@@ -81,8 +84,7 @@ impl std::error::Error for AgentSignError {}
 impl Agent {
     /// Connect to the user's SSH agent.
     pub(crate) async fn connect() -> Result<Self> {
-        let (stream, location) = open().await?;
-        Ok(Self { stream, location })
+        open().await
     }
 
     #[cfg(test)]
@@ -290,7 +292,7 @@ impl<'a> Reader<'a> {
 }
 
 #[cfg(windows)]
-async fn open() -> Result<(Box<dyn AgentStream>, String)> {
+async fn open() -> Result<Agent> {
     use tokio::net::windows::named_pipe::ClientOptions;
     const ERROR_PIPE_BUSY: i32 = 231;
     let path = std::env::var("SSH_AUTH_SOCK")
@@ -299,7 +301,12 @@ async fn open() -> Result<(Box<dyn AgentStream>, String)> {
         .unwrap_or_else(|| DEFAULT_WINDOWS_PIPE.to_string());
     for _ in 0..40 {
         match ClientOptions::new().open(&path) {
-            Ok(pipe) => return Ok((Box::new(pipe), path)),
+            Ok(pipe) => {
+                return Ok(Agent {
+                    stream: Box::new(pipe),
+                    location: path,
+                })
+            }
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
@@ -310,30 +317,77 @@ async fn open() -> Result<(Box<dyn AgentStream>, String)> {
     bail!("the SSH agent at {path} stayed busy")
 }
 
+/// Bitwarden's own agent socket, relative to `$HOME`.
 #[cfg(unix)]
-async fn open() -> Result<(Box<dyn AgentStream>, String)> {
+const BITWARDEN_SOCKETS: &[&str] = &[
+    // .deb / AppImage / macOS .dmg
+    ".bitwarden-ssh-agent.sock",
+    // Flatpak
+    ".var/app/com.bitwarden.desktop/data/.bitwarden-ssh-agent.sock",
+    // Snap
+    "snap/bitwarden/current/.bitwarden-ssh-agent.sock",
+    // macOS App Store (sandboxed)
+    "Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock",
+];
+
+#[cfg(unix)]
+async fn open() -> Result<Agent> {
     let mut candidates = Vec::new();
     if let Some(sock) = std::env::var_os("SSH_AUTH_SOCK").filter(|s| !s.is_empty()) {
         candidates.push(std::path::PathBuf::from(sock));
     }
     if let Some(home) = std::env::var_os("HOME") {
         let home = std::path::PathBuf::from(home);
-        candidates.push(home.join(".bitwarden-ssh-agent.sock"));
-        candidates.push(home.join(".var/app/com.bitwarden.desktop/data/.bitwarden-ssh-agent.sock"));
-        candidates.push(home.join("snap/bitwarden/current/.bitwarden-ssh-agent.sock"));
+        for socket in BITWARDEN_SOCKETS {
+            let path = home.join(socket);
+            if !candidates.contains(&path) {
+                candidates.push(path);
+            }
+        }
     }
+    first_agent_with_keys(&candidates).await
+}
+
+/// The first agent in `candidates` that holds keys. One that answers with no
+/// keys only wins when none has any (macOS: launchd's empty agent behind
+/// `SSH_AUTH_SOCK` must not hide Bitwarden's socket, #528).
+#[cfg(unix)]
+async fn first_agent_with_keys(candidates: &[std::path::PathBuf]) -> Result<Agent> {
+    let mut empty = None;
     let mut last_error = None;
-    for path in &candidates {
+    for path in candidates {
         if !path.exists() {
             continue;
         }
-        match tokio::net::UnixStream::connect(path).await {
-            Ok(stream) => return Ok((Box::new(stream), path.display().to_string())),
-            Err(e) => last_error = Some((path.display().to_string(), e)),
+        let location = path.display().to_string();
+        let stream = match tokio::net::UnixStream::connect(path).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                last_error = Some(anyhow::Error::new(e).context(format!("connecting to the SSH agent at {location}")));
+                continue;
+            }
+        };
+        let mut agent = Agent {
+            stream: Box::new(stream),
+            location,
+        };
+        match agent.identities().await {
+            Ok(keys) if !keys.is_empty() => return Ok(agent),
+            Ok(_) => {
+                tracing::debug!("SSH agent at {} has no keys, trying the next one", agent.location);
+                empty.get_or_insert(agent);
+            }
+            Err(e) => {
+                tracing::debug!("SSH agent at {} failed to list keys: {e:#}", agent.location);
+                last_error = Some(e.context(format!("listing keys of the SSH agent at {}", agent.location)));
+            }
         }
     }
+    if let Some(agent) = empty {
+        return Ok(agent);
+    }
     match last_error {
-        Some((path, e)) => Err(e).with_context(|| format!("connecting to the SSH agent at {path}")),
+        Some(e) => Err(e),
         None => bail!(no_agent_message("$SSH_AUTH_SOCK")),
     }
 }
@@ -436,6 +490,63 @@ mod tests {
         let (mut agent, _task) = exchange(frame(&[FAILURE])).await;
         let result = agent.auth_sign(&identity(ed25519()), None, b"x".to_vec()).await;
         assert!(matches!(result, Err(AgentSignError::Agent(_))));
+    }
+
+    /// An agent on a Unix socket that answers every REQUEST_IDENTITIES with
+    /// `keys` copies of one ed25519 key.
+    #[cfg(unix)]
+    fn unix_agent(path: &std::path::Path, keys: u32) {
+        let listener = tokio::net::UnixListener::bind(path).unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    loop {
+                        let mut len = [0u8; 4];
+                        if stream.read_exact(&mut len).await.is_err() {
+                            return;
+                        }
+                        let mut request = vec![0u8; u32::from_be_bytes(len) as usize];
+                        stream.read_exact(&mut request).await.unwrap();
+                        let mut body = vec![IDENTITIES_ANSWER];
+                        body.extend_from_slice(&keys.to_be_bytes());
+                        for _ in 0..keys {
+                            put_string(&mut body, &ed25519().to_bytes().unwrap());
+                            put_string(&mut body, b"bitwarden key");
+                        }
+                        stream.write_all(&frame(&body)).await.unwrap();
+                    }
+                });
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_empty_agent_does_not_hide_one_with_keys() {
+        // #528 on macOS: SSH_AUTH_SOCK is launchd's agent (no keys), Bitwarden
+        // (App Store) listens in its sandbox container.
+        let dir = std::env::temp_dir().join(format!("meatshell-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let launchd = dir.join("launchd.sock");
+        let bitwarden = dir.join("bitwarden.sock");
+        let missing = dir.join("missing.sock");
+        unix_agent(&launchd, 0);
+        unix_agent(&bitwarden, 1);
+
+        let candidates = [missing.clone(), launchd.clone(), bitwarden.clone()];
+        let mut agent = first_agent_with_keys(&candidates).await.unwrap();
+        assert_eq!(agent.location, bitwarden.display().to_string());
+        // The connection stays usable for the login that follows.
+        assert_eq!(agent.identities().await.unwrap().len(), 1);
+
+        // With no agent holding keys, the empty one is still used, so the
+        // login reports "no keys" with its location.
+        let agent = first_agent_with_keys(&[missing.clone(), launchd.clone()]).await.unwrap();
+        assert_eq!(agent.location, launchd.display().to_string());
+
+        assert!(first_agent_with_keys(&[missing]).await.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn identity(key: ssh_key::PublicKey) -> russh::keys::agent::AgentIdentity {
