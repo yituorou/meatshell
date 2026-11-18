@@ -2297,22 +2297,18 @@ export component AppWindow inherits Window {
                     }
 
                     // Welcome-sidebar layout with nothing open: recent
-                    // connections float over the wallpaper, horizontally
-                    // centred and starting a little below the middle so a
-                    // centred wallpaper motif stays visible. A short area
-                    // shows fewer rows (at least 3) instead of moving the card
-                    // up; only below that does it rise.
+                    // connections float over the wallpaper, centred in the
+                    // area and scaled with it (1.0 up to ~900×700, at most
+                    // 1.3× on large windows). A short area shows fewer rows.
                     if pane.tabs.length == 0 && root.welcome-as-sidebar
                         && root.recent-sessions.length > 0 : RecentsCard {
                         property <length> margin: 24px;
-                        property <length> top: parent.height * 0.56;
-                        property <int> fit-rows: floor((parent.height - self.top - self.margin
+                        property <int> fit-rows: floor((parent.height - 2 * self.margin
                             - self.chrome-height) / self.row-height);
-                        max-rows: max(3, min(6, self.fit-rows));
-                        width: min(380px, parent.width - 2 * self.margin);
+                        max-rows: max(1, min(6, self.fit-rows));
+                        width: min(400px, parent.width - 2 * self.margin);
                         x: (parent.width - self.width) / 2;
-                        y: max(self.margin, min(self.top,
-                            parent.height - self.height - self.margin));
+                        y: max(self.margin, (parent.height - self.height) / 2);
                         items: root.recent-sessions;
                         connect(id) => { root.connect-session(id); }
                         remove(id) => { root.remove-recent(id); }

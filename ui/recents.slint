@@ -5,8 +5,9 @@
 // * `RecentsShelf`: a row of tiles on the full welcome page (sidebar off),
 //   between the title and Quick connect, like Safari's start page.
 //
-// Both use `Theme.bg-panel`, the same surface as the Resources sidebar, so the
-// Interface › Wallpaper opacity slider sets their transparency too.
+// Both follow the Interface › Wallpaper opacity slider like the Resources
+// sidebar: the tiles use the same `Theme.bg-panel`, the card the slightly
+// stronger `bg-panel-strong` (it sits centred on the wallpaper).
 
 import { Theme } from "theme.slint";
 
@@ -28,14 +29,15 @@ global RecentStyle {
 
 component TypeIcon inherits Rectangle {
     in property <string> glyph;
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
+    in property <float> zoom: 1.0;
+    width: 30px * root.zoom;
+    height: self.width;
+    border-radius: 8px * root.zoom;
     background: Theme.accent.with-alpha(Theme.dark ? 0.18 : 0.12);
     Text {
         text: root.glyph;
         font-family: "Material Icons";
-        font-size: 16px;
+        font-size: 16px * root.zoom;
         color: Theme.accent;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -50,9 +52,10 @@ component TypeIcon inherits Rectangle {
 // own `hovered` keeps it (and the entry's highlight) up meanwhile.
 component RemoveButton inherits Rectangle {
     callback clicked();
+    in property <float> zoom: 1.0;
     out property <bool> hovered: ta.has-hover;
-    width: 22px;
-    height: 22px;
+    width: 22px * root.zoom;
+    height: self.width;
     border-radius: self.width / 2;
     background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
     accessible-role: button;
@@ -64,7 +67,7 @@ component RemoveButton inherits Rectangle {
     Text {
         text: "\u{E5CD}";
         font-family: "Material Icons";
-        font-size: 14px;
+        font-size: 14px * root.zoom;
         color: ta.has-hover ? Theme.text-primary : Theme.text-muted;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -76,6 +79,7 @@ component Header inherits HorizontalLayout {
     // The shelf's header sits straight on the wallpaper, not on a panel:
     // use the stronger colours there, like the page title above it.
     in property <bool> on-wallpaper: false;
+    in property <float> zoom: 1.0;
     callback clear();
     Text {
         text: @tr("Recent connections");
@@ -86,9 +90,9 @@ component Header inherits HorizontalLayout {
         horizontal-stretch: 1;
     }
     Rectangle {
-        width: clear-text.preferred-width + 12px;
-        height: 22px;
-        border-radius: 6px;
+        width: clear-text.preferred-width + 12px * root.zoom;
+        height: 22px * root.zoom;
+        border-radius: 6px * root.zoom;
         background: clear-ta.has-hover ? RecentStyle.hover : transparent;
         accessible-role: button;
         accessible-label: @tr("Clear recents");
@@ -108,10 +112,11 @@ component Header inherits HorizontalLayout {
 
 component RecentRow inherits Rectangle {
     in property <RecentSession> item;
+    in property <float> zoom: 1.0;
     callback connect();
     callback remove();
     property <bool> hovered: ta.has-hover || rm.hovered;
-    border-radius: 10px;
+    border-radius: 10px * root.zoom;
     background: ta.pressed ? RecentStyle.pressed : (root.hovered ? RecentStyle.hover : transparent);
     animate background { duration: 120ms; }
     accessible-role: button;
@@ -122,18 +127,19 @@ component RecentRow inherits Rectangle {
         clicked => { root.connect(); }
     }
     HorizontalLayout {
-        padding-left: 9px;
-        padding-right: 9px;
-        spacing: 12px;
+        padding-left: 9px * root.zoom;
+        padding-right: 9px * root.zoom;
+        spacing: 12px * root.zoom;
         alignment: stretch;
         TypeIcon {
+            zoom: root.zoom;
             glyph: root.item.icon;
             y: (parent.height - self.height) / 2;
         }
         VerticalLayout {
             horizontal-stretch: 1;
             alignment: center;
-            spacing: 1px;
+            spacing: 1px * root.zoom;
             Text {
                 text: root.item.name;
                 color: Theme.text-primary;
@@ -149,7 +155,7 @@ component RecentRow inherits Rectangle {
             }
         }
         Rectangle {
-            width: max(when.preferred-width, 22px);
+            width: max(when.preferred-width, 22px * root.zoom);
             when := Text {
                 visible: !root.hovered;
                 width: parent.width;
@@ -161,6 +167,7 @@ component RecentRow inherits Rectangle {
                 vertical-alignment: center;
             }
             rm := RemoveButton {
+                zoom: root.zoom;
                 visible: root.hovered;
                 x: parent.width - self.width;
                 y: (parent.height - self.height) / 2;
@@ -173,22 +180,28 @@ component RecentRow inherits Rectangle {
 // Floating card for the empty main area (welcome-sidebar layout).
 export component RecentsCard inherits Rectangle {
     in property <[RecentSession]> items;
-    // Rows that fit where the card is placed; the rest are left out rather
-    // than pushing the card up over the wallpaper.
+    // Rows that fit the area; the rest are left out rather than overflowing.
     in property <int> max-rows: 6;
-    // Height of the card for `n` rows (header + padding included), so the
-    // caller can work out `max-rows` before the card exists.
-    out property <length> row-height: 48px;
-    out property <length> chrome-height: 46px;
+    // Roomier controls than the shelf tiles — taller rows, larger type icons,
+    // × and Clear buttons — for a card that floats on its own. Text keeps the
+    // theme sizes so it matches the surrounding panels.
+    property <float> zoom: 1.2;
+    // Row and header+padding heights, so the caller can work out `max-rows`.
+    out property <length> row-height: 48px * root.zoom;
+    out property <length> chrome-height: 46px * root.zoom;
     callback connect(string);
     callback remove(string);
     callback clear();
     callback refresh();
 
-    width: 380px;
+    width: 400px;
     height: card-layout.preferred-height;
     border-radius: 14px;
-    background: Theme.bg-panel;
+    // Centred, the card sits on the wallpaper's focal point. Without a
+    // backdrop blur (Slint has none) the plain panel lets that motif show
+    // through behind the rows, so use the settings dialog's stronger surface:
+    // opaque at the default slider, still see-through when it is lowered.
+    background: Theme.bg-panel-strong;
     border-width: 1px;
     border-color: RecentStyle.hairline;
     // A soft lift. Lighter over a wallpaper, where the card is see-through
@@ -212,17 +225,19 @@ export component RecentsCard inherits Rectangle {
 
     // 10 top + 22 header + 6 gap + 8 bottom = chrome-height.
     card-layout := VerticalLayout {
-        padding: 8px;
-        padding-top: 10px;
+        padding: 8px * root.zoom;
+        padding-top: 10px * root.zoom;
         spacing: 0px;
         Header {
-            height: 28px;
-            padding-left: 9px;
-            padding-right: 3px;
-            padding-bottom: 6px;
+            zoom: root.zoom;
+            height: 28px * root.zoom;
+            padding-left: 9px * root.zoom;
+            padding-right: 3px * root.zoom;
+            padding-bottom: 6px * root.zoom;
             clear => { root.clear(); }
         }
         for item[i] in root.items : RecentRow {
+            zoom: root.zoom;
             visible: i < root.max-rows;
             height: self.visible ? root.row-height : 0px;
             item: item;

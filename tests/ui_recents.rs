@@ -17,7 +17,7 @@ slint::slint! {
     export { RecentSession, SessionInfo }
 
     export component RecentsFixture inherits Window {
-        width: 1100px; height: 660px;
+        preferred-width: 1100px; preferred-height: 660px;
         in property <bool> sidebar-mode: true;
         in property <bool> wallpaper: true;
         in property <bool> dark: true;
@@ -60,14 +60,12 @@ slint::slint! {
                 background: Theme.bg-root;
                 card := RecentsCard {
                     property <length> margin: 24px;
-                    property <length> top: parent.height * 0.56;
-                    property <int> fit-rows: floor((parent.height - self.top - self.margin
+                    property <int> fit-rows: floor((parent.height - 2 * self.margin
                         - self.chrome-height) / self.row-height);
-                    max-rows: max(3, min(6, self.fit-rows));
-                    width: min(380px, parent.width - 2 * self.margin);
+                    max-rows: max(1, min(6, self.fit-rows));
+                    width: min(400px, parent.width - 2 * self.margin);
                     x: (parent.width - self.width) / 2;
-                    y: max(self.margin, min(self.top,
-                        parent.height - self.height - self.margin));
+                    y: max(self.margin, (parent.height - self.height) / 2);
                     items: root.recents;
                     connect(id) => { root.connect(id); }
                     remove(id) => { root.remove(id); }
@@ -96,21 +94,25 @@ impl slint::platform::Platform for Backend {
     }
 }
 
-const W: u32 = 1100;
-const H: u32 = 660;
+fn size(window: &MinimalSoftwareWindow) -> (u32, u32) {
+    let s = window.size();
+    (s.width, s.height)
+}
 
 fn frame(window: &MinimalSoftwareWindow) -> Vec<Rgb8Pixel> {
-    let mut pixels = vec![Rgb8Pixel::default(); (W * H) as usize];
+    let (w, h) = size(window);
+    let mut pixels = vec![Rgb8Pixel::default(); (w * h) as usize];
     slint::platform::update_timers_and_animations();
     window.request_redraw();
     window.draw_if_needed(|renderer| {
-        renderer.render(&mut pixels, W as usize);
+        renderer.render(&mut pixels, w as usize);
     });
     pixels
 }
 
 fn snapshot(window: &MinimalSoftwareWindow, name: &str) {
     let pixels = frame(window);
+    let (w, h) = size(window);
     let Ok(dir) = std::env::var("MEATSHELL_RECENTS_QA_DIR") else {
         return;
     };
@@ -119,8 +121,8 @@ fn snapshot(window: &MinimalSoftwareWindow, name: &str) {
     image::save_buffer(
         std::path::Path::new(&dir).join(name),
         &bytes,
-        W,
-        H,
+        w,
+        h,
         image::ColorType::Rgb8,
     )
     .unwrap();
@@ -217,17 +219,18 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
             ui.on_clear(move || events.borrow_mut().push("clear".into()));
         }
         ui.show().unwrap();
-        window.set_size(slint::PhysicalSize::new(W, H));
+        window.set_size(slint::PhysicalSize::new(1100, 660));
         frame(&window);
         // Let the fade-in finish.
         std::thread::sleep(std::time::Duration::from_millis(300));
         frame(&window);
 
-        // Card geometry, as laid out in app.slint: main area x 298..1100,
-        // 660 high → 4 rows fit below the 56% line (369.6px).
-        let card_x = 298. + (802. - 380.) / 2.;
-        let card_y = 660f32 * 0.56;
-        let first_row_y = card_y + 10. + 28. + 24.;
+        // Card geometry, as laid out in app.slint: main area x 298..1100 and
+        // 660 high, card 400px wide and centred. Controls at 1.2×: 55.2px
+        // header/padding + 6 × 57.6px rows.
+        let card_x = 298. + (802. - 400.) / 2.;
+        let card_y = (660. - (55.2 + 6. * 57.6)) / 2.;
+        let first_row_y = card_y + 12. + 33.6 + 28.8;
 
         snapshot(&window, "recents-card-dark-wallpaper.png");
         pointer(&window, card_x + 150., first_row_y);
@@ -236,7 +239,7 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         click(&window, card_x + 150., first_row_y);
         assert_eq!(*events.borrow(), ["connect pve"]);
         // × sits where the time was, at the row's right edge.
-        click(&window, card_x + 380. - 8. - 9. - 11., first_row_y);
+        click(&window, card_x + 400. - 9.6 - 10.8 - 13.2, first_row_y);
         assert_eq!(*events.borrow(), ["connect pve", "remove pve"]);
         assert_eq!(model.row_count(), 5);
 
@@ -247,6 +250,17 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         ui.set_wallpaper(false);
         frame(&window);
         snapshot(&window, "recents-card-dark-plain.png");
+
+        // A large window (the size of a maximised 1470×940 one): the card
+        // grows with the area instead of looking lost in it.
+        ui.set_wallpaper(true);
+        ui.set_dark(false);
+        window.set_size(slint::PhysicalSize::new(1470, 940));
+        frame(&window);
+        snapshot(&window, "recents-card-large.png");
+        window.set_size(slint::PhysicalSize::new(1100, 660));
+        ui.set_dark(true);
+        frame(&window);
 
         // Full welcome page (welcome-as-sidebar off).
         ui.set_wallpaper(true);
