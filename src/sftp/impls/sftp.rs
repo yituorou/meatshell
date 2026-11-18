@@ -309,6 +309,7 @@ async fn run_sftp(
         preferred: russh::Preferred {
             kex: std::borrow::Cow::Borrowed(crate::ssh::COMPAT_KEX),
             cipher: std::borrow::Cow::Borrowed(crate::ssh::COMPAT_CIPHER),
+            mac: std::borrow::Cow::Borrowed(crate::ssh::COMPAT_MAC),
             ..russh::Preferred::DEFAULT
         },
         ..<_>::default()

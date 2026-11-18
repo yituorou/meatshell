@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **老旧服务器只支持 SHA-1 MAC 时握手失败。** SSH 与 SFTP 连接在 SHA-2 MAC 之后追加 `hmac-sha1-etm@openssh.com` 与 `hmac-sha1` 作为最后的回退，面向只提供 MD5 / SHA-1 MAC 的老旧交换机、NAS 等设备，它们此前会在密钥交换后报 “No common MAC algorithm”。现代 SHA-2 仍排在前面，服务器支持时不会降级；仅提供 `hmac-md5` 的设备仍无法连接（russh 没有 MD5 MAC）。
+- **Handshake failed when an old server only offered SHA-1 MACs.** SSH and SFTP connections now append `hmac-sha1-etm@openssh.com` and `hmac-sha1` after the SHA-2 MACs as last-resort fallbacks, so older switches, NAS boxes and network gear that advertise only MD5 / SHA-1 MACs no longer fail with "No common MAC algorithm" after key exchange. Modern SHA-2 stays first, so a server that supports it never downgrades. Devices offering only `hmac-md5` still cannot connect, because russh has no MD5 MAC.
+
 ## [0.8.3] - 2026-11-15
 
 - **新增认证管理，多个会话可共用同一套登录信息（#526）。** 设置 › 认证管理 中保存一次用户名和登录方式（密码 / 键盘交互 / 私钥文件及私钥密码，或 SSH Agent），可编辑、删除，并显示每个认证被多少个会话使用。SSH 会话在编辑窗口中选择认证后，自身的登录字段会隐藏并跟随该认证；修改认证会同步到所有使用它的会话，密码和私钥加密保存且只存一份。删除认证时，相关会话各自保留一份登录信息，不会因此无法连接。导出文件保持独立完整，导入时不会关联本机的认证。

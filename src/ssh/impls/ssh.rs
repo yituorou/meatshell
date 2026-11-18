@@ -1549,6 +1549,24 @@ pub(crate) const COMPAT_CIPHER: &[russh::cipher::Name] = &[
     russh::cipher::TRIPLE_DES_CBC, // legacy fallback
 ];
 
+// MACs offered to the server, strongest first: russh's default set (SHA-256 /
+// SHA-512, encrypt-then-MAC variants first) plus the legacy SHA-1 MACs appended
+// as last-resort fallbacks, mirroring OpenSSH's client defaults. Some older
+// switches, NAS boxes and network gear only advertise hmac-sha1 (and sometimes
+// only hmac-sha1-etm@openssh.com), so without this tail they die during
+// negotiation with "No common MAC algorithm" even though the KEX and cipher
+// fallbacks already exist. SHA-1 is never preferred: a server that offers a
+// modern MAC still gets one. (russh has no MD5 MAC, so a server that offers
+// *only* hmac-md5 cannot be reached.)
+pub(crate) const COMPAT_MAC: &[russh::mac::Name] = &[
+    russh::mac::HMAC_SHA512_ETM,
+    russh::mac::HMAC_SHA256_ETM,
+    russh::mac::HMAC_SHA512,
+    russh::mac::HMAC_SHA256,
+    russh::mac::HMAC_SHA1_ETM, // legacy fallback
+    russh::mac::HMAC_SHA1,     // legacy fallback
+];
+
 /// Default seconds of server silence before a keepalive is sent (#160, #515).
 pub const KEEPALIVE_DEFAULT_INTERVAL: u32 = 30;
 /// Default unanswered keepalives before the connection counts as dead.
@@ -1617,6 +1635,7 @@ fn ssh_client_config() -> Arc<client::Config> {
         preferred: russh::Preferred {
             kex: std::borrow::Cow::Borrowed(COMPAT_KEX),
             cipher: std::borrow::Cow::Borrowed(COMPAT_CIPHER),
+            mac: std::borrow::Cow::Borrowed(COMPAT_MAC),
             ..russh::Preferred::DEFAULT
         },
         ..<_>::default()
@@ -4231,5 +4250,137 @@ mod saved_key_compat_tests {
             ..Session::new_empty()
         };
         assert!(load_session_private_key(&session, "wrong").is_err());
+    }
+}
+
+#[cfg(test)]
+mod compat_mac_tests {
+    use super::*;
+
+    fn names(list: &[russh::mac::Name]) -> Vec<String> {
+        list.iter().map(|name| name.as_ref().to_string()).collect()
+    }
+
+    #[test]
+    fn compat_macs_keep_modern_first_and_sha1_last() {
+        let macs = names(COMPAT_MAC);
+        assert_eq!(
+            macs.first().map(String::as_str),
+            Some("hmac-sha2-512-etm@openssh.com"),
+            "the strongest MAC must stay first so modern servers never downgrade"
+        );
+        assert_eq!(
+            macs.get(macs.len() - 2).map(String::as_str),
+            Some("hmac-sha1-etm@openssh.com"),
+            "etm sha1 is the safer of the two legacy fallbacks"
+        );
+        assert_eq!(
+            macs.last().map(String::as_str),
+            Some("hmac-sha1"),
+            "plain sha1 must stay last; it exists only for old network gear"
+        );
+        assert!(macs.contains(&"hmac-sha2-256".to_string()));
+        assert!(macs.contains(&"hmac-sha2-512".to_string()));
+    }
+
+    #[test]
+    fn client_config_offers_sha1_fallbacks_for_legacy_servers() {
+        let config = ssh_client_config();
+        let macs: Vec<String> = config
+            .preferred
+            .mac
+            .iter()
+            .map(|name| name.as_ref().to_string())
+            .collect();
+        // The reported failure is a server whose MAC list is only hmac-md5 /
+        // hmac-sha1: offering sha1 restores the handshake (russh has no MD5 MAC).
+        assert!(macs.contains(&"hmac-sha1".to_string()), "macs: {macs:?}");
+        assert!(
+            macs.contains(&"hmac-sha1-etm@openssh.com".to_string()),
+            "macs: {macs:?}"
+        );
+    }
+
+    /// russh's own default set deliberately excludes SHA-1, which is why a
+    /// legacy-only server failed before `COMPAT_MAC` existed.
+    #[test]
+    fn the_upstream_default_macs_have_no_sha1_fallback() {
+        let macs = names(&russh::Preferred::DEFAULT.mac);
+        assert!(
+            !macs.iter().any(|name| name.contains("sha1")),
+            "if russh ever adds SHA-1 by itself, COMPAT_MAC can be simplified: {macs:?}"
+        );
+    }
+
+    struct AcceptAnyHostKey(HostKeyWait);
+
+    impl Handler for AcceptAnyHostKey {
+        type Error = russh::Error;
+
+        async fn check_server_key(
+            &mut self,
+            _: &PublicKey,
+        ) -> std::result::Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    impl HandshakeHandler for AcceptAnyHostKey {
+        fn host_key_wait(&self) -> &HostKeyWait {
+            &self.0
+        }
+    }
+
+    struct NoAuthServer;
+
+    impl russh::server::Handler for NoAuthServer {
+        type Error = russh::Error;
+    }
+
+    fn ed25519_private() -> ssh_key::PrivateKey {
+        use rand::RngCore as _;
+        let mut seed = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        ssh_key::private::Ed25519Keypair::from_seed(&seed).into()
+    }
+
+    /// Run a full key exchange against a russh server that offers exactly
+    /// `server_macs`, using the same client config the terminal uses.
+    async fn handshake_with_server_macs(server_macs: &'static [russh::mac::Name]) -> Result<()> {
+        let server_config = Arc::new(russh::server::Config {
+            keys: vec![ed25519_private()],
+            preferred: russh::Preferred {
+                mac: std::borrow::Cow::Borrowed(server_macs),
+                ..russh::Preferred::DEFAULT
+            },
+            ..Default::default()
+        });
+        let (client_io, server_io) = tokio::io::duplex(1 << 16);
+        tokio::spawn(async move {
+            if let Ok(session) = russh::server::run_stream(server_config, server_io, NoAuthServer).await
+            {
+                let _ = session.await;
+            }
+        });
+        let handler = AcceptAnyHostKey(HostKeyWait::default());
+        connect_ssh_stream(ssh_client_config(), client_io, handler, "compat mac test")
+            .await
+            .map(|_| ())
+    }
+
+    /// The reported failure: the server advertises only SHA-1 MACs (old switch /
+    /// NAS), which used to abort with "No common MAC algorithm".
+    #[tokio::test]
+    async fn completes_the_handshake_with_a_server_that_only_offers_hmac_sha1() {
+        handshake_with_server_macs(&[russh::mac::HMAC_SHA1])
+            .await
+            .expect("a server offering only hmac-sha1 must still be reachable");
+    }
+
+    #[tokio::test]
+    async fn completes_the_handshake_with_a_server_that_only_offers_hmac_sha1_etm() {
+        handshake_with_server_macs(&[russh::mac::HMAC_SHA1_ETM])
+            .await
+            .expect("a server offering only hmac-sha1-etm must still be reachable");
     }
 }
