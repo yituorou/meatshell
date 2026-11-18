@@ -907,3 +907,12 @@ msgstr "默认编辑器"
 
 msgid "Choose program…"
 msgstr "选择程序…"
+
+msgid "Recent connections"
+msgstr "最近连接"
+
+msgid "Clear recents"
+msgstr "清除最近连接"
+
+msgid "Remove from recents"
+msgstr "从最近连接中移除"

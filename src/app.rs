@@ -32,6 +32,7 @@ mod open_window;
 mod panes;
 mod port_forward;
 mod quick_commands;
+mod recents;
 mod resource_ui;
 mod save_tab_session;
 mod session_callbacks;

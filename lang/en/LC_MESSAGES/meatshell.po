@@ -905,3 +905,12 @@ msgstr "Default editor"
 
 msgid "Choose program…"
 msgstr "Choose program…"
+
+msgid "Recent connections"
+msgstr "Recent connections"
+
+msgid "Clear recents"
+msgstr "Clear recents"
+
+msgid "Remove from recents"
+msgstr "Remove from recents"

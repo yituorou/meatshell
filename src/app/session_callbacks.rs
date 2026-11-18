@@ -68,6 +68,8 @@ pub(super) fn sync_sessions_for_window(
     if !refresh_session_rows_in_place(store, model, &query) {
         window.set_sessions_revision(window.get_sessions_revision() + 1);
     }
+    // Renamed or deleted sessions update their recent entries too.
+    super::recents::publish(&window, store);
 }
 
 /// Parse the batch-import textarea (#150). Each non-empty, non-`#` line is
@@ -1308,6 +1310,11 @@ pub(super) fn wire_session_callbacks(
                     None => return,
                 }
             };
+            // Recent connections (welcome page / empty main area). RDP counts
+            // too: it is a connection, just in the system client's window.
+            if let Some(w) = weak.upgrade() {
+                super::recents::record(&w, &store, &id);
+            }
             // ── RDP: hand the saved account to the system client, open no tab ──
             // FinalShell does the same thing: meatshell stores host / port /
             // user / password and starts the operating system's own remote

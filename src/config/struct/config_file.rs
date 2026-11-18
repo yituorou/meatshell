@@ -306,6 +306,10 @@ pub struct ConfigFile {
     /// Machine-wide: the same folders exist for every session.
     #[serde(default, skip_serializing_if = "super::LocalPlaces::is_empty")]
     pub local_places: super::LocalPlaces,
+    /// Recently opened connections, most recent first. Machine-local: never
+    /// exported or synced (see `recent_connections.rs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_connections: Vec<super::RecentConnection>,
     /// Local pane display options (#532 follow-up): show hidden / system
     /// entries, and which column the list is sorted by.
     #[serde(default)]

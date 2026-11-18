@@ -189,6 +189,8 @@ pub(super) fn open_window(
     sync_sessions_to_model(&store.borrow(), &sessions_model);
     window.set_wsl_profiles(wsl_profile_model(&store.borrow()));
     window.set_launch_shells(launch_shell_model(&store.borrow()));
+    super::recents::publish(&window, &store.borrow());
+    super::recents::wire(&window, store.clone());
     super::local_shells::wire_custom_shells(&ctx);
     super::credentials::wire(&ctx);
     super::agents::wire_agent_launchers(&ctx, &sessions_model);

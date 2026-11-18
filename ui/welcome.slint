@@ -1,6 +1,7 @@
 import { Theme } from "theme.slint";
 import { PrimaryButton, GhostButton } from "widgets.slint";
 import { ScrollView } from "std-widgets.slint";
+import { RecentSession, RecentsShelf } from "recents.slint";
 
 export struct SessionInfo {
     id: string,
@@ -389,6 +390,12 @@ export component Welcome inherits Rectangle {
     callback delete-group(string /* name */);
     callback remove-session(string);
     callback search-changed(string);
+    // Recent connections, shown as a shelf on the full page (not in compact
+    // mode: there the empty main area shows them instead).
+    in property <[RecentSession]> recents;
+    callback remove-recent(string);
+    callback clear-recents();
+    callback refresh-recents();
     callback cycle-tab(bool /* reverse */);
     // Customisable shortcuts: key event → action id (see shortcuts.rs).
     callback match-shortcut(string, bool, bool, bool, bool, bool) -> string;
@@ -458,6 +465,17 @@ export component Welcome inherits Rectangle {
                 font-size: Theme.fs-md;
                 wrap: no-wrap;
             }
+        }
+
+        // Recent connections. Out of the way while searching, so the results
+        // get the room — like Spotlight, which drops its recents as you type.
+        if !root.compact && root.recents.length > 0 && root.search-query == "" : RecentsShelf {
+            vertical-stretch: 0;
+            items: root.recents;
+            connect(id) => { root.connect-session(id); }
+            remove(id) => { root.remove-recent(id); }
+            clear => { root.clear-recents(); }
+            refresh => { root.refresh-recents(); }
         }
 
         // Quick Connect card — always fills the remaining height so the panel

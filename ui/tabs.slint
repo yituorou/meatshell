@@ -121,7 +121,10 @@ component SingleTab inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 10px;
-        padding-right: 4px;
+        // The close button brings its own room; without it (the welcome tab,
+        // drag ghosts) mirror the left padding so the title isn't pressed
+        // against the right edge.
+        padding-right: (info.kind != "welcome" && !ghost) ? 4px : 10px;
         spacing: 8px;
         alignment: start;
 

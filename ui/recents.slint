@@ -1,0 +1,320 @@
+// Recent connections.
+//
+// * `RecentsCard`: a floating, frosted card in the empty main area of the
+//   welcome-sidebar layout. It defers to the wallpaper — no history, no card.
+// * `RecentsShelf`: a row of tiles on the full welcome page (sidebar off),
+//   between the title and Quick connect, like Safari's start page.
+//
+// Both use `Theme.bg-panel`, the same surface as the Resources sidebar, so the
+// Interface › Wallpaper opacity slider sets their transparency too.
+
+import { Theme } from "theme.slint";
+
+export struct RecentSession {
+    id: string,
+    name: string,
+    detail: string, // user@host, program, serial port…
+    when: string,   // "Just now", "12 min ago", "Yesterday"… (Rust keeps it fresh)
+    icon: string,   // Material Icons glyph for the connection type
+}
+
+// Hairline edge and hover wash that read on any wallpaper, like macOS
+// materials: translucent white on dark, translucent black on light.
+global RecentStyle {
+    out property <brush> hairline: Theme.dark ? #ffffff1a : #0000001a;
+    out property <brush> hover: Theme.dark ? #ffffff12 : #0000000d;
+    out property <brush> pressed: Theme.dark ? #ffffff1f : #00000017;
+}
+
+component TypeIcon inherits Rectangle {
+    in property <string> glyph;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: Theme.accent.with-alpha(Theme.dark ? 0.18 : 0.12);
+    Text {
+        text: root.glyph;
+        font-family: "Material Icons";
+        font-size: 16px;
+        color: Theme.accent;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Round × that replaces the time while the pointer is over an entry.
+component RemoveButton inherits Rectangle {
+    callback clicked();
+    width: 22px;
+    height: 22px;
+    border-radius: self.width / 2;
+    background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
+    accessible-role: button;
+    accessible-label: @tr("Remove from recents");
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: "\u{E5CD}";
+        font-family: "Material Icons";
+        font-size: 14px;
+        color: ta.has-hover ? Theme.text-primary : Theme.text-muted;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// "Recent connections" ······ "Clear"
+component Header inherits HorizontalLayout {
+    callback clear();
+    Text {
+        text: @tr("Recent connections");
+        color: Theme.text-secondary;
+        font-size: Theme.fs-sm;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    Rectangle {
+        width: clear-text.preferred-width + 12px;
+        height: 22px;
+        border-radius: 6px;
+        background: clear-ta.has-hover ? RecentStyle.hover : transparent;
+        accessible-role: button;
+        accessible-label: @tr("Clear recents");
+        clear-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clear(); }
+        }
+        clear-text := Text {
+            text: @tr("Clear");
+            color: clear-ta.has-hover ? Theme.text-primary : Theme.text-muted;
+            font-size: Theme.fs-xs;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component RecentRow inherits Rectangle {
+    in property <RecentSession> item;
+    callback connect();
+    callback remove();
+    height: 48px;
+    border-radius: 10px;
+    background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
+    animate background { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: root.item.name;
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.connect(); }
+    }
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        spacing: 12px;
+        alignment: stretch;
+        TypeIcon {
+            glyph: root.item.icon;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 1px;
+            Text {
+                text: root.item.name;
+                color: Theme.text-primary;
+                font-size: Theme.fs-md;
+                font-weight: 500;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.detail;
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                overflow: elide;
+            }
+        }
+        Rectangle {
+            width: max(when.preferred-width, 22px);
+            when := Text {
+                visible: !ta.has-hover;
+                width: parent.width;
+                height: parent.height;
+                text: root.item.when;
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+            if ta.has-hover : RemoveButton {
+                x: parent.width - self.width;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.remove(); }
+            }
+        }
+    }
+}
+
+// Floating card for the empty main area (welcome-sidebar layout).
+export component RecentsCard inherits Rectangle {
+    in property <[RecentSession]> items;
+    callback connect(string);
+    callback remove(string);
+    callback clear();
+    callback refresh();
+
+    width: 380px;
+    height: card-layout.preferred-height;
+    border-radius: 14px;
+    background: Theme.bg-panel;
+    border-width: 1px;
+    border-color: RecentStyle.hairline;
+    // A soft lift. Lighter over a wallpaper, where the card is see-through
+    // and a dark shadow would muddy it.
+    drop-shadow-blur: 32px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: Theme.wallpaper-active ? #0000002a : (Theme.dark ? #00000066 : #00000024);
+
+    // Fade in rather than pop.
+    property <bool> appeared: false;
+    init => { self.appeared = true; }
+    opacity: self.appeared ? 1 : 0;
+    animate opacity { duration: 240ms; easing: ease-out; }
+
+    // Relative times ("5 min ago") age while the card is on screen.
+    Timer {
+        interval: 60s;
+        running: true;
+        triggered => { root.refresh(); }
+    }
+
+    card-layout := VerticalLayout {
+        padding: 8px;
+        padding-top: 10px;
+        spacing: 2px;
+        Header {
+            padding-left: 9px;
+            padding-right: 3px;
+            padding-bottom: 4px;
+            clear => { root.clear(); }
+        }
+        for item in root.items : RecentRow {
+            item: item;
+            connect => { root.connect(item.id); }
+            remove => { root.remove(item.id); }
+        }
+    }
+}
+
+component RecentTile inherits Rectangle {
+    in property <RecentSession> item;
+    callback connect();
+    callback remove();
+    height: 60px;
+    border-radius: 12px;
+    background: Theme.bg-panel;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.accent.with-alpha(0.55) : RecentStyle.hairline;
+    animate border-color { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: root.item.name;
+
+    Rectangle {
+        border-radius: parent.border-radius;
+        background: ta.pressed ? RecentStyle.pressed : (ta.has-hover ? RecentStyle.hover : transparent);
+        animate background { duration: 120ms; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.connect(); }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 10px;
+        TypeIcon {
+            glyph: root.item.icon;
+            y: (parent.height - self.height) / 2;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: root.item.name;
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-md;
+                    font-weight: 500;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.item.when;
+                    color: Theme.text-muted;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                    // Keep the slot while hovered so the name doesn't shift.
+                    opacity: ta.has-hover ? 0 : 1;
+                }
+            }
+            Text {
+                text: root.item.detail;
+                color: Theme.text-muted;
+                font-size: Theme.fs-xs;
+                overflow: elide;
+            }
+        }
+    }
+    if ta.has-hover : RemoveButton {
+        x: parent.width - self.width - 6px;
+        y: 6px;
+        clicked => { root.remove(); }
+    }
+}
+
+// Row of tiles for the full welcome page. Tiles share the width evenly and
+// never get narrower than `min-tile`; the ones that don't fit are left out
+// rather than squeezed.
+export component RecentsShelf inherits VerticalLayout {
+    in property <[RecentSession]> items;
+    callback connect(string);
+    callback remove(string);
+    callback clear();
+    callback refresh();
+
+    property <length> gap: 10px;
+    property <length> min-tile: 200px;
+    property <int> fit: max(1, floor((self.width + self.gap) / (self.min-tile + self.gap)));
+    property <int> count: min(root.items.length, root.fit);
+    property <length> tile: (self.width - (self.count - 1) * self.gap) / max(1, self.count);
+    spacing: 8px;
+
+    Timer {
+        interval: 60s;
+        running: true;
+        triggered => { root.refresh(); }
+    }
+
+    Header {
+        padding-left: 2px;
+        clear => { root.clear(); }
+    }
+    Rectangle {
+        height: 60px;
+        for item[i] in root.items : RecentTile {
+            visible: i < root.count;
+            x: i * (root.tile + root.gap);
+            width: root.tile;
+            item: item;
+            connect => { root.connect(item.id); }
+            remove => { root.remove(item.id); }
+        }
+    }
+}

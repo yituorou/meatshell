@@ -381,7 +381,7 @@ pub(super) fn sync_sessions_to_model(store: &ConfigStore, model: &VecModel<Sessi
 
 /// Generated rows at the top of Quick connect: the "system" shells, then the
 /// "agents" group of detected and custom agent CLIs (#427).
-fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {
+pub(super) fn quick_connect_builtin_sessions(store: &ConfigStore) -> Vec<Session> {
     let mut sessions = system_shell_sessions(store);
     sessions.extend(super::agents::agent_sessions(store));
     sessions

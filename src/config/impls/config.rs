@@ -1851,6 +1851,23 @@ impl ConfigStore {
         }
         out
     }
+    /// Recently opened connections, most recent first.
+    pub fn recent_connections(&self) -> Vec<crate::config::RecentConnection> {
+        crate::config::normalized_recent_connections(&self.cache.recent_connections)
+    }
+    /// Remember that session `id` was just opened.
+    pub fn record_connection(&mut self, id: &str) {
+        let mut list = self.recent_connections();
+        crate::config::record_recent_connection(&mut list, id, chrono::Utc::now().timestamp());
+        self.cache.recent_connections = list;
+    }
+    /// Forget one session from the recent list.
+    pub fn remove_recent_connection(&mut self, id: &str) {
+        self.cache.recent_connections.retain(|entry| entry.id != id);
+    }
+    pub fn clear_recent_connections(&mut self) {
+        self.cache.recent_connections.clear();
+    }
     pub fn sftp_dock(&self) -> String {
         let d = self.cache.sftp_dock.trim();
         if d.is_empty() {

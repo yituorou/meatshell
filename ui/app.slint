@@ -20,6 +20,7 @@ export { JumpSearch }
 import { Sidebar, DiskInfo } from "sidebar.slint";
 import { TabBar, TabInfo, LaunchItem } from "tabs.slint";
 import { Welcome, SessionInfo } from "welcome.slint";
+import { RecentSession, RecentsCard } from "recents.slint";
 import { SessionDialog, SessionDraft, PortFwd, TriggerDraft, JumpHop } from "session_dialog.slint";
 import { ConfirmDialog } from "confirm_dialog.slint";
 import { ModalLayer, ModalKind } from "modal.slint";
@@ -1145,6 +1146,12 @@ export component AppWindow inherits Window {
     in property <int> sessions-revision: 0;
     in-out property <string> host-search-query;
     callback host-search-changed(string);
+    // Recent connections (see recents.rs): the card in the empty main area of
+    // the welcome-sidebar layout, the shelf on the full welcome page.
+    in property <[RecentSession]> recent-sessions;
+    callback remove-recent(string /* session-id */);
+    callback clear-recents();
+    callback refresh-recents();   // minute tick: age the relative times
 
     // --- Tabs --------------------------------------------------------------
     in property <[TabInfo]> tabs;
@@ -2289,12 +2296,40 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // Welcome-sidebar layout with nothing open: recent
+                    // connections float over the wallpaper, horizontally
+                    // centred and starting a little below the middle so a
+                    // centred wallpaper motif stays visible. A short area
+                    // shows fewer rows (at least 3) instead of moving the card
+                    // up; only below that does it rise.
+                    if pane.tabs.length == 0 && root.welcome-as-sidebar
+                        && root.recent-sessions.length > 0 : RecentsCard {
+                        property <length> margin: 24px;
+                        property <length> top: parent.height * 0.56;
+                        property <int> fit-rows: floor((parent.height - self.top - self.margin
+                            - self.chrome-height) / self.row-height);
+                        max-rows: max(3, min(6, self.fit-rows));
+                        width: min(380px, parent.width - 2 * self.margin);
+                        x: (parent.width - self.width) / 2;
+                        y: max(self.margin, min(self.top,
+                            parent.height - self.height - self.margin));
+                        items: root.recent-sessions;
+                        connect(id) => { root.connect-session(id); }
+                        remove(id) => { root.remove-recent(id); }
+                        clear => { root.clear-recents(); }
+                        refresh => { root.refresh-recents(); }
+                    }
+
                     // Welcome tab — fill the content area explicitly (some renderers
                     // don't auto-fill, which spread the header/card apart) (#dock).
                     if pane.active-id == "welcome" : Welcome {
                         width: parent.width;
                         height: parent.height;
                         sessions: root.sessions;
+                        recents: root.recent-sessions;
+                        remove-recent(id) => { root.remove-recent(id); }
+                        clear-recents => { root.clear-recents(); }
+                        refresh-recents => { root.refresh-recents(); }
                         import-hint: root.ssh-import-hint;
                         search-query <=> root.host-search-query;
                         sessions-revision: root.sessions-revision;
