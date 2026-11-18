@@ -4,20 +4,28 @@
 //! on the shared Tokio runtime; commands come in via an MPSC channel and
 //! output lines are pushed back via an `UnboundedSender<SessionEvent>`.
 
-use std::path::Path;
+use std::env::var_os;
+use std::fs::File;
+use std::io::BufReader;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::config::{AuthMethod, PortForward, Secret, Session, SessionTrigger};
+use crate::i18n::t;
 use anyhow::{anyhow, Context, Result};
+use rand::RngCore as _;
 use russh::client::{self, Handle, Handler, Msg};
 use russh::keys::key::PrivateKeyWithHashAlg;
 use russh::keys::{decode_secret_key, load_secret_key, PrivateKey};
 use russh::{Channel, ChannelId, ChannelMsg, Disconnect};
 use ssh_key::{HashAlg, PublicKey};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
-
-use crate::config::{AuthMethod, PortForward, Secret, Session, SessionTrigger};
-use crate::i18n::t;
+use x11rb_protocol::parse_display::ParsedDisplay;
+use x11rb_protocol::xauth::Family;
 
 use super::connection::{
     connect_ssh_stream, disconnect_ssh, network_stage, HandshakeHandler, HostKeyWait,
@@ -1245,13 +1253,16 @@ async fn connect_ssh(
     Handle<ClientHandler>,
     Vec<Handle<ClientHandler>>,
     RemoteForwardMap,
+    X11RuntimeState,
 )> {
     let remote_forwards: RemoteForwardMap =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let x11_state = X11RuntimeState::default();
     let handler = ClientHandler {
         host: session.host.clone(),
         port: session.port,
         remote_forwards: remote_forwards.clone(),
+        x11_state: x11_state.clone(),
         events: events.clone(),
         host_key_wait: HostKeyWait::default(),
     };
@@ -1273,11 +1284,11 @@ async fn connect_ssh(
             connect_target_via_jump(jump, &session.host, session.port, config, handler, events)
                 .await
                 .with_context(|| format!("connect {} via jump failed", addr))?;
-        return Ok((handle, jump_handle, remote_forwards));
+        return Ok((handle, jump_handle, remote_forwards, x11_state));
     }
 
     let handle = connect_direct_ssh(session, config, handler, events).await?;
-    Ok((handle, Vec::new(), remote_forwards))
+    Ok((handle, Vec::new(), remote_forwards, x11_state))
 }
 
 /// The shell and SFTP use identical network deadlines and host-key handling.
@@ -1334,6 +1345,7 @@ pub(crate) async fn authenticate_session(
     handle: &mut Handle<ClientHandler>,
     jump_handle: &mut Vec<Handle<ClientHandler>>,
     remote_forwards: &mut RemoteForwardMap,
+    x11_state: &mut X11RuntimeState,
     session: &Session,
     jump: &[Session],
     config: Arc<client::Config>,
@@ -1365,11 +1377,12 @@ pub(crate) async fn authenticate_session(
                 // already failed (it hangs), so reconnect on a fresh handle before
                 // trying keyboard-interactive (#86).
                 disconnect_ssh(handle, "authentication fallback").await;
-                let (h, jh, targets) =
+                let (h, jh, targets, x11) =
                     Box::pin(connect_ssh(session, jump, config.clone(), events)).await?;
                 *handle = h;
                 *jump_handle = jh;
                 *remote_forwards = targets;
+                *x11_state = x11;
                 ok = keyboard_interactive_auth(
                     handle,
                     &user,
@@ -1460,7 +1473,7 @@ where
     // Connect to this hop through its ancestors. Keep every transport alive,
     // including replacement transports created by keyboard-interactive fallback.
     // `Box::pin` breaks the async recursion (connect_ssh → jump → connect_ssh).
-    let (mut jhandle, mut ancestors_alive, mut jump_forwards) =
+    let (mut jhandle, mut ancestors_alive, mut jump_forwards, mut jump_x11) =
         Box::pin(connect_ssh(jump, ancestors, config.clone(), events))
             .await
             .with_context(|| format!("connect jump host {}:{} failed", jump.host, jump.port))?;
@@ -1468,6 +1481,7 @@ where
         &mut jhandle,
         &mut ancestors_alive,
         &mut jump_forwards,
+        &mut jump_x11,
         jump,
         ancestors,
         config.clone(),
@@ -1658,13 +1672,14 @@ pub async fn test_session_auth(
     events: UnboundedSender<SessionEvent>,
 ) -> Result<()> {
     let config = ssh_client_config();
-    let (mut handle, mut jump_handle, mut remote_forwards) =
+    let (mut handle, mut jump_handle, mut remote_forwards, mut x11_state) =
         connect_ssh(&session, &jump, config.clone(), &events).await?;
 
     let auth = authenticate_session(
         &mut handle,
         &mut jump_handle,
         &mut remote_forwards,
+        &mut x11_state,
         &session,
         &jump,
         config,
@@ -1740,13 +1755,14 @@ async fn execute_command_inner(
     let (events, event_rx) = mpsc::unbounded_channel();
     drop(event_rx);
     let config = ssh_client_config();
-    let (mut handle, mut jump_handle, mut remote_forwards) =
+    let (mut handle, mut jump_handle, mut remote_forwards, mut x11_state) =
         connect_ssh(&session, &jump, config.clone(), &events).await?;
 
     match authenticate_session(
         &mut handle,
         &mut jump_handle,
         &mut remote_forwards,
+        &mut x11_state,
         &session,
         &jump,
         config,
@@ -1825,6 +1841,520 @@ fn append_bounded(target: &mut Vec<u8>, data: &[u8], limit: usize, truncated: &m
     *truncated |= take < data.len();
 }
 
+/// Runtime X11 authentication material for an active SSH forwarding channel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct X11AuthMaterial {
+    /// Resolved local X server target (Unix socket path or TCP host:port).
+    target: X11Target,
+    /// Random 16-byte MIT-MAGIC-COOKIE-1 presented to the remote SSH server.
+    fake_cookie: [u8; 16],
+    /// Local X server auth protocol (e.g. `MIT-MAGIC-COOKIE-1`), or empty if none.
+    real_protocol: Vec<u8>,
+    /// Local X server auth data, or empty if no local entry exists.
+    real_data: Vec<u8>,
+}
+
+/// Shared runtime slot holding the active X11 authentication material for a connection.
+pub(crate) type X11AuthSlot = Arc<std::sync::Mutex<Option<X11AuthMaterial>>>;
+
+/// Per-connection runtime X11 forwarding state shared between `run_session` and `ClientHandler`.
+#[derive(Clone, Default)]
+pub(crate) struct X11RuntimeState {
+    active: Arc<AtomicBool>,
+    auth: X11AuthSlot,
+}
+
+fn x11_auth_lookup_params(parsed_display: &ParsedDisplay) -> Result<(Family, Vec<u8>)> {
+    let auth_family;
+    let auth_address: Vec<u8>;
+
+    match parsed_display.protocol.as_deref() {
+        Some("unix") => {
+            auth_family = Family::LOCAL;
+            let hostname = hostname::get()?.into_string().unwrap_or_default();
+            auth_address = Vec::from(hostname.as_bytes());
+        }
+        Some(protocol) => {
+            tracing::warn!("unsupported DISPLAY protocol: {protocol}");
+            auth_family = Family::WILD;
+            auth_address = Vec::from(parsed_display.host.as_bytes());
+        }
+        None => {
+            let host_str = parsed_display
+                .host
+                .strip_prefix('[')
+                .and_then(|s| s.strip_suffix(']'))
+                .unwrap_or(parsed_display.host.as_str());
+            if host_str.is_empty() || host_str == "localhost" {
+                auth_family = Family::LOCAL;
+                let hostname = hostname::get()?.into_string().unwrap_or_default();
+                auth_address = Vec::from(hostname.as_bytes());
+            } else {
+                match host_str.parse::<IpAddr>() {
+                    Ok(host) => {
+                        if host.is_loopback() {
+                            auth_family = Family::LOCAL;
+                            let hostname = hostname::get()?.into_string().unwrap_or_default();
+                            auth_address = Vec::from(hostname.as_bytes());
+                        } else {
+                            auth_family = match host {
+                                IpAddr::V4(_) => Family::INTERNET,
+                                IpAddr::V6(_) => Family::INTERNET6,
+                            };
+
+                            let octets: Vec<u8> = match host {
+                                IpAddr::V4(v4) => v4.octets().to_vec(),
+                                IpAddr::V6(v6) => v6.octets().to_vec(),
+                            };
+                            auth_address = octets;
+                        }
+                    }
+                    Err(_) => {
+                        auth_family = Family::SERVER_INTERPRETED;
+                        auth_address = Vec::from(parsed_display.host.as_bytes());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((auth_family, auth_address))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn resolve_local_home_dir() -> Option<PathBuf> {
+    var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            #[cfg(windows)]
+            {
+                var_os("USERPROFILE").filter(|v| !v.is_empty())
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        })
+        .map(PathBuf::from)
+        .or_else(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+}
+
+fn expand_tilde_path(raw: &str, default_home: Option<&Path>) -> PathBuf {
+    let home = default_home.filter(|p| !p.as_os_str().is_empty());
+    if raw == "~" {
+        if let Some(home) = home {
+            return home.to_path_buf();
+        }
+    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        if let Some(home) = home {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(raw)
+}
+
+fn read_xauthority_file(
+    path: &Path,
+    auth_family: Family,
+    auth_address: &[u8],
+    display: u16,
+) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    let file = File::open(path)
+        .with_context(|| format!("failed to open Xauthority file {}", path.display()))?;
+    x11_get_auth_from_reader(BufReader::new(file), auth_family, auth_address, display)
+        .with_context(|| format!("failed to read Xauthority file {}", path.display()))
+}
+
+fn x11_lookup_local_auth_with_env(
+    parsed_display: &ParsedDisplay,
+    x11_xauthority: &str,
+    env_xauthority: Option<&std::ffi::OsStr>,
+    default_home: Option<PathBuf>,
+) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    let (auth_family, auth_address) = x11_auth_lookup_params(parsed_display)?;
+
+    let trimmed_xauthority = x11_xauthority.trim();
+    if !trimmed_xauthority.is_empty() {
+        let path = expand_tilde_path(trimmed_xauthority, default_home.as_deref());
+        return read_xauthority_file(&path, auth_family, &auth_address, parsed_display.display);
+    }
+
+    if let Some(raw_env) = env_xauthority.filter(|v| !v.is_empty()) {
+        let env_path = match raw_env.to_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(expand_tilde_path(trimmed, default_home.as_deref()))
+                }
+            }
+            None => Some(PathBuf::from(raw_env)),
+        };
+        if let Some(path) = env_path {
+            return read_xauthority_file(&path, auth_family, &auth_address, parsed_display.display);
+        }
+    }
+
+    let Some(mut path) = default_home.filter(|p| !p.as_os_str().is_empty()) else {
+        return Ok(None);
+    };
+    path.push(".Xauthority");
+    match File::open(&path) {
+        Ok(file) => x11_get_auth_from_reader(
+            BufReader::new(file),
+            auth_family,
+            &auth_address,
+            parsed_display.display,
+        )
+        .with_context(|| format!("failed to read Xauthority file {}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => {
+            Err(err).with_context(|| format!("failed to open Xauthority file {}", path.display()))
+        }
+    }
+}
+
+fn x11_lookup_local_auth(
+    parsed_display: &ParsedDisplay,
+    x11_xauthority: &str,
+) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    let env_xauthority = var_os("XAUTHORITY");
+    let default_home = resolve_local_home_dir();
+    x11_lookup_local_auth_with_env(
+        parsed_display,
+        x11_xauthority,
+        env_xauthority.as_deref(),
+        default_home,
+    )
+}
+
+fn x11_prepare_auth(
+    parsed_display: ParsedDisplay,
+    target: X11Target,
+    x11_xauthority: String,
+) -> Result<X11AuthMaterial> {
+    let local_auth = x11_lookup_local_auth(&parsed_display, &x11_xauthority)?;
+    let (real_protocol, real_data) = match local_auth {
+        Some((proto, data)) => (proto, data),
+        None => {
+            tracing::warn!(
+                "no matching .Xauthority entry for display {}; forwarding will strip fake cookie",
+                parsed_display.display
+            );
+            (Vec::new(), Vec::new())
+        }
+    };
+
+    let mut fake_cookie = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut fake_cookie);
+
+    Ok(X11AuthMaterial {
+        target,
+        fake_cookie,
+        real_protocol,
+        real_data,
+    })
+}
+
+fn x11_pad_len(len: usize) -> usize {
+    (len + 3) & !3
+}
+
+/// Read the initial X11 client connection setup packet, verify it carries the
+/// session's spoofed cookie, and rewrite the authentication fields to the real
+/// local `.Xauthority` entry (or empty auth when the local X server has none).
+async fn read_and_rewrite_x11_setup<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    auth: &X11AuthMaterial,
+) -> Result<Vec<u8>> {
+    const MAX_X11_SETUP_LEN: usize = 16 * 1024;
+    let mut buf = Vec::with_capacity(128);
+    let mut chunk = [0u8; 1024];
+
+    while buf.len() < 12 {
+        let n = reader
+            .read(&mut chunk)
+            .await
+            .context("read X11 setup header")?;
+        if n == 0 {
+            return Err(anyhow!("unexpected EOF while reading X11 setup header"));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+
+    let big_endian = match buf[0] {
+        b'B' => true,
+        b'l' => false,
+        other => return Err(anyhow!("invalid X11 byte-order marker: 0x{other:02x}")),
+    };
+    let read_u16 = |slice: &[u8]| -> u16 {
+        if big_endian {
+            u16::from_be_bytes([slice[0], slice[1]])
+        } else {
+            u16::from_le_bytes([slice[0], slice[1]])
+        }
+    };
+    let write_u16 = |val: u16| -> [u8; 2] {
+        if big_endian {
+            val.to_be_bytes()
+        } else {
+            val.to_le_bytes()
+        }
+    };
+
+    let proto_name_len = read_u16(&buf[6..8]) as usize;
+    let proto_data_len = read_u16(&buf[8..10]) as usize;
+    let header_len = 12usize
+        .saturating_add(x11_pad_len(proto_name_len))
+        .saturating_add(x11_pad_len(proto_data_len));
+    if header_len > MAX_X11_SETUP_LEN {
+        return Err(anyhow!("X11 setup header too large ({header_len} bytes)"));
+    }
+
+    while buf.len() < header_len {
+        let n = reader
+            .read(&mut chunk)
+            .await
+            .context("read X11 setup auth payload")?;
+        if n == 0 {
+            return Err(anyhow!("unexpected EOF while reading X11 setup payload"));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+
+    let proto_name = &buf[12..12 + proto_name_len];
+    let data_offset = 12 + x11_pad_len(proto_name_len);
+    let proto_data = &buf[data_offset..data_offset + proto_data_len];
+
+    if proto_name != b"MIT-MAGIC-COOKIE-1" || !constant_time_eq(proto_data, &auth.fake_cookie) {
+        return Err(anyhow!("X11 connection failed spoofed cookie verification"));
+    }
+
+    let real_name_len = u16::try_from(auth.real_protocol.len())
+        .context("local X11 auth protocol name exceeds u16")?;
+    let real_data_len =
+        u16::try_from(auth.real_data.len()).context("local X11 auth data exceeds u16")?;
+
+    let mut rewritten = Vec::with_capacity(
+        12 + x11_pad_len(auth.real_protocol.len())
+            + x11_pad_len(auth.real_data.len())
+            + (buf.len() - header_len),
+    );
+    rewritten.extend_from_slice(&buf[0..6]);
+    rewritten.extend_from_slice(&write_u16(real_name_len));
+    rewritten.extend_from_slice(&write_u16(real_data_len));
+    rewritten.extend_from_slice(&buf[10..12]);
+    rewritten.extend_from_slice(&auth.real_protocol);
+    rewritten.resize(
+        rewritten.len() + (x11_pad_len(auth.real_protocol.len()) - auth.real_protocol.len()),
+        0,
+    );
+    rewritten.extend_from_slice(&auth.real_data);
+    rewritten.resize(
+        rewritten.len() + (x11_pad_len(auth.real_data.len()) - auth.real_data.len()),
+        0,
+    );
+    rewritten.extend_from_slice(&buf[header_len..]);
+
+    Ok(rewritten)
+}
+
+fn x11_get_auth_from_reader<R: std::io::Read>(
+    mut reader: R,
+    family: Family,
+    address: &[u8],
+    display: u16,
+) -> std::io::Result<Option<(Vec<u8>, Vec<u8>)>> {
+    fn read_u16<R: std::io::Read>(r: &mut R) -> std::io::Result<u16> {
+        let mut buf = [0u8; 2];
+        r.read_exact(&mut buf)?;
+        Ok(u16::from_be_bytes(buf))
+    }
+
+    fn read_bytes<R: std::io::Read>(r: &mut R) -> std::io::Result<Vec<u8>> {
+        let len = read_u16(r)? as usize;
+        let mut buf = vec![0u8; len];
+        r.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    let display_str = display.to_string();
+    let display_bytes = display_str.as_bytes();
+
+    loop {
+        let entry_family = match read_u16(&mut reader) {
+            Ok(f) => Family::from(f),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let entry_address = read_bytes(&mut reader)?;
+        let entry_number = read_bytes(&mut reader)?;
+        let entry_name = read_bytes(&mut reader)?;
+        let entry_data = read_bytes(&mut reader)?;
+
+        let family_addr_matches = family == Family::WILD
+            || entry_family == Family::WILD
+            || (family == entry_family && address == entry_address.as_slice());
+        let number_matches = entry_number.is_empty() || entry_number == display_bytes;
+
+        if family_addr_matches && number_matches && entry_name == b"MIT-MAGIC-COOKIE-1" {
+            return Ok(Some((entry_name, entry_data)));
+        }
+    }
+}
+
+struct X11StateGuard {
+    state: X11RuntimeState,
+}
+
+impl Drop for X11StateGuard {
+    fn drop(&mut self) {
+        self.state.active.store(false, Ordering::Release);
+        *self.state.auth.lock().unwrap() = None;
+    }
+}
+
+async fn wait_x11_request_reply(channel: &mut Channel<Msg>) -> Result<()> {
+    let deadline = super::connection::SSH_NETWORK_TIMEOUT;
+    tokio::time::timeout(deadline, async {
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Success) => return Ok(()),
+                Some(ChannelMsg::Failure) => {
+                    return Err(anyhow!("server rejected X11 forwarding request"));
+                }
+                Some(ChannelMsg::WindowAdjusted { .. }) => continue,
+                Some(ChannelMsg::Close) | None => {
+                    return Err(anyhow!("channel closed before X11 request reply"));
+                }
+                Some(_) => continue,
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "request x11 reply timed out after {} seconds",
+            deadline.as_secs()
+        )
+    })?
+}
+
+async fn setup_x11_forwarding(
+    channel: &mut Channel<Msg>,
+    session: &Session,
+    x11_state: &X11RuntimeState,
+) -> Option<String> {
+    let trimmed_display = session.x11_display.trim();
+    let display = (!trimmed_display.is_empty()).then(|| trimmed_display.to_string());
+    let xauthority = session.x11_xauthority.clone();
+    let (screen, auth) = match tokio::task::spawn_blocking(
+        move || -> std::result::Result<(u16, X11AuthMaterial), String> {
+            let parsed_display = x11rb_protocol::parse_display::parse_display(display.as_deref())
+                .map_err(|e| {
+                tracing::warn!("parse x11 display failed: {e}");
+                format!(
+                    "{}: {e}",
+                    t(
+                        "X11 转发未启用，无法解析 DISPLAY",
+                        "X11 forwarding disabled: invalid DISPLAY",
+                    )
+                )
+            })?;
+            let target = resolve_x11_target(&parsed_display, cfg!(unix)).map_err(|e| {
+                tracing::warn!("resolve x11 target failed: {e}");
+                format!(
+                    "{}: {e}",
+                    t(
+                        "X11 转发未启用，无法解析 DISPLAY",
+                        "X11 forwarding disabled: invalid DISPLAY",
+                    )
+                )
+            })?;
+            let screen = parsed_display.screen;
+            let auth = x11_prepare_auth(parsed_display, target, xauthority).map_err(|e| {
+                tracing::warn!("get x11 auth data failed: {e:#}");
+                format!(
+                    "{}: {e:#}",
+                    t(
+                        "X11 转发未启用，读取 Xauthority 失败",
+                        "X11 forwarding disabled: failed to read Xauthority",
+                    )
+                )
+            })?;
+            Ok((screen, auth))
+        },
+    )
+    .await
+    {
+        Ok(Ok(prepared)) => prepared,
+        Ok(Err(warning)) => return Some(warning),
+        Err(e) => {
+            tracing::warn!("x11 auth task failed: {e}");
+            return Some(format!(
+                "{}: {e}",
+                t(
+                    "X11 转发未启用，认证初始化失败",
+                    "X11 forwarding disabled: auth setup failed",
+                )
+            ));
+        }
+    };
+
+    let fake_cookie_hex = encode_hex(&auth.fake_cookie);
+    *x11_state.auth.lock().unwrap() = Some(auth);
+    x11_state.active.store(true, Ordering::Release);
+
+    let send_res = network_stage(
+        &format!("request x11 at {}:{}", session.host, session.port),
+        channel.request_x11(
+            true,
+            false,
+            "MIT-MAGIC-COOKIE-1",
+            fake_cookie_hex,
+            screen as u32,
+        ),
+    )
+    .await;
+
+    let reply_res = match send_res {
+        Ok(()) => wait_x11_request_reply(channel).await,
+        Err(e) => Err(e),
+    };
+
+    if let Err(err) = reply_res {
+        *x11_state.auth.lock().unwrap() = None;
+        x11_state.active.store(false, Ordering::Release);
+        tracing::warn!("x11 forwarding request failed: {err:#}");
+        return Some(format!(
+            "{}: {err:#}",
+            t(
+                "X11 转发请求被拒绝或失败，将继续连接普通终端",
+                "X11 forwarding unavailable; continuing without X11",
+            )
+        ));
+    }
+
+    None
+}
+
 async fn run_session(
     session: Session,
     jump: Vec<Session>,
@@ -1844,7 +2374,7 @@ async fn run_session(
 
     let config = ssh_client_config();
 
-    let (mut handle, mut jump_handle, mut remote_forwards) =
+    let (mut handle, mut jump_handle, mut remote_forwards, mut x11_state) =
         connect_ssh(&session, &jump, config.clone(), &events).await?;
     tracing::info!(
         "[SESSION_START] id={} stage=transport-ready elapsed_ms={}",
@@ -1860,6 +2390,7 @@ async fn run_session(
         &mut handle,
         &mut jump_handle,
         &mut remote_forwards,
+        &mut x11_state,
         &session,
         &jump,
         config.clone(),
@@ -1897,6 +2428,9 @@ async fn run_session(
     // Keep the jump-host connection alive for the whole session — the direct-tcpip
     // tunnel that carries this session rides on it (#211).
     let _jump_keepalive = jump_handle;
+    let _x11_state_guard = X11StateGuard {
+        state: x11_state.clone(),
+    };
 
     // The integration body is Bash/Zsh-specific. Probe out-of-band before the
     // interactive channel exists, so ash/dash/fish/unknown shells never receive
@@ -1914,6 +2448,12 @@ async fn run_session(
         handle.channel_open_session(),
     )
     .await?;
+
+    let x11_warning = if session.x11_forwarding_enabled {
+        setup_x11_forwarding(&mut channel, &session, &x11_state).await
+    } else {
+        None
+    };
 
     network_stage(
         &format!("request PTY at {}:{}", session.host, session.port),
@@ -1947,6 +2487,11 @@ async fn run_session(
         session.user,
         session.host
     )));
+    if let Some(warning) = x11_warning {
+        let _ = events.send(SessionEvent::Output(format!(
+            "\r\n[meatshell] {warning}\r\n"
+        )));
+    }
 
     // Whether we have already injected the PROMPT_COMMAND setup.
     // We wait for the first non-empty data chunk (the initial shell prompt)
@@ -3267,6 +3812,7 @@ pub(crate) struct ClientHandler {
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) remote_forwards: RemoteForwardMap,
+    pub(crate) x11_state: X11RuntimeState,
     pub(crate) events: UnboundedSender<SessionEvent>,
     host_key_wait: HostKeyWait,
 }
@@ -3478,6 +4024,182 @@ impl Handler for ClientHandler {
         });
         Ok(())
     }
+
+    async fn server_channel_open_x11(
+        &mut self,
+        channel: Channel<Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let auth = if self.x11_state.active.load(Ordering::Acquire) {
+            self.x11_state.auth.lock().unwrap().clone()
+        } else {
+            None
+        };
+        let Some(auth) = auth else {
+            tracing::warn!(
+                "rejected unsolicited x11 channel open from {}:{}",
+                self.host,
+                self.port
+            );
+            tokio::spawn(async move {
+                let _ = channel.close().await;
+            });
+            return Ok(());
+        };
+
+        match auth.target.clone() {
+            X11Target::Unix(path) => {
+                #[cfg(unix)]
+                {
+                    tokio::spawn(async move {
+                        forward_x11_channel(
+                            channel,
+                            auth,
+                            &path,
+                            tokio::net::UnixStream::connect(&path),
+                        )
+                        .await;
+                    });
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = path;
+                    tokio::spawn(async move {
+                        let _ = channel.close().await;
+                    });
+                }
+            }
+            X11Target::Tcp { host, port } => {
+                tokio::spawn(async move {
+                    let label = format!("{host}:{port}");
+                    forward_x11_channel(
+                        channel,
+                        auth,
+                        &label,
+                        tokio::net::TcpStream::connect((host.as_str(), port)),
+                    )
+                    .await;
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+async fn forward_x11_channel<S, F>(
+    channel: Channel<Msg>,
+    auth: X11AuthMaterial,
+    target_label: &str,
+    connect_fut: F,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+    F: std::future::Future<Output = std::io::Result<S>>,
+{
+    forward_x11_stream(channel.into_stream(), auth, target_label, connect_fut).await;
+}
+
+async fn forward_x11_stream<R, S, F>(
+    mut remote: R,
+    auth: X11AuthMaterial,
+    target_label: &str,
+    connect_fut: F,
+) where
+    R: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
+    F: std::future::Future<Output = std::io::Result<S>>,
+{
+    let initial_payload = match tokio::time::timeout(
+        super::connection::SSH_NETWORK_TIMEOUT,
+        read_and_rewrite_x11_setup(&mut remote, &auth),
+    )
+    .await
+    {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(e)) => {
+            tracing::warn!("rejected x11 connection: {e:#}");
+            let _ = remote.shutdown().await;
+            return;
+        }
+        Err(_) => {
+            tracing::warn!("timed out waiting for x11 client setup packet");
+            let _ = remote.shutdown().await;
+            return;
+        }
+    };
+
+    match connect_fut.await {
+        Ok(mut local) => {
+            if let Err(e) = local.write_all(&initial_payload).await {
+                tracing::warn!("failed to write x11 setup to {target_label}: {e}");
+                let _ = remote.shutdown().await;
+                return;
+            }
+            let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+        }
+        Err(e) => {
+            tracing::warn!("failed to connect to {target_label}: {e}");
+            let _ = remote.shutdown().await;
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum X11Target {
+    Unix(String),
+    Tcp { host: String, port: u16 },
+}
+
+fn resolve_x11_target(
+    parsed: &ParsedDisplay,
+    prefer_unix_socket: bool,
+) -> std::result::Result<X11Target, String> {
+    if prefer_unix_socket {
+        match parsed.protocol.as_deref() {
+            Some("unix") => {
+                let path = if parsed.host.is_empty() {
+                    format!("/tmp/.X11-unix/X{}", parsed.display)
+                } else {
+                    parsed.host.clone()
+                };
+                return Ok(X11Target::Unix(path));
+            }
+            None if parsed.host.is_empty() => {
+                return Ok(X11Target::Unix(format!(
+                    "/tmp/.X11-unix/X{}",
+                    parsed.display
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    match parsed.protocol.as_deref() {
+        None | Some("tcp") | Some("inet") | Some("inet6") => {
+            let port = 6000u16
+                .checked_add(parsed.display)
+                .ok_or_else(|| format!("display number {} overflows TCP port", parsed.display))?;
+            let trimmed_host = parsed
+                .host
+                .strip_prefix('[')
+                .and_then(|s| s.strip_suffix(']'))
+                .unwrap_or(parsed.host.as_str());
+            let host = if trimmed_host.is_empty() {
+                if parsed.protocol.as_deref() == Some("inet6") {
+                    "::1"
+                } else {
+                    "127.0.0.1"
+                }
+                .to_string()
+            } else {
+                trimmed_host.to_string()
+            };
+            Ok(X11Target::Tcp { host, port })
+        }
+        Some(protocol) => Err(format!("unsupported DISPLAY protocol: {protocol}")),
+    }
 }
 
 // Marker trait impl so `Arc<Handle<Handler>>` is nameable in external code.
@@ -3485,6 +4207,508 @@ impl Handler for ClientHandler {
 fn _assert_handle_send() {
     fn takes<T: Send>() {}
     takes::<Handle<ClientHandler>>();
+}
+
+#[cfg(test)]
+mod x11_target_tests {
+    use super::{
+        forward_x11_stream, read_and_rewrite_x11_setup, resolve_x11_target, x11_auth_lookup_params,
+        x11_get_auth_from_reader, x11_lookup_local_auth_with_env, x11_pad_len, x11_prepare_auth,
+        Ordering, X11AuthMaterial, X11RuntimeState, X11StateGuard, X11Target,
+    };
+    use std::io::Cursor;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use x11rb_protocol::parse_display::{parse_display, parse_display_with_file_exists_callback};
+    use x11rb_protocol::xauth::Family;
+
+    #[test]
+    fn empty_host_display_uses_unix_socket_on_unix_and_loopback_tcp_elsewhere() {
+        let parsed = parse_display(Some(":0.0")).unwrap();
+        assert_eq!(
+            resolve_x11_target(&parsed, true).unwrap(),
+            X11Target::Unix("/tmp/.X11-unix/X0".to_string())
+        );
+        assert_eq!(
+            resolve_x11_target(&parsed, false).unwrap(),
+            X11Target::Tcp {
+                host: "127.0.0.1".to_string(),
+                port: 6000,
+            }
+        );
+    }
+
+    #[test]
+    fn unix_protocol_supports_explicit_path_and_display_number() {
+        let path_disp =
+            parse_display_with_file_exists_callback("/tmp/.X11-unix/X2", |_| true).unwrap();
+        assert_eq!(
+            resolve_x11_target(&path_disp, true).unwrap(),
+            X11Target::Unix("/tmp/.X11-unix/X2".to_string())
+        );
+        assert!(resolve_x11_target(&path_disp, false).is_err());
+
+        let unix_disp = parse_display(Some("unix/:3")).unwrap();
+        assert_eq!(
+            resolve_x11_target(&unix_disp, true).unwrap(),
+            X11Target::Unix("/tmp/.X11-unix/X3".to_string())
+        );
+    }
+
+    #[test]
+    fn tcp_localhost_ipv6_and_overflow_are_handled_safely() {
+        let local = parse_display(Some("localhost:10")).unwrap();
+        assert_eq!(
+            resolve_x11_target(&local, true).unwrap(),
+            X11Target::Tcp {
+                host: "localhost".to_string(),
+                port: 6010,
+            }
+        );
+
+        let v6 = parse_display(Some("[::1]:1.0")).unwrap();
+        assert_eq!(
+            resolve_x11_target(&v6, true).unwrap(),
+            X11Target::Tcp {
+                host: "::1".to_string(),
+                port: 6001,
+            }
+        );
+
+        let tcp = parse_display(Some("tcp/localhost:10")).unwrap();
+        assert_eq!(
+            resolve_x11_target(&tcp, false).unwrap(),
+            X11Target::Tcp {
+                host: "localhost".to_string(),
+                port: 6010,
+            }
+        );
+
+        let overflow = parse_display(Some(":60000")).unwrap();
+        assert!(resolve_x11_target(&overflow, false).is_err());
+    }
+
+    #[test]
+    fn auth_lookup_params_map_local_loopback_and_ip_addresses() {
+        let expected_hostname = hostname::get()
+            .unwrap()
+            .into_string()
+            .unwrap_or_default()
+            .into_bytes();
+
+        for local in [":0.0", "unix/:0", "localhost:10", "127.0.0.1:0", "[::1]:0"] {
+            let parsed = parse_display(Some(local)).unwrap();
+            let (family, addr) = x11_auth_lookup_params(&parsed).unwrap();
+            assert_eq!(family, Family::LOCAL, "display={local}");
+            assert_eq!(addr, expected_hostname, "display={local}");
+        }
+
+        let v4 = parse_display(Some("192.168.1.10:2")).unwrap();
+        assert_eq!(
+            x11_auth_lookup_params(&v4).unwrap(),
+            (Family::INTERNET, vec![192, 168, 1, 10])
+        );
+
+        let v6 = parse_display(Some("[fe80::1]:1")).unwrap();
+        let (v6_family, v6_addr) = x11_auth_lookup_params(&v6).unwrap();
+        assert_eq!(v6_family, Family::INTERNET6);
+        assert_eq!(v6_addr.len(), 16);
+    }
+
+    fn build_xauth_entry(family: u16, address: &[u8], display: &str, cookie: &[u8]) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(&family.to_be_bytes());
+        data.extend_from_slice(&(address.len() as u16).to_be_bytes());
+        data.extend_from_slice(address);
+        data.extend_from_slice(&(display.len() as u16).to_be_bytes());
+        data.extend_from_slice(display.as_bytes());
+        data.extend_from_slice(&(b"MIT-MAGIC-COOKIE-1".len() as u16).to_be_bytes());
+        data.extend_from_slice(b"MIT-MAGIC-COOKIE-1");
+        data.extend_from_slice(&(cookie.len() as u16).to_be_bytes());
+        data.extend_from_slice(cookie);
+        data
+    }
+
+    #[test]
+    fn reads_matching_cookie_from_xauthority_reader() {
+        let data = build_xauth_entry(0, &[127, 0, 0, 1], "0", &[1, 2, 3, 4]);
+
+        let found =
+            x11_get_auth_from_reader(Cursor::new(&data), Family::INTERNET, &[127, 0, 0, 1], 0)
+                .unwrap();
+        assert_eq!(
+            found,
+            Some((b"MIT-MAGIC-COOKIE-1".to_vec(), vec![1, 2, 3, 4]))
+        );
+
+        let missing =
+            x11_get_auth_from_reader(Cursor::new(&data), Family::INTERNET, &[127, 0, 0, 1], 1)
+                .unwrap();
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn x11_prepare_auth_uses_spoofed_cookie_and_handles_missing_entries_or_files() {
+        let cookie = [
+            0xde, 0xad, 0xbe, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x10, 0x20,
+            0x30, 0x40,
+        ];
+        let entry = build_xauth_entry(0, &[192, 168, 1, 10], "2", &cookie);
+        let path =
+            std::env::temp_dir().join(format!("meatshell-test-xauth-{}.bin", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &entry).unwrap();
+
+        let parsed_match = parse_display(Some("192.168.1.10:2")).unwrap();
+        let target_match = resolve_x11_target(&parsed_match, cfg!(unix)).unwrap();
+        let auth = x11_prepare_auth(
+            parsed_match,
+            target_match.clone(),
+            path.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        assert_eq!(auth.target, target_match);
+        assert_eq!(auth.real_protocol, b"MIT-MAGIC-COOKIE-1");
+        assert_eq!(auth.real_data, cookie);
+        assert_ne!(auth.fake_cookie, cookie);
+        assert_ne!(auth.fake_cookie, [0u8; 16]);
+
+        let parsed_miss = parse_display(Some("192.168.1.10:9")).unwrap();
+        let target_miss = resolve_x11_target(&parsed_miss, cfg!(unix)).unwrap();
+        let unmatched = x11_prepare_auth(
+            parsed_miss.clone(),
+            target_miss.clone(),
+            path.to_string_lossy().into_owned(),
+        )
+        .unwrap();
+        assert_eq!(unmatched.target, target_miss);
+        assert!(unmatched.real_protocol.is_empty());
+        assert!(unmatched.real_data.is_empty());
+        assert_ne!(unmatched.fake_cookie, [0u8; 16]);
+
+        let _ = std::fs::remove_file(&path);
+        assert!(x11_prepare_auth(
+            parsed_miss,
+            target_miss,
+            path.to_string_lossy().into_owned()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn x11_lookup_local_auth_handles_missing_default_and_non_utf8_env() {
+        let parsed = parse_display(Some("192.168.1.10:2")).unwrap();
+
+        // Missing home directory degrades cleanly to Ok(None).
+        assert_eq!(
+            x11_lookup_local_auth_with_env(&parsed, "", None, None).unwrap(),
+            None
+        );
+
+        // Missing default ~/.Xauthority also degrades cleanly to Ok(None).
+        let temp_home =
+            std::env::temp_dir().join(format!("meatshell-test-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_home).unwrap();
+        assert_eq!(
+            x11_lookup_local_auth_with_env(&parsed, "", None, Some(temp_home.clone())).unwrap(),
+            None
+        );
+
+        // Present default ~/.Xauthority is read cleanly, and ~/ or ~\ expands using the same home dir.
+        let cookie = [0x55u8; 16];
+        let entry = build_xauth_entry(0, &[192, 168, 1, 10], "2", &cookie);
+        std::fs::write(temp_home.join(".Xauthority"), &entry).unwrap();
+        assert_eq!(
+            x11_lookup_local_auth_with_env(&parsed, "", None, Some(temp_home.clone())).unwrap(),
+            Some((b"MIT-MAGIC-COOKIE-1".to_vec(), cookie.to_vec()))
+        );
+        assert_eq!(
+            x11_lookup_local_auth_with_env(&parsed, "~/.Xauthority", None, Some(temp_home.clone()))
+                .unwrap(),
+            Some((b"MIT-MAGIC-COOKIE-1".to_vec(), cookie.to_vec()))
+        );
+        assert_eq!(
+            x11_lookup_local_auth_with_env(
+                &parsed,
+                "",
+                Some(std::ffi::OsStr::new("~\\.Xauthority")),
+                Some(temp_home.clone()),
+            )
+            .unwrap(),
+            Some((b"MIT-MAGIC-COOKIE-1".to_vec(), cookie.to_vec()))
+        );
+        let _ = std::fs::remove_dir_all(&temp_home);
+
+        // Non-UTF-8 XAUTHORITY env value must not panic on to_str().
+        #[cfg(unix)]
+        let non_utf8 = {
+            use std::os::unix::ffi::OsStringExt as _;
+            std::ffi::OsString::from_vec(vec![b'/', b't', b'm', b'p', b'/', 0xff, b'x'])
+        };
+        #[cfg(windows)]
+        let non_utf8 = {
+            use std::os::windows::ffi::OsStringExt as _;
+            std::ffi::OsString::from_wide(&[b'Z' as u16, b':' as u16, b'\\' as u16, 0xD800])
+        };
+        assert!(
+            x11_lookup_local_auth_with_env(&parsed, "", Some(non_utf8.as_os_str()), None).is_err()
+        );
+    }
+
+    fn build_x11_setup_packet(
+        byte_order: u8,
+        proto_name: &[u8],
+        proto_data: &[u8],
+        trailing: &[u8],
+    ) -> Vec<u8> {
+        let enc = |v: u16| -> [u8; 2] {
+            if byte_order == b'B' {
+                v.to_be_bytes()
+            } else {
+                v.to_le_bytes()
+            }
+        };
+        let mut pkt = Vec::new();
+        pkt.push(byte_order);
+        pkt.push(0);
+        pkt.extend_from_slice(&enc(11));
+        pkt.extend_from_slice(&enc(0));
+        pkt.extend_from_slice(&enc(proto_name.len() as u16));
+        pkt.extend_from_slice(&enc(proto_data.len() as u16));
+        pkt.extend_from_slice(&[0, 0]);
+        pkt.extend_from_slice(proto_name);
+        pkt.resize(
+            pkt.len() + (x11_pad_len(proto_name.len()) - proto_name.len()),
+            0,
+        );
+        pkt.extend_from_slice(proto_data);
+        pkt.resize(
+            pkt.len() + (x11_pad_len(proto_data.len()) - proto_data.len()),
+            0,
+        );
+        pkt.extend_from_slice(trailing);
+        pkt
+    }
+
+    #[tokio::test]
+    async fn rewrites_spoofed_cookie_in_little_endian_and_strips_when_no_local_auth() {
+        let fake = [0x11u8; 16];
+        let real = [0x99u8; 16];
+        let auth = X11AuthMaterial {
+            target: X11Target::Unix("/tmp/.X11-unix/X0".to_string()),
+            fake_cookie: fake,
+            real_protocol: b"MIT-MAGIC-COOKIE-1".to_vec(),
+            real_data: real.to_vec(),
+        };
+        let trailing = b"\x2b\x00\x01\x00";
+        let incoming = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &fake, trailing);
+        let expected = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &real, trailing);
+
+        // Deliver header and auth payload in small chunks across a duplex stream.
+        let (mut writer, mut reader) = tokio::io::duplex(256);
+        let write_task = tokio::spawn(async move {
+            writer.write_all(&incoming[..7]).await.unwrap();
+            writer.write_all(&incoming[7..20]).await.unwrap();
+            writer.write_all(&incoming[20..]).await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+        let rewritten = read_and_rewrite_x11_setup(&mut reader, &auth)
+            .await
+            .unwrap();
+        write_task.await.unwrap();
+        assert_eq!(rewritten, expected);
+
+        let no_local_auth = X11AuthMaterial {
+            target: X11Target::Unix("/tmp/.X11-unix/X0".to_string()),
+            fake_cookie: fake,
+            real_protocol: Vec::new(),
+            real_data: Vec::new(),
+        };
+        let incoming_be = build_x11_setup_packet(b'B', b"MIT-MAGIC-COOKIE-1", &fake, trailing);
+        let expected_be = build_x11_setup_packet(b'B', b"", b"", trailing);
+        let rewritten_be =
+            read_and_rewrite_x11_setup(&mut Cursor::new(incoming_be), &no_local_auth)
+                .await
+                .unwrap();
+        assert_eq!(rewritten_be, expected_be);
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_x11_cookie_protocol_or_header() {
+        let auth = X11AuthMaterial {
+            target: X11Target::Unix("/tmp/.X11-unix/X0".to_string()),
+            fake_cookie: [0x22u8; 16],
+            real_protocol: b"MIT-MAGIC-COOKIE-1".to_vec(),
+            real_data: vec![0x33u8; 16],
+        };
+
+        let wrong_cookie = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &[0x44u8; 16], &[]);
+        assert!(
+            read_and_rewrite_x11_setup(&mut Cursor::new(wrong_cookie), &auth)
+                .await
+                .is_err()
+        );
+
+        let wrong_proto = build_x11_setup_packet(b'l', b"XDM-AUTHORIZATION-1", &[0x22u8; 16], &[]);
+        assert!(
+            read_and_rewrite_x11_setup(&mut Cursor::new(wrong_proto), &auth)
+                .await
+                .is_err()
+        );
+
+        let bad_endian = build_x11_setup_packet(b'X', b"MIT-MAGIC-COOKIE-1", &[0x22u8; 16], &[]);
+        assert!(
+            read_and_rewrite_x11_setup(&mut Cursor::new(bad_endian), &auth)
+                .await
+                .is_err()
+        );
+
+        let mut oversized = vec![b'l', 0, 11, 0, 0, 0];
+        oversized.extend_from_slice(&20_000u16.to_le_bytes());
+        oversized.extend_from_slice(&16u16.to_le_bytes());
+        oversized.extend_from_slice(&[0, 0]);
+        assert!(
+            read_and_rewrite_x11_setup(&mut Cursor::new(oversized), &auth)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn x11_runtime_state_is_isolated_per_connection() {
+        let conn_a = X11RuntimeState::default();
+        let conn_b = X11RuntimeState::default();
+
+        assert!(!conn_a.active.load(Ordering::Relaxed));
+        assert!(conn_a.auth.lock().unwrap().is_none());
+        assert!(!conn_b.active.load(Ordering::Relaxed));
+        assert!(conn_b.auth.lock().unwrap().is_none());
+
+        let guard_a = X11StateGuard {
+            state: conn_a.clone(),
+        };
+        let _guard_b = X11StateGuard {
+            state: conn_b.clone(),
+        };
+
+        conn_a.active.store(true, Ordering::Release);
+        *conn_a.auth.lock().unwrap() = Some(X11AuthMaterial {
+            target: X11Target::Unix("/tmp/.X11-unix/X0".to_string()),
+            fake_cookie: [0xcc; 16],
+            real_protocol: b"MIT-MAGIC-COOKIE-1".to_vec(),
+            real_data: vec![0xdd; 16],
+        });
+        conn_b.active.store(true, Ordering::Release);
+        *conn_b.auth.lock().unwrap() = Some(X11AuthMaterial {
+            target: X11Target::Tcp {
+                host: "127.0.0.1".to_string(),
+                port: 6010,
+            },
+            fake_cookie: [0xee; 16],
+            real_protocol: b"MIT-MAGIC-COOKIE-1".to_vec(),
+            real_data: vec![0xff; 16],
+        });
+
+        drop(guard_a);
+
+        assert!(!conn_a.active.load(Ordering::Acquire));
+        assert!(conn_a.auth.lock().unwrap().is_none());
+        assert!(conn_b.active.load(Ordering::Acquire));
+        assert_eq!(
+            conn_b.auth.lock().unwrap().as_ref().unwrap().fake_cookie,
+            [0xee; 16]
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_x11_stream_rewrites_setup_and_proxies_bidirectional_tcp() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let label = addr.to_string();
+
+        let fake = [0x12u8; 16];
+        let real = [0x9au8; 16];
+        let auth = X11AuthMaterial {
+            target: X11Target::Tcp {
+                host: addr.ip().to_string(),
+                port: addr.port(),
+            },
+            fake_cookie: fake,
+            real_protocol: b"MIT-MAGIC-COOKIE-1".to_vec(),
+            real_data: real.to_vec(),
+        };
+
+        let trailing = b"\x01\x02\x03\x04";
+        let incoming_setup = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &fake, trailing);
+        let expected_setup = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &real, trailing);
+        let server_reply = b"X11_SERVER_OK";
+        let client_msg = b"X11_CLIENT_MSG";
+
+        let (mut channel_peer, forward_remote) = tokio::io::duplex(1024);
+        let auth_for_fwd = auth.clone();
+        let label_for_fwd = label.clone();
+        let forward_task = tokio::spawn(async move {
+            forward_x11_stream(
+                forward_remote,
+                auth_for_fwd,
+                &label_for_fwd,
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await;
+        });
+
+        let server_task = tokio::spawn(async move {
+            let (mut local_sock, _) = listener.accept().await.unwrap();
+            let mut got_setup = vec![0u8; expected_setup.len()];
+            local_sock.read_exact(&mut got_setup).await.unwrap();
+            assert_eq!(got_setup, expected_setup);
+
+            local_sock.write_all(server_reply).await.unwrap();
+
+            let mut got_client = Vec::new();
+            local_sock.read_to_end(&mut got_client).await.unwrap();
+            assert_eq!(got_client, client_msg);
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            channel_peer.write_all(&incoming_setup).await.unwrap();
+
+            let mut got_reply = vec![0u8; server_reply.len()];
+            channel_peer.read_exact(&mut got_reply).await.unwrap();
+            assert_eq!(got_reply, server_reply);
+
+            channel_peer.write_all(client_msg).await.unwrap();
+            channel_peer.shutdown().await.unwrap();
+
+            server_task.await.unwrap();
+            forward_task.await.unwrap();
+        })
+        .await
+        .unwrap();
+
+        // Invalid spoofed cookie must drop before connecting to the local X11 listener.
+        let (mut bad_peer, bad_remote) = tokio::io::duplex(1024);
+        let connect_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connect_called_clone = connect_called.clone();
+        let bad_setup = build_x11_setup_packet(b'l', b"MIT-MAGIC-COOKIE-1", &[0xffu8; 16], &[]);
+
+        let bad_forward = tokio::spawn(async move {
+            forward_x11_stream(bad_remote, auth, &label, async move {
+                connect_called_clone.store(true, Ordering::Release);
+                tokio::net::TcpStream::connect(addr).await
+            })
+            .await;
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            bad_peer.write_all(&bad_setup).await.unwrap();
+            bad_forward.await.unwrap();
+        })
+        .await
+        .unwrap();
+        assert!(
+            !connect_called.load(Ordering::Acquire),
+            "rejected X11 setup must not connect to local X server"
+        );
+    }
 }
 
 #[cfg(test)]

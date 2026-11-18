@@ -258,4 +258,18 @@ mod tests {
         assert_eq!(rows.row_data(0).unwrap().choice, 0);
         assert_eq!(rows.row_data(1).unwrap().choice, 1);
     }
+
+    #[test]
+    fn session_from_draft_maps_x11_fields() {
+        let mut draft = SessionDraft::default();
+        draft.kind = "ssh".into();
+        draft.x11_forwarding_enabled = true;
+        draft.x11_display = "localhost:10.0".into();
+        draft.x11_xauthority = "/tmp/custom.Xauthority".into();
+
+        let session = session_from_draft(&draft, None, vec![], vec![]);
+        assert!(session.x11_forwarding_enabled);
+        assert_eq!(session.x11_display, "localhost:10.0");
+        assert_eq!(session.x11_xauthority, "/tmp/custom.Xauthority");
+    }
 }

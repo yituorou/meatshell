@@ -1088,16 +1088,26 @@ export component InterfacePanel inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 content-width: self.visible-width;
-                content-height: max(self.visible-height, settings-pages.preferred-height);
+                // `settings-pages-end.y` reflects the true laid-out height
+                // after conditional pages wrap text at `visible-width`
+                // (Slint queries conditional sub-layouts without a cross-width
+                // constraint for `preferred-height`).
+                content-height: max(self.visible-height, settings-pages.preferred-height, settings-pages-end.y);
 
                 settings-pages := VerticalLayout {
+                    x: 0px;
+                    y: 0px;
                     width: settings-scroll.visible-width;
+                    height: self.preferred-height;
+                    alignment: start;
+                    spacing: 0px;
 
             // --- Font page ---------------------------------------------
             if root.ifd-page == "font" : VerticalLayout {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
 
@@ -1227,6 +1237,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
 
@@ -1265,6 +1276,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
 
@@ -1881,6 +1893,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
 
@@ -1973,6 +1986,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
 
@@ -2186,6 +2200,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
                 SectionHeader { text: "SFTP"; height: 24px; }
@@ -2274,6 +2289,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 8px;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "LOCAL SHELLS" : "本地终端"; height: 24px; }
@@ -2381,6 +2397,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 8px;
                 alignment: start;
                 SectionHeader { text: "WSL"; height: 24px; }
@@ -2459,6 +2476,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 8px;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "AI AGENTS" : "AI 智能体"; height: 24px; }
@@ -2543,6 +2561,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "SIDEBARS" : "侧栏"; height: 24px; }
@@ -2609,6 +2628,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "SESSION SYNC" : "会话同步"; height: 24px; }
@@ -2637,6 +2657,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 10px;
                 alignment: start;
                 SectionHeader { text: "WEBDAV"; height: 24px; }
@@ -2717,6 +2738,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "DOWNLOAD" : "下载"; height: 24px; }
@@ -2738,6 +2760,7 @@ export component InterfacePanel inherits Rectangle {
                 padding-left: 20px;
                 padding-right: 20px;
                 padding-top: 14px;
+                padding-bottom: 24px;
                 spacing: 0;
                 alignment: start;
                 SectionHeader { text: root.lang-en ? "SESSION LOG" : "会话日志"; height: 24px; }
@@ -3134,7 +3157,7 @@ export component InterfacePanel inherits Rectangle {
                     }
                 }
             }
-
+                settings-pages-end := Rectangle { height: 0px; }
                 }
             }
         }

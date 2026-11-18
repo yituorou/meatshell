@@ -199,6 +199,9 @@ pub(super) fn wire_session_callbacks(
             w.set_dialog_jumps(ModelRc::default());
             w.set_dialog_allow_secret_reveal(false);
             w.set_dialog_allow_mcp_access(true);
+            w.set_dialog_x11_forwarding_enabled(false);
+            w.set_dialog_x11_display("".into());
+            w.set_dialog_x11_xauthority("".into());
             w.set_dialog_id(empty.id.into());
             w.set_dialog_name("".into());
             w.set_dialog_host("".into());
@@ -494,6 +497,9 @@ pub(super) fn wire_session_callbacks(
                 w.set_dialog_jumps(session_editor::jump_rows(ids, &jump_ids));
                 w.set_dialog_allow_secret_reveal(session.allow_secret_reveal);
                 w.set_dialog_allow_mcp_access(session.mcp_access);
+                w.set_dialog_x11_forwarding_enabled(session.x11_forwarding_enabled);
+                w.set_dialog_x11_display(session.x11_display.clone().into());
+                w.set_dialog_x11_xauthority(session.x11_xauthority.clone().into());
                 w.set_jump_choices(jump_labels);
                 w.set_jump_ids(jump_ids);
                 w.set_dialog_group(session.group.clone().into());

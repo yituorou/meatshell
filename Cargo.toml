@@ -146,6 +146,12 @@ tar = "0.4"
 # .ico embedded by winresource at link time; on macOS from the app bundle.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
 
+# X11 DISPLAY parsing and .Xauthority lookup for SSH X11 forwarding (matches the
+# 0.13.x version already in the dependency tree via winit/x11rb).
+x11rb-protocol = "0.13"
+# Local hostname lookup when resolving Family::LOCAL entries in .Xauthority.
+hostname = "0.4.2"
+
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 # Keep SSH sessions alive after the main window is hidden in the system tray.
 # Not on macOS (#486): tray-icon brings muda 0.20, while Slint's winit backend

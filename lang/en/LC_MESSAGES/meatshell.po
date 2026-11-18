@@ -369,8 +369,8 @@ msgstr "Search history"
 msgid "Port forwarding"
 msgstr "Port forwarding"
 
-msgid "Advanced (encoding, proxy, tunnels)"
-msgstr "Advanced (encoding, proxy, tunnels)"
+msgid "Advanced (encoding, proxy, tunnels, X11 forwarding)"
+msgstr "Advanced (encoding, proxy, tunnels, X11 forwarding)"
 
 msgid "Terminal character encoding"
 msgstr "Terminal character encoding"
@@ -419,6 +419,24 @@ msgstr "-R: server port → target reached from here"
 
 msgid "-D: local SOCKS5 proxy"
 msgstr "-D: local SOCKS5 proxy"
+
+msgid "X11 forwarding"
+msgstr "X11 forwarding"
+
+msgid "Enable X11 forwarding"
+msgstr "Enable X11 forwarding"
+
+msgid "DISPLAY"
+msgstr "DISPLAY"
+
+msgid ":0.0 (Leave blank to use environment variables)"
+msgstr ":0.0 (Leave blank to use environment variables)"
+
+msgid "XAUTHORITY"
+msgstr "XAUTHORITY"
+
+msgid ".Xauthority (Leave blank to use environment variables)"
+msgstr ".Xauthority (Leave blank to use environment variables)"
 
 msgid "meatshell — a lightweight Rust + Slint SSH client by 'lil meatball'"
 msgstr "meatshell — a lightweight Rust + Slint SSH client by 'lil meatball'"

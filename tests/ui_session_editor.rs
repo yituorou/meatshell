@@ -60,9 +60,15 @@ slint::slint! {
         in-out property <string> rdp-cert: "ignore";
         in-out property <string> rdp-extra;
         in-out property <bool> rdp-sound: false;
+        in-out property <bool> x11-enabled: false;
+        in-out property <string> x11-display;
+        in-out property <string> x11-xauthority;
         out property <string> saved-rdp-cert;
         out property <string> saved-rdp-extra;
         out property <bool> saved-rdp-sound;
+        out property <bool> saved-x11-enabled;
+        out property <string> saved-x11-display;
+        out property <string> saved-x11-xauthority;
         callback save-current();
         save-current => { editor.submit-current(); }
         init => {
@@ -77,6 +83,9 @@ slint::slint! {
                 root.saved-rdp-cert = draft.rdp-cert-policy;
                 root.saved-rdp-extra = draft.rdp-extra-args;
                 root.saved-rdp-sound = draft.rdp-sound;
+                root.saved-x11-enabled = draft.x11-forwarding-enabled;
+                root.saved-x11-display = draft.x11-display;
+                root.saved-x11-xauthority = draft.x11-xauthority;
             }
             stop-test => { root.stop-count += 1; }
             closed => { root.closed-count += 1; }
@@ -92,6 +101,9 @@ slint::slint! {
             draft-rdp-cert-policy <=> root.rdp-cert;
             draft-rdp-extra-args <=> root.rdp-extra;
             draft-rdp-sound <=> root.rdp-sound;
+            draft-x11-forwarding-enabled <=> root.x11-enabled;
+            draft-x11-display <=> root.x11-display;
+            draft-x11-xauthority <=> root.x11-xauthority;
             draft-note: "Example route, no real credentials";
             allow-secret-reveal: true;
             jump-choices: ["Select a jump host", "Bastion A (demo@a.example.invalid:22)", "Bastion B (demo@b.example.invalid:22)"];
@@ -106,6 +118,7 @@ slint::slint! {
     export component ShortDialogFixture inherits Window {
         width: 700px; height: 600px;
         out property <int> submit-count: 0;
+        out property <int> add-trigger-count: 0;
         init => {
             Theme.ui-font-family = "Microsoft YaHei";
             Palette.color-scheme = ColorScheme.dark;
@@ -117,6 +130,7 @@ slint::slint! {
             draft-host: "target.example.invalid";
             draft-user: "demo";
             show-advanced: true;
+            add-trigger => { root.add-trigger-count += 1; }
             submit(draft) => { root.submit-count += 1; }
         }
     }
@@ -502,6 +516,50 @@ fn create_button_stays_reachable_with_advanced_options_in_a_short_window() {
 }
 
 #[test]
+fn advanced_session_body_scrolls_to_bottom_trigger_button_without_occlusion() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend { window: window.clone(), clipboard: Rc::default() })).unwrap();
+        let ui = ShortDialogFixture::new().unwrap();
+        ui.show().unwrap();
+        window.set_size(slint::PhysicalSize::new(700, 600));
+        let render_short = || {
+            slint::platform::update_timers_and_animations();
+            let mut pixels = vec![Rgb8Pixel::default(); 700 * 600];
+            window.request_redraw();
+            window.draw_if_needed(|r| { r.render(&mut pixels, 700); });
+            slint::platform::update_timers_and_animations();
+            pixels
+        };
+        render_short();
+        for _ in 0..40 {
+            window.dispatch_event(WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(350., 300.),
+            });
+            window.dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(350., 300.),
+                delta_x: 0.0,
+                delta_y: -120.0,
+            });
+            render_short();
+        }
+        let pixels = render_short();
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/session-editor-short-bottom.png");
+        image::save_buffer(path, &bytes, 700, 600, image::ColorType::Rgb8).unwrap();
+
+        press(&window, 505., 456.);
+        release(&window, 505., 456.);
+        render_short();
+        assert_eq!(
+            ui.get_add_trigger_count(),
+            1,
+            "Add trigger button at the bottom of the scrolled SSH advanced body must be unoccluded and clickable"
+        );
+    }).join().unwrap();
+}
+
+#[test]
 fn editing_connection_fields_invalidates_the_test_snapshot() {
     std::thread::spawn(|| {
         let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
@@ -539,4 +597,44 @@ fn rdp_common_and_bilingual_advanced_fields_reach_the_saved_draft() {
         assert_eq!(ui.get_saved_rdp_extra().as_str(), "网络=局域网\n/bpp:24");
         assert!(ui.get_saved_rdp_sound());
     }).join().unwrap();
+}
+
+#[test]
+fn x11_forwarding_fields_reach_saved_draft_and_invalidate_snapshot() {
+    std::thread::spawn(|| {
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        slint::platform::set_platform(Box::new(Backend {
+            window,
+            clipboard: Rc::default(),
+        }))
+        .unwrap();
+        let ui = DialogFixture::new().unwrap();
+        slint::platform::update_timers_and_animations();
+
+        let mut changes = ui.get_changed_count();
+        ui.set_x11_enabled(true);
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+        changes = ui.get_changed_count();
+
+        ui.set_x11_display("localhost:10.0".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+        changes = ui.get_changed_count();
+
+        ui.set_x11_xauthority("/tmp/custom.Xauthority".into());
+        slint::platform::update_timers_and_animations();
+        assert!(ui.get_changed_count() > changes);
+
+        ui.invoke_save_current();
+        assert_eq!(ui.get_submit_count(), 1);
+        assert!(ui.get_saved_x11_enabled());
+        assert_eq!(ui.get_saved_x11_display().as_str(), "localhost:10.0");
+        assert_eq!(
+            ui.get_saved_x11_xauthority().as_str(),
+            "/tmp/custom.Xauthority"
+        );
+    })
+    .join()
+    .unwrap();
 }

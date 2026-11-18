@@ -2648,6 +2648,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-link",
+]
+
+[[package]]
 name = "htmlparser"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3859,6 +3870,7 @@ dependencies = [
  "futures",
  "glob",
  "hmac 0.12.1",
+ "hostname",
  "i-slint-backend-winit",
  "iana-time-zone",
  "icu_provider",
@@ -3906,6 +3918,7 @@ dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",
  "winresource",
+ "x11rb-protocol",
  "zeroize",
 ]
 
