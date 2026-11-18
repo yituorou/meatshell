@@ -327,6 +327,9 @@ pub struct ConfigFile {
     /// Collapse the bottom SFTP panel on startup (#78).
     #[serde(default)]
     pub collapse_sftp_default: bool,
+    /// Collapse the Home sidebar after opening a connection (opt-in).
+    #[serde(default)]
+    pub auto_collapse_home: bool,
     /// When session-sync is on, also mirror SFTP uploads to the other online
     /// sessions (same path, falling back to each panel's current dir).
     #[serde(default)]

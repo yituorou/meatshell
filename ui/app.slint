@@ -926,6 +926,8 @@ export component AppWindow inherits Window {
     // Welcome sidebar collapsed to the edge icon strip (IDEA-style), persisted.
     in-out property <bool> welcome-collapsed: false;
     callback set-welcome-collapsed(bool);          // apply + persist
+    in-out property <bool> auto-collapse-home: false;
+    callback set-auto-collapse-home(bool);
     in-out property <bool> collapse-sftp-default: false;
     callback set-collapse-sftp-default(bool);      // apply + persist
     in-out property <bool> sftp-collapsed: false;       // (legacy global; per-tab now)
@@ -5482,6 +5484,8 @@ export component AppWindow inherits Window {
                     external-editor-args <=> root.external-editor-args;
                     is-mac: root.is-mac;
                     collapse-sidebar-default <=> root.collapse-sidebar-default;
+                    auto-collapse-home <=> root.auto-collapse-home;
+                    set-auto-collapse-home(v) => { root.set-auto-collapse-home(v); }
                     collapse-sftp-default <=> root.collapse-sftp-default;
                     sync-upload-enabled <=> root.sync-upload-enabled;
                     webdav-enabled <=> root.webdav-enabled;
