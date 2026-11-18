@@ -82,6 +82,9 @@ pub(super) fn apply_session_event_to_window(
             request_tab_render_from_ui(win.as_weak(), tab_id, bufs, gates);
         }
         SessionEvent::Connected => {
+            if win.get_active_tab_id().as_str() == tab_id {
+                collapse_home_after_connect(win);
+            }
             update_tab(&|t| t.connected = true);
             update_terminal(&|t| t.status = crate::i18n::t("已连接", "Connected").into());
             if let Some(st) = statuses.lock().unwrap().get_mut(tab_id) {

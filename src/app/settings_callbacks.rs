@@ -426,6 +426,7 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         }
         window.set_collapse_sidebar_default(collapse_sidebar);
         window.set_collapse_sftp_default(collapse_sftp);
+        window.set_auto_collapse_home(s.auto_collapse_home());
         // Restore the persisted panel docking layout (#dock).
         window.set_sidebar_width(s.sidebar_width());
         window.set_sidebar_height(s.sidebar_height());
@@ -574,6 +575,15 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.on_set_collapse_sftp_default(move |v| {
             let mut s = store.borrow_mut();
             s.set_collapse_sftp_default(v);
+            let _ = s.save();
+        });
+    }
+
+    {
+        let store = store.clone();
+        window.on_set_auto_collapse_home(move |v| {
+            let mut s = store.borrow_mut();
+            s.set_auto_collapse_home(v);
             let _ = s.save();
         });
     }

@@ -778,6 +778,8 @@ export component InterfacePanel inherits Rectangle {
     in-out property <string> external-editor-args;
     in property <bool> is-mac;
     in-out property <bool> collapse-sidebar-default;
+    in-out property <bool> auto-collapse-home: false;
+    callback set-auto-collapse-home(bool);
     in-out property <bool> collapse-sftp-default;
     in-out property <bool> sync-upload-enabled;
     in-out property <bool> webdav-enabled;
@@ -2590,6 +2592,16 @@ export component InterfacePanel inherits Rectangle {
                     Switch {
                         on: root.collapse-sftp-default;
                         toggled(v) => { root.collapse-sftp-default = v; root.set-collapse-sftp-default(v); }
+                    }
+                }
+                SettingRow {
+                    label: root.lang-en ? "Auto-collapse Home after connecting" : "连接后自动收起 Home 侧栏";
+                    desc: root.lang-en
+                        ? "Collapse the session list after the active terminal connects successfully. Click Home to expand it again."
+                        : "当前终端连接成功后自动收起会话列表，点击 Home 图标可再次展开。";
+                    Switch {
+                        on: root.auto-collapse-home;
+                        toggled(v) => { root.auto-collapse-home = v; root.set-auto-collapse-home(v); }
                     }
                 }
                 // Welcome page as a sidebar — lived on its own "Welcome page"
