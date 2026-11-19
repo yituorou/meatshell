@@ -108,44 +108,63 @@ pub(super) fn setup_windows_platform(renderer_mode: &str) {
 }
 
 /// Linux renderer selection from Settings. Leave Slint in charge when the
-/// environment explicitly selects a backend, including non-winit backends.
-/// Automatic mode likewise keeps Slint's native backend/renderer selection.
+/// environment explicitly selects a non-winit backend.
+///
+/// The winit backend is built here *always* — automatic renderer mode included
+/// — because `slint::set_xdg_app_id` (called right before the first window in
+/// `run()`) only stores the id in the context of an already created platform:
+/// with no platform it returns `NoPlatform` and drops the id. A window created
+/// on Wayland then starts without an `app_id`, GNOME cannot map it to
+/// `meatshell.desktop`, and the dock grows a second, unpinned icon for it.
 #[cfg(target_os = "linux")]
 pub(super) fn setup_linux_platform(renderer_mode: &str) {
-    if let Some(env_backend) = std::env::var_os("SLINT_BACKEND") {
-        tracing::info!(
-            renderer_mode,
-            renderer = %env_backend.to_string_lossy(),
-            source = "SLINT_BACKEND",
-            "initializing Linux renderer"
-        );
-        return;
-    }
+    let env_backend = std::env::var("SLINT_BACKEND").ok();
 
-    let renderer = match renderer_mode {
-        "gpu" => "femtovg",
-        "software" => "software",
-        _ => {
+    // `SLINT_BACKEND` also accepts non-winit backends (qt, skia, …) that our
+    // builder cannot reproduce; those stay lazily created by Slint so the
+    // diagnostic override keeps precedence (the app id is unset in that case).
+    if let Some(backend) = env_backend.as_deref() {
+        if backend != "winit" && !backend.starts_with("winit-") {
             tracing::info!(
                 renderer_mode,
-                renderer = "auto",
-                source = "settings",
+                renderer = backend,
+                source = "SLINT_BACKEND",
                 "initializing Linux renderer"
             );
             return;
         }
+    }
+
+    // Any explicit environment value wins, including plain "winit" (automatic
+    // renderer selection). This keeps the existing diagnostic escape hatch.
+    let renderer = match env_backend.as_deref() {
+        Some(backend) => backend
+            .strip_prefix("winit-")
+            .filter(|renderer| !renderer.is_empty())
+            .map(str::to_owned),
+        None => match renderer_mode {
+            "gpu" => Some("femtovg".to_owned()),
+            "software" => Some("software".to_owned()),
+            _ => None,
+        },
     };
 
     tracing::info!(
         renderer_mode,
-        renderer,
-        source = "settings",
+        renderer = renderer.as_deref().unwrap_or("auto"),
+        source = if env_backend.is_some() {
+            "SLINT_BACKEND"
+        } else {
+            "settings"
+        },
         "initializing Linux renderer"
     );
-    match i_slint_backend_winit::Backend::builder()
-        .with_renderer_name(renderer.to_owned())
-        .build()
-    {
+
+    let mut builder = i_slint_backend_winit::Backend::builder();
+    if let Some(renderer) = renderer {
+        builder = builder.with_renderer_name(renderer);
+    }
+    match builder.build() {
         Ok(backend) => {
             if slint::platform::set_platform(Box::new(backend)).is_err() {
                 tracing::warn!("Linux winit backend was already initialized");

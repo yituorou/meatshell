@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **Ubuntu 26.04（Wayland）下从 dock 启动会多出一个图标。** 在默认的自动渲染器模式下，启动时不会预先创建 Slint 后端，于是 `set_xdg_app_id` 返回 `NoPlatform` 且错误被丢弃，窗口因此没有 Wayland `app_id`，GNOME 无法把它与已固定的 `meatshell.desktop` 关联，就在 dock 里新建了一个图标。现在启动时总是先创建后端再设置 app id，设置失败也会写进日志。
+- **Extra dock icon when the app is started from the dock on Ubuntu 26.04 (Wayland).** In the default automatic renderer mode the Slint backend was not created before the app id was set, so `set_xdg_app_id` failed with `NoPlatform`, the error was discarded and every window was created without a Wayland `app_id`: GNOME could not match it to the pinned `meatshell.desktop` entry and added a second icon. The backend is now always created first and a failure to set the id is logged.
+
 - **老旧服务器只支持 SHA-1 MAC 时握手失败。** SSH 与 SFTP 连接在 SHA-2 MAC 之后追加 `hmac-sha1-etm@openssh.com` 与 `hmac-sha1` 作为最后的回退，面向只提供 MD5 / SHA-1 MAC 的老旧交换机、NAS 等设备，它们此前会在密钥交换后报 “No common MAC algorithm”。现代 SHA-2 仍排在前面，服务器支持时不会降级；仅提供 `hmac-md5` 的设备仍无法连接（russh 没有 MD5 MAC）。
 - **Handshake failed when an old server only offered SHA-1 MACs.** SSH and SFTP connections now append `hmac-sha1-etm@openssh.com` and `hmac-sha1` after the SHA-2 MACs as last-resort fallbacks, so older switches, NAS boxes and network gear that advertise only MD5 / SHA-1 MACs no longer fail with "No common MAC algorithm" after key exchange. Modern SHA-2 stays first, so a server that supports it never downgrades. Devices offering only `hmac-md5` still cannot connect, because russh has no MD5 MAC.
 - **macOS 上 App Store 版 Bitwarden 的 SSH Agent 无法使用（#528）。** 新增 App Store 版（沙盒）Bitwarden 的套接字路径 `~/Library/Containers/com.bitwarden.desktop/Data/.bitwarden-ssh-agent.sock`。同时，能连接但没有任何密钥的 Agent 会被跳过并继续尝试下一个：macOS 下 `$SSH_AUTH_SOCK` 指向系统自带的 launchd Agent，它通常是空的，此前会挡住 Bitwarden 并报“SSH Agent 中没有密钥”。无需再手动设置 `SSH_AUTH_SOCK`。感谢 @BH2WFR 排查。
