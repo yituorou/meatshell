@@ -177,38 +177,28 @@ component RecentRow inherits Rectangle {
     }
 }
 
-// Floating card for the empty main area (welcome-sidebar layout).
+// Panel that fills the empty main area (welcome-sidebar layout). The central
+// card around it supplies the rounded edge, so it has none of its own.
 export component RecentsCard inherits Rectangle {
     in property <[RecentSession]> items;
     // Rows that fit the area; the rest are left out rather than overflowing.
     in property <int> max-rows: 6;
     // Roomier controls than the shelf tiles — taller rows, larger type icons,
-    // × and Clear buttons — for a card that floats on its own. Text keeps the
-    // theme sizes so it matches the surrounding panels.
+    // × and Clear buttons. Text keeps the theme sizes so it matches the
+    // surrounding panels.
     property <float> zoom: 1.2;
+    property <length> pad: 16px;
     // Row and header+padding heights, so the caller can work out `max-rows`.
     out property <length> row-height: 48px * root.zoom;
-    out property <length> chrome-height: 46px * root.zoom;
+    out property <length> chrome-height: 2 * root.pad + 28px * root.zoom;
     callback connect(string);
     callback remove(string);
     callback clear();
     callback refresh();
 
-    width: 400px;
-    height: card-layout.preferred-height;
-    border-radius: 14px;
-    // Centred, the card sits on the wallpaper's focal point. Without a
-    // backdrop blur (Slint has none) the plain panel lets that motif show
-    // through behind the rows, so use the settings dialog's stronger surface:
-    // opaque at the default slider, still see-through when it is lowered.
-    background: Theme.bg-panel-strong;
-    border-width: 1px;
-    border-color: RecentStyle.hairline;
-    // A soft lift. Lighter over a wallpaper, where the card is see-through
-    // and a dark shadow would muddy it.
-    drop-shadow-blur: 32px;
-    drop-shadow-offset-y: 12px;
-    drop-shadow-color: Theme.wallpaper-active ? #0000002a : (Theme.dark ? #00000066 : #00000024);
+    // Same surface as the session list and resource panels, so the wallpaper
+    // opacity slider sets its transparency too.
+    background: Theme.bg-panel;
 
     // Fade in rather than pop.
     property <bool> appeared: false;
@@ -223,11 +213,11 @@ export component RecentsCard inherits Rectangle {
         triggered => { root.refresh(); }
     }
 
-    // 10 top + 22 header + 6 gap + 8 bottom = chrome-height.
-    card-layout := VerticalLayout {
-        padding: 8px * root.zoom;
-        padding-top: 10px * root.zoom;
+    // pad + header (28px × zoom, its gap included) + pad = chrome-height.
+    VerticalLayout {
+        padding: root.pad;
         spacing: 0px;
+        alignment: start;
         Header {
             zoom: root.zoom;
             height: 28px * root.zoom;

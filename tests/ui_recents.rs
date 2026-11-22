@@ -59,13 +59,9 @@ slint::slint! {
                 x: 298px; y: 0; width: parent.width - 298px; height: parent.height;
                 background: Theme.bg-root;
                 card := RecentsCard {
-                    property <length> margin: 24px;
-                    property <int> fit-rows: floor((parent.height - 2 * self.margin
-                        - self.chrome-height) / self.row-height);
-                    max-rows: max(1, min(6, self.fit-rows));
-                    width: min(400px, parent.width - 2 * self.margin);
-                    x: (parent.width - self.width) / 2;
-                    y: max(self.margin, (parent.height - self.height) / 2);
+                    width: parent.width;
+                    height: parent.height;
+                    max-rows: max(1, floor((parent.height - self.chrome-height) / self.row-height));
                     items: root.recents;
                     connect(id) => { root.connect(id); }
                     remove(id) => { root.remove(id); }
@@ -225,12 +221,11 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         std::thread::sleep(std::time::Duration::from_millis(300));
         frame(&window);
 
-        // Card geometry, as laid out in app.slint: main area x 298..1100 and
-        // 660 high, card 400px wide and centred. Controls at 1.2×: 55.2px
-        // header/padding + 6 × 57.6px rows.
-        let card_x = 298. + (802. - 400.) / 2.;
-        let card_y = (660. - (55.2 + 6. * 57.6)) / 2.;
-        let first_row_y = card_y + 12. + 33.6 + 28.8;
+        // Panel geometry, as laid out in app.slint: it fills the main area
+        // (x 298..1100, 660 high). 16px padding, a 33.6px header, then
+        // 57.6px rows (controls at 1.2×).
+        let (card_x, card_w) = (298., 802.);
+        let first_row_y = 16. + 33.6 + 28.8;
 
         snapshot(&window, "recents-card-dark-wallpaper.png");
         pointer(&window, card_x + 150., first_row_y);
@@ -239,7 +234,7 @@ fn recents_card_and_shelf_connect_remove_and_clear() {
         click(&window, card_x + 150., first_row_y);
         assert_eq!(*events.borrow(), ["connect pve"]);
         // × sits where the time was, at the row's right edge.
-        click(&window, card_x + 400. - 9.6 - 10.8 - 13.2, first_row_y);
+        click(&window, card_x + card_w - 16. - 10.8 - 13.2, first_row_y);
         assert_eq!(*events.borrow(), ["connect pve", "remove pve"]);
         assert_eq!(model.row_count(), 5);
 

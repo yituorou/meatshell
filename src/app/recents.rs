@@ -16,8 +16,9 @@ use crate::config::{ConfigStore, RecentConnection, Session, SessionKind};
 use crate::i18n::{is_en, t};
 use crate::ui::{AppWindow, RecentSession};
 
-/// How many recent connections the card and the shelf show.
-const SHOWN: usize = 6;
+/// Upper bound on the rows handed to the UI: the panel shows as many as fit
+/// its height, the shelf as many tiles as fit its width.
+const SHOWN: usize = crate::config::RECENT_CONNECTIONS_CAP;
 
 /// Rebuild the window's recents model from the store.
 pub(super) fn publish(window: &AppWindow, store: &ConfigStore) {
