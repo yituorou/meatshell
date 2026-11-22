@@ -794,12 +794,29 @@ impl TermBuffer {
         self.raw.extend(bytes.iter().copied());
         if let Some(end) = erase_saved_through {
             self.raw.drain(..end);
+            // Erasing the scrollback is evicting every history row at once:
+            // move the selection with the live screen instead of dropping it.
+            // Ink-based CLIs (Grok CLI, Gemini CLI…) send `CSI 2J CSI 3J CSI H`
+            // on every re-render once their output outgrows the window — a
+            // spinner does that several times a second — so clearing here made
+            // their output impossible to select (#560). A selection that lay
+            // only in the erased history still goes away.
+            let erased = self.history.len();
+            let on_screen = |point: Option<(usize, u16)>| point.is_some_and(|(row, _)| row >= erased);
+            let keep = on_screen(self.sel_anchor)
+                || on_screen(self.sel_focus)
+                || self.sel_ranges.iter().any(|&(a, f)| a.0 >= erased || f.0 >= erased);
+            if keep {
+                self.shift_marks_after_eviction(erased);
+            } else {
+                self.sel_anchor = None;
+                self.sel_focus = None;
+                self.sel_ranges.clear();
+                self.find_cursor = None;
+            }
             self.history.clear();
             self.prev.clear();
             self.view_offset = 0;
-            self.sel_anchor = None;
-            self.sel_focus = None;
-            self.sel_ranges.clear();
         }
         self.cap_raw();
         self.feed_batched(bytes);

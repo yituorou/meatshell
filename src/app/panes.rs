@@ -343,6 +343,7 @@ pub(super) fn refresh_dock_inner(
         w.set_dock_central_y(0.0);
         w.set_dock_central_w(cw);
         w.set_dock_central_h(ch);
+        set_central_insets(&w, [0.0; 4]);
         return;
     }
     let saved = dock_stacks.borrow().clone();
@@ -426,6 +427,31 @@ pub(super) fn refresh_dock_inner(
     w.set_dock_central_y(geom.central.y);
     w.set_dock_central_w(geom.central.w);
     w.set_dock_central_h(geom.central.h);
+    let edges: Vec<&str> = geom.panels.iter().map(|p| p.edge).collect();
+    set_central_insets(&w, central_insets(&edges));
+}
+
+/// Gap around every floating card: the docked panels draw their card this far
+/// inside their own rect, and the central tab/terminal card keeps the same
+/// distance from the window edges (#560).
+pub(super) const CARD_GAP: f32 = 10.0;
+
+/// Insets of the central card inside the central rect, `[left, top, right,
+/// bottom]`. Next to a docked panel the panel's own inset already makes the
+/// gap, so that side gets none; toward a window edge (or a flush collapsed
+/// tool strip) it gets `CARD_GAP`. `edges` are the docked panels' edges.
+pub(super) fn central_insets(edges: &[&str]) -> [f32; 4] {
+    let gap = |edge: &str| if edges.contains(&edge) { 0.0 } else { CARD_GAP };
+    [gap("left"), gap("top"), gap("right"), gap("bottom")]
+}
+
+/// Published to Slint, which places the card, and read back by the terminal
+/// hit tests, so both always agree on where the panes are.
+fn set_central_insets(w: &AppWindow, [left, top, right, bottom]: [f32; 4]) {
+    w.set_central_inset_left(left);
+    w.set_central_inset_top(top);
+    w.set_central_inset_right(right);
+    w.set_central_inset_bottom(bottom);
 }
 
 /// Hit-test a drag point (pane-area coords) to a target pane + drop zone, plus
@@ -594,5 +620,23 @@ pub(super) fn wire_pane_sftp_and_font_zoom(
         window.on_set_pane_sftp_saved_height(move |tab_id: SharedString, v: f32| {
             update_terminal_row(&terminals_model, &tab_id, |r| r.sftp_saved_height = v);
         });
+    }
+}
+
+#[cfg(test)]
+mod central_card_tests {
+    use super::{central_insets, CARD_GAP};
+
+    #[test]
+    fn the_central_card_is_flush_only_next_to_docked_panels() {
+        // Nothing docked: 10px from every window edge.
+        assert_eq!(central_insets(&[]), [CARD_GAP; 4]);
+        // Session list on the left, resources on the right (two panels on the
+        // right are one edge): the panels' own insets make those gaps.
+        assert_eq!(
+            central_insets(&["left", "right", "right"]),
+            [0.0, CARD_GAP, 0.0, CARD_GAP]
+        );
+        assert_eq!(central_insets(&["bottom"]), [CARD_GAP, CARD_GAP, CARD_GAP, 0.0]);
     }
 }

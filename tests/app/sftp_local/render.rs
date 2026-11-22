@@ -162,6 +162,12 @@ fn build_ui(
     ui.set_dock_central_y(0.0);
     ui.set_dock_central_w(window_width as f32);
     ui.set_dock_central_h(window_height as f32);
+    // The engine also insets the central card (#560); the pane above already
+    // spans the whole window, so keep the card flush with it.
+    ui.set_central_inset_left(0.0);
+    ui.set_central_inset_top(0.0);
+    ui.set_central_inset_right(0.0);
+    ui.set_central_inset_bottom(0.0);
     ui.set_sftp_dock(dock.into());
     ui.set_sftp_panel_height(300.0);
     ui.set_sftp_panel_width(panel_width);
@@ -1201,6 +1207,53 @@ fn delete_key_deletes_checked_entries_or_the_highlighted_row() {
         assert!(ui.get_confirm_delete_open());
         assert!(!ui.get_confirm_delete_batch());
         assert_eq!(ui.get_confirm_delete_path().as_str(), "/nginx.conf");
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
+fn docked_panels_and_the_terminal_are_floating_cards() {
+    // #560: the session list (left), the resource panel (right) and the
+    // tab/terminal area are all inset cards with one 10px gap, top edges
+    // level. Saves `target/floating-cards-qa.png` for a visual check.
+    std::thread::spawn(|| {
+        let (width, height) = (1300u32, 760u32);
+        let (ui, window) = build_ui(false, 300.0, 0.0, width, height, "bottom");
+        let dock_h = height as f32 - 38.0;
+        let (left_w, right_w) = (280.0, 230.0);
+        ui.set_welcome_as_sidebar(true);
+        let panel = |kind: &str, edge: &str, x: f32, w: f32| PanelGeomInfo {
+            kind: kind.into(),
+            edge: edge.into(),
+            x,
+            y: 0.0,
+            w,
+            h: dock_h,
+        };
+        ui.set_dock_panels(ModelRc::from(Rc::new(VecModel::from(vec![
+            panel("welcome", "left", 0.0, left_w),
+            panel("sidebar", "right", width as f32 - right_w, right_w),
+        ]))));
+        let central_w = width as f32 - left_w - right_w;
+        ui.set_dock_central_x(left_w);
+        ui.set_dock_central_w(central_w);
+        ui.set_dock_central_h(dock_h);
+        let [l, t, r, b] = super::super::panes::central_insets(&["left", "right"]);
+        ui.set_central_inset_left(l);
+        ui.set_central_inset_top(t);
+        ui.set_central_inset_right(r);
+        ui.set_central_inset_bottom(b);
+        let mut pane = ui.get_panes().row_data(0).unwrap();
+        pane.w = central_w - l - r;
+        pane.h = dock_h - t - b;
+        ui.set_panes(ModelRc::from(Rc::new(VecModel::from(vec![pane]))));
+        assert_eq!((l, t, r, b), (0.0, 10.0, 0.0, 10.0));
+
+        let pixels = render_frame(&window, width, height);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/floating-cards-qa.png");
+        image::save_buffer(path, &bytes, width, height, image::ColorType::Rgb8).unwrap();
     })
     .join()
     .unwrap();

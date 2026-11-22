@@ -628,3 +628,31 @@ fn selection_stays_on_its_text_while_a_full_scrollback_evicts_lines() {
     assert_eq!(buf.history[buf.vis_to_abs(0)].plain(), first_visible_before);
     assert_eq!(buf.extract_selection_text(), before);
 }
+
+#[test]
+fn erasing_scrollback_keeps_a_selection_on_the_live_screen() {
+    // Ink-based CLIs (Grok CLI…) redraw with `CSI 2J CSI 3J CSI H` many times
+    // a second; a selection on the screen must survive each frame (#560).
+    let mut buf = make_buf(4, 30, &["old 1", "old 2"], &["grok: hello world"], 0);
+    let _ = buf.ingest(b"\r\nprime\r\n");
+    let row = buf.vis_to_abs(0);
+    buf.sel_anchor = Some((row, 6));
+    buf.sel_focus = Some((row, 10));
+    let before = buf.extract_selection_text();
+    assert_eq!(before, "hello");
+
+    let frame = b"\x1b[2J\x1b[3J\x1b[Hgrok: hello world\r\n> thinking";
+    for _ in 0..5 {
+        let _ = buf.ingest(frame);
+    }
+    assert!(buf.history.is_empty(), "CSI 3J still erases the scrollback");
+    assert_eq!(buf.extract_selection_text(), "hello");
+
+    // A selection that lay only in the erased history goes away.
+    let _ = buf.ingest(b"\r\n1\r\n2\r\n3\r\n4\r\n5\r\n");
+    assert!(!buf.history.is_empty());
+    buf.sel_anchor = Some((0, 0));
+    buf.sel_focus = Some((0, 3));
+    let _ = buf.ingest(b"\x1b[2J\x1b[3J\x1b[H");
+    assert!(buf.sel_anchor.is_none() && buf.sel_focus.is_none());
+}

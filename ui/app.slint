@@ -1173,6 +1173,14 @@ export component AppWindow inherits Window {
     property <length> dock-right-gap: root.width - root.dock-central-x - root.dock-central-w;
     property <length> dock-top-gap: root.dock-central-y;
     property <length> dock-bottom-gap: root.height - root.dock-central-y - root.dock-central-h;
+    // The tab/terminal area is a floating card like the docked panels (#560):
+    // inset from the central rect toward window edges, flush where a docked
+    // panel's own inset already makes the gap. Set by Rust (panes.rs), which
+    // also uses them to hit-test the terminals.
+    in-out property <length> central-inset-left: 10px;
+    in-out property <length> central-inset-top: 10px;
+    in-out property <length> central-inset-right: 10px;
+    in-out property <length> central-inset-bottom: 10px;
     callback stack-split-drag(string /* edge */, int /* index */, float /* pos */);
     // Reports the real dock-area size (window minus title bar): the Rust dock
     // engine must measure in THIS frame, not the window frame, or every panel
@@ -2189,6 +2197,17 @@ export component AppWindow inherits Window {
                 height: root.quick-panel-open && !root.quick-panel-collapsed && !parent.quick-horizontal
                     ? parent.height - parent.quick-h - parent.quick-sp : parent.height;
                 clip: true;
+                // The central card (#560): rounded and outlined like the docked
+                // panels' cards, the same 10px from the window edges, so every
+                // top edge lines up. Zen mode / terminal fullscreen keep the
+                // terminal edge to edge (Rust sets the insets to 0 there).
+                central-card := Rectangle {
+                    x: root.central-inset-left;
+                    y: root.central-inset-top;
+                    width: parent.width - root.central-inset-left - root.central-inset-right;
+                    height: parent.height - root.central-inset-top - root.central-inset-bottom;
+                    border-radius: root.hide-panels ? 0px : Theme.radius-md;
+                    clip: true;
                 // Split-pane area (v0.5): panes tile this rect; each pane has its own
                 // tab strip + active terminal / welcome. Rust flattens the split tree
                 // into `panes` for the size we report here.
@@ -2736,6 +2755,14 @@ export component AppWindow inherits Window {
                     border-radius: Theme.radius-sm;
                 }
                 }
+                // The card's hairline, drawn over the panes so a terminal's own
+                // background cannot cover it.
+                if !root.hide-panels : Rectangle {
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                }
+                }
             }
 
             if false : QuickDockPanel {
@@ -2837,7 +2864,10 @@ export component AppWindow inherits Window {
                 width: gp.w;
                 height: gp.h;
                 clip: true;
-                background: Theme.bg-panel;
+                // No fill of its own: each panel draws a card inset 10px inside
+                // this rect, so the gaps around it show the window like the
+                // gaps around the central card (#560).
+                background: transparent;
 
                 if gp.kind == "sidebar" : Sidebar {
                     width: parent.width;
@@ -2942,8 +2972,12 @@ export component AppWindow inherits Window {
                     remove-session(id) => { root.remove-session(id); }
                 }
                 if gp.kind == "quick" : QuickDockPanel {
-                    width: parent.width;
-                    height: parent.height;
+                    // Inset card, like the resource and session panels (#560).
+                    x: 10px;
+                    y: 10px;
+                    width: parent.width - 20px;
+                    height: parent.height - 20px;
+                    border-radius: Theme.radius-md;
                     commands: root.quick-commands;
                     dock-edge: gp.edge;
                     activate(command, send-enter) => {
@@ -2985,7 +3019,8 @@ export component AppWindow inherits Window {
                     // half of the grab area and leave a 2px target.
                     x: parent.width - 4px; y: 0px;
                     width: 4px; height: parent.height;
-                    background: rr-l.has-hover ? Theme.accent : Theme.border-subtle;
+                    // Invisible until hovered: the 10px gap is the separation (#560).
+                    background: rr-l.has-hover || rr-l.pressed ? Theme.accent : transparent;
                     rr-l := TouchArea {
                         mouse-cursor: ew-resize;
                         moved => {
@@ -3000,7 +3035,8 @@ export component AppWindow inherits Window {
                 if gp.edge == "right" : Rectangle {
                     x: 0px; y: 0px;
                     width: 4px; height: parent.height;
-                    background: rr-r.has-hover ? Theme.accent : Theme.border-subtle;
+                    // Invisible until hovered: the 10px gap is the separation (#560).
+                    background: rr-r.has-hover || rr-r.pressed ? Theme.accent : transparent;
                     rr-r := TouchArea {
                         mouse-cursor: ew-resize;
                         moved => {
@@ -3017,7 +3053,8 @@ export component AppWindow inherits Window {
                     // Same reasoning as the left edge: keep the whole 4px inside.
                     x: 0px; y: parent.height - 4px;
                     width: parent.width; height: 4px;
-                    background: rr-t.has-hover ? Theme.accent : Theme.border-subtle;
+                    // Invisible until hovered: the 10px gap is the separation (#560).
+                    background: rr-t.has-hover || rr-t.pressed ? Theme.accent : transparent;
                     rr-t := TouchArea {
                         mouse-cursor: ns-resize;
                         moved => {
@@ -3032,7 +3069,8 @@ export component AppWindow inherits Window {
                 if gp.edge == "bottom" : Rectangle {
                     x: 0px; y: 0px;
                     width: parent.width; height: 4px;
-                    background: rr-b.has-hover ? Theme.accent : Theme.border-subtle;
+                    // Invisible until hovered: the 10px gap is the separation (#560).
+                    background: rr-b.has-hover || rr-b.pressed ? Theme.accent : transparent;
                     rr-b := TouchArea {
                         mouse-cursor: ns-resize;
                         moved => {
@@ -3053,7 +3091,7 @@ export component AppWindow inherits Window {
                 y: dd.y;
                 width: dd.w;
                 height: dd.h;
-                background: dd-ta.pressed ? Theme.accent : Theme.border-strong;
+                background: dd-ta.pressed ? Theme.accent : (dd-ta.has-hover ? Theme.border-strong : transparent);
                 animate background { duration: 100ms; }
                 dd-ta := TouchArea {
                     mouse-cursor: dd.vertical ? ns-resize : ew-resize;

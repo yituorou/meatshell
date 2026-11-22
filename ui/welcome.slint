@@ -409,7 +409,9 @@ export component Welcome inherits Rectangle {
     callback dock-drag-move(length, length);
     callback dock-drag-end();
 
-    background: Theme.bg-root;
+    // Docked as a sidebar it is a floating card inside a transparent dock
+    // panel, like the resource panel (#560); as a tab it fills its pane.
+    background: root.compact ? transparent : Theme.bg-root;
 
     // The regular welcome page is itself a tab. When Ctrl+Tab wraps from the
     // last terminal to this page, keep the shortcut chain alive so the next
@@ -442,7 +444,9 @@ export component Welcome inherits Rectangle {
     }
 
     VerticalLayout {
-        padding: root.compact ? 12px : 24px;
+        // 10px in compact mode: the same card inset as the resource panel and
+        // the central card, so their edges line up (#560).
+        padding: root.compact ? 10px : 24px;
         spacing: root.compact ? 12px : 20px;
 
         // Header (title + tagline) — pinned to the top at its natural height so

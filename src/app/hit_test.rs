@@ -286,7 +286,10 @@ pub(super) fn active_terminal_panel_rects(
         return None;
     }
 
-    let area = app_content_area(win);
+    let mut area = app_content_area(win);
+    // The panes live in the central card, inset from the central rect (#560).
+    area.x += win.get_central_inset_left();
+    area.y += win.get_central_inset_top();
     let panes = win.get_panes();
     let pane = (0..panes.row_count())
         .filter_map(|i| panes.row_data(i))

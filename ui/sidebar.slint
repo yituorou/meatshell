@@ -485,7 +485,9 @@ export component Sidebar inherits Rectangle {
       : "\u{E5CB}";                               // chevron_left (left, default)
 
     width: 220px;
-    background: Theme.bg-panel;
+    // The panel's card is inset 10px below; the gap around it shows the
+    // window, like the gaps around the central card (#560).
+    background: transparent;
     border-width: 0;
 
     // Drag from any empty area of the panel to re-dock it (the status header is
