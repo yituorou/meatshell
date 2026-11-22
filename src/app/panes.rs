@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// Return the Home sidebar to its icon strip once a connection has opened.
+pub(super) fn collapse_home_after_connect(window: &AppWindow) {
+    if window.get_auto_collapse_home()
+        && window.get_welcome_as_sidebar()
+        && !window.get_welcome_collapsed()
+    {
+        window.set_welcome_collapsed(true);
+        window.invoke_set_welcome_collapsed(true);
+        window.invoke_dock_layout_changed();
+    }
+}
+
 /// Resolve a session's configured SSH jump host to the saved session it points
 /// at, ignoring a missing / dangling / self reference (#211).
 pub(super) fn save_layout(

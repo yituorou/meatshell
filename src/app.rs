@@ -345,7 +345,16 @@ pub fn run(_intent: crate::app::launch::LaunchIntent) -> Result<()> {
     // the Linux desktop shell can match the running window to the installed
     // `meatshell.desktop` entry and show our icon in the dock/taskbar.  (On
     // Windows the icon comes from the embedded .ico, so this is a no-op there.)
-    let _ = slint::set_xdg_app_id("meatshell");
+    //
+    // Slint only stores the id in the context of an already created platform
+    // (`with_global_context` fails with `NoPlatform` otherwise), so this must
+    // run *after* `setup_linux_platform`, which now builds the backend in
+    // automatic renderer mode as well. Without that, the Wayland surface is
+    // created with an empty app_id and GNOME gives it a second dock icon
+    // instead of reusing the pinned `meatshell.desktop` entry.
+    if let Err(err) = slint::set_xdg_app_id("meatshell") {
+        tracing::warn!("failed to set the Wayland app id / X11 WM_CLASS: {err}");
+    }
 
     // Taskbar jump list ("新建窗口") on Windows: register before the first
     // window shows so the entry is available immediately. Failure is
