@@ -117,6 +117,12 @@ export global Theme {
     out property <brush> bg-elevated:  frost(base-bg-elevated, root.panel-alpha);
     out property <brush> bg-hover:     frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04));
     out property <brush> bg-active:    frost(base-bg-active, min(1.0, root.panel-alpha + 0.08));
+    // Floating cards (resource panel, Quick connect, quick commands, recent
+    // connections). In dark mode the plain panel colour sits too close to the
+    // window behind it to show the card's edge, so cards get a lighter slate
+    // there; light mode already has the contrast and keeps bg-panel.
+    in-out property <color> card-dark: #2D3440;
+    out property <brush> card-bg: root.dark ? frost(root.card-dark, root.panel-alpha) : root.bg-panel;
     // Settings dialog: 20% less transparent than the other panels so its dense
     // grey labels stay legible even at a low wallpaper overlay (user request).
     out property <brush> bg-panel-strong: frost(base-bg-panel, min(1.0, root.panel-alpha + 0.20));

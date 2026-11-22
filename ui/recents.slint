@@ -198,7 +198,7 @@ export component RecentsCard inherits Rectangle {
 
     // Same surface as the session list and resource panels, so the wallpaper
     // opacity slider sets its transparency too.
-    background: Theme.bg-panel;
+    background: Theme.card-bg;
 
     // Fade in rather than pop.
     property <bool> appeared: false;
@@ -244,7 +244,7 @@ component RecentTile inherits Rectangle {
     property <bool> hovered: ta.has-hover || rm.hovered;
     height: 60px;
     border-radius: 12px;
-    background: Theme.bg-panel;
+    background: Theme.card-bg;
     border-width: 1px;
     border-color: root.hovered ? Theme.accent.with-alpha(0.55) : RecentStyle.hairline;
     animate border-color { duration: 120ms; }
