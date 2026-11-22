@@ -115,3 +115,25 @@ fn sftp_shift_click_range_selects_exactly_the_span() {
     assert_eq!(apply_range_selection(&model, -3, 99), 6);
     assert_eq!(checked(&model), vec![0, 1, 2, 3, 4, 5]);
 }
+
+#[test]
+fn sftp_select_all_checks_every_row_then_clears_them() {
+    // #566: the header's select-all box and Ctrl+A.
+    let model = VecModel::from(
+        (0..4)
+            .map(|i| sftp_entry(&format!("f{i}"), i == 2))
+            .collect::<Vec<_>>(),
+    );
+    let mut e = model.row_data(1).unwrap();
+    e.selected = true;
+    model.set_row_data(1, e);
+
+    assert_eq!(set_all_selection(&model, true), 4);
+    assert_eq!(checked(&model), vec![0, 1, 2, 3]);
+
+    assert_eq!(set_all_selection(&model, false), 0);
+    assert!(checked(&model).is_empty());
+
+    let empty: VecModel<SftpEntry> = VecModel::default();
+    assert_eq!(set_all_selection(&empty, true), 0);
+}

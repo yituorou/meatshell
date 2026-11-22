@@ -381,6 +381,17 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
     }
     {
         let weak = window.as_weak();
+        window.on_sftp_local_check_all(move |tab_id: SharedString, on: bool| {
+            let Some(w) = weak.upgrade() else { return };
+            let terminals = w.get_terminals();
+            let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+                return;
+            };
+            check_all(model, tab_id.as_str(), on);
+        });
+    }
+    {
+        let weak = window.as_weak();
         window.on_sftp_local_select_range(
             move |tab_id: SharedString, from: i32, to: i32| {
                 let Some(w) = weak.upgrade() else { return };
@@ -1008,6 +1019,34 @@ pub(super) fn wire_sftp_callbacks(
                     }
                     let mut r = row.clone();
                     r.sftp_selected_count = n;
+                    tm.set_row_data(ti, r);
+                }
+                break;
+            }
+        });
+    }
+    // SFTP multi-select: the header's select-all box / Ctrl+A (#566).
+    {
+        let weak = window.as_weak();
+        window.on_sftp_check_all(move |tab_id: SharedString, on: bool| {
+            let Some(w) = weak.upgrade() else { return };
+            let terminals = w.get_terminals();
+            let Some(tm) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
+                return;
+            };
+            for ti in 0..tm.row_count() {
+                let Some(row) = tm.row_data(ti) else { continue };
+                if row.id.as_str() != tab_id.as_str() {
+                    continue;
+                }
+                if let Some(em) = row
+                    .sftp_entries
+                    .as_any()
+                    .downcast_ref::<VecModel<SftpEntry>>()
+                {
+                    let n = set_all_selection(em, on);
+                    let mut r = row.clone();
+                    r.sftp_selected_count = n as i32;
                     tm.set_row_data(ti, r);
                 }
                 break;

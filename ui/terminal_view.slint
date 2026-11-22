@@ -462,6 +462,7 @@ export component TerminalView inherits Rectangle {
     callback sftp-delete(string);
     in property <int> sftp-selected-count;          // checked-entry count (#100)
     callback sftp-toggle-select(int);               // toggle a row's checkbox (#100)
+    callback sftp-check-all(bool);                  // check / clear every row (#566)
     callback sftp-select-range(int, int);           // Shift+click range select
     // Path bookmarks + recent folders (#500).
     in property <[string]> sftp-bookmarks;
@@ -501,6 +502,7 @@ export component TerminalView inherits Rectangle {
     callback sftp-local-refresh();
     callback sftp-local-open(string);
     callback sftp-local-toggle-select(int);
+    callback sftp-local-check-all(bool);
     callback sftp-local-select-range(int, int);
     callback sftp-local-copy-path(string);
     callback sftp-local-upload(string);
@@ -2452,6 +2454,7 @@ export component TerminalView inherits Rectangle {
             tree-expand(path)   => { root.sftp-tree-expand(path); }
             delete(path)        => { root.sftp-delete(path); }
             toggle-select(i)    => { root.sftp-toggle-select(i); }
+            check-all(on)       => { root.sftp-check-all(on); }
             select-range(a, b)  => { root.sftp-select-range(a, b); }
             bookmarks: root.sftp-bookmarks;
             recent: root.sftp-recent;
@@ -2522,6 +2525,7 @@ export component TerminalView inherits Rectangle {
             local-refresh()        => { root.sftp-local-refresh(); }
             local-open(path)       => { root.sftp-local-open(path); }
             local-toggle-select(i) => { root.sftp-local-toggle-select(i); }
+            local-check-all(on)    => { root.sftp-local-check-all(on); }
             local-select-range(a, b) => { root.sftp-local-select-range(a, b); }
             local-copy-path(path)  => { root.sftp-local-copy-path(path); }
             local-upload(path)     => { root.sftp-local-upload(path); }

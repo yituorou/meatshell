@@ -390,6 +390,42 @@ component SftpStarButton inherits Rectangle {
            horizontal-alignment: center; vertical-alignment: center; }
 }
 
+// Select-all checkbox in a file list's column header (#566), drawn like the
+// rows' checkboxes beneath it. Empty, a dash when some rows are checked, a
+// tick when all are. A click checks every row, or clears them all when every
+// row is already checked.
+component CheckAllBox inherits Rectangle {
+    in property <int> count;    // checked rows
+    in property <int> total;    // rows in the list
+    callback toggled(bool /* check every row */);
+    property <bool> all: root.total > 0 && root.count >= root.total;
+    width: 16px; height: 16px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: root.count > 0 ? Theme.accent
+        : (all-ta.has-hover && root.total > 0 ? Theme.text-secondary : Theme.border-strong);
+    background: root.count > 0 ? Theme.accent : transparent;
+    opacity: root.total > 0 ? 1.0 : 0.4;
+    accessible-role: checkbox;
+    accessible-label: root.all ? @tr("Clear selection") : @tr("Select all");
+    accessible-checked: root.all;
+    accessible-action-default => { if (root.total > 0) { root.toggled(!root.all); } }
+    all-ta := TouchArea {
+        mouse-cursor: root.total > 0 ? pointer : default;
+        enabled: root.total > 0;
+        clicked => { root.toggled(!root.all); }
+    }
+    if root.count > 0 : Text {
+        text: root.all ? "\u{E5CA}" : "\u{E15B}"; // check / remove
+        font-family: "Material Icons";
+        color: #ffffff;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width; height: parent.height;
+    }
+}
+
 // Places dropdown for the local pane: home, desktop, downloads, documents and
 // the machine's drives (#532). Rust resolves the list, so drive labels and the
 // current-folder highlight follow the real machine.
@@ -592,6 +628,7 @@ component LocalPane inherits Rectangle {
     callback open(string);          // double-click on a file
     callback toggle-select(int);
     callback select-range(int, int);
+    callback check-all(bool);       // header checkbox: check / clear every row (#566)
     callback copy-path(string);
     callback upload(string);        // upload this entry (file or whole folder)
     callback upload-selected();
@@ -896,7 +933,15 @@ component LocalPane inherits Rectangle {
             background: Theme.bg-root;
             HorizontalLayout {
                 padding-left: 8px; padding-right: 8px; spacing: 8px;
-                Rectangle { width: 16px; }
+                Rectangle {
+                    width: 16px;
+                    CheckAllBox {
+                        y: (parent.height - self.height) / 2;
+                        count: root.selected-count;
+                        total: root.entries.length;
+                        toggled(on) => { root.check-all(on); }
+                    }
+                }
                 Rectangle {
                     horizontal-stretch: 1; min-width: 90px;
                     background: name-ta.has-hover ? Theme.bg-hover : transparent;
@@ -1452,6 +1497,7 @@ export component SftpPanel inherits Rectangle {
     callback tree-expand(string);   // toggle expand/collapse + navigate
     callback delete(string);        // remove a remote file/dir
     callback toggle-select(int);    // toggle a row's multi-select checkbox (#100)
+    callback check-all(bool);       // header checkbox / Ctrl+A: check or clear every row (#566)
     callback select-range(int /* from */, int /* to */); // Shift+click: check exactly rows from..to
     // Path bookmarks + recent folders for this session (#500).
     in property <[string]> bookmarks;
@@ -1518,6 +1564,7 @@ export component SftpPanel inherits Rectangle {
     callback local-reveal();
     callback local-open(string /* local path */);
     callback local-toggle-select(int /* row */);
+    callback local-check-all(bool);
     callback local-select-range(int /* from */, int /* to */);
     callback local-copy-path(string /* local path */);
     callback local-upload(string /* local path */);
@@ -2387,6 +2434,7 @@ export component SftpPanel inherits Rectangle {
                 reveal()              => { root.local-reveal(); }
                 open(path)            => { root.local-open(path); }
                 toggle-select(i)      => { root.local-toggle-select(i); }
+                check-all(on)         => { root.local-check-all(on); }
                 select-range(a, b)    => { root.local-select-range(a, b); }
                 copy-path(path)       => { root.local-copy-path(path); }
                 upload(path)          => { root.local-upload(path); }
@@ -2653,9 +2701,20 @@ export component SftpPanel inherits Rectangle {
                     background: Theme.bg-root;
                     HorizontalLayout {
                         padding-left: 8px; padding-right: 8px; spacing: 8px;
-                        // Spacer matching the rows' checkbox so the header columns
-                        // line up with the values below them (#dock).
-                        Rectangle { width: 16px; }
+                        // Select-all sits in the rows' checkbox column so the header
+                        // columns line up with the values below them (#dock, #566).
+                        Rectangle {
+                            width: 16px;
+                            CheckAllBox {
+                                y: (parent.height - self.height) / 2;
+                                count: root.selected-count;
+                                total: root.entries.length;
+                                toggled(on) => {
+                                    file-keys.focus();
+                                    root.check-all(on);
+                                }
+                            }
+                        }
                         Rectangle {
                             horizontal-stretch: 1;
                             min-width: root.name-min;
@@ -2838,6 +2897,14 @@ export component SftpPanel inherits Rectangle {
                                     || (event.modifiers.control && !event.modifiers.alt
                                         && (event.text == "v" || event.text == "V"))) {
                                 root.paste-upload(root.current-path);
+                                accept
+                            } else if ((event.text == "a" || event.text == "A")
+                                    && (Theme.is-mac ? event.modifiers.meta : event.modifiers.control)
+                                    && !event.modifiers.alt && !event.modifiers.shift) {
+                                // Ctrl+A (Cmd+A on macOS) checks every row, or clears
+                                // them when all are already checked (#566).
+                                root.check-all(root.entries.length == 0
+                                    || root.selected-count < root.entries.length);
                                 accept
                             } else if ((event.text == Key.Delete
                                         || (Theme.is-mac && event.modifiers.meta && event.text == Key.Backspace))

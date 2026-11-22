@@ -604,6 +604,26 @@ pub(super) fn select_range(model: &VecModel<TerminalState>, tab_id: &str, from: 
     0
 }
 
+/// Select-all on the local pane (#566): check or clear every row.
+pub(super) fn check_all(model: &VecModel<TerminalState>, tab_id: &str, on: bool) -> i32 {
+    for i in 0..model.row_count() {
+        let Some(row) = model.row_data(i) else { continue };
+        if row.id.as_str() != tab_id {
+            continue;
+        }
+        let Some(entries) = row.sftp_local_entries.as_any().downcast_ref::<VecModel<SftpEntry>>()
+        else {
+            return 0;
+        };
+        let count = set_all_selection(entries, on) as i32;
+        let mut row = row.clone();
+        row.sftp_local_selected_count = count;
+        model.set_row_data(i, row);
+        return count;
+    }
+    0
+}
+
 // ---------------------------------------------------------------------------
 // Places dropdown (#532): user folders + drives
 // ---------------------------------------------------------------------------

@@ -914,3 +914,9 @@ msgstr "Clear recents"
 
 msgid "Remove from recents"
 msgstr "Remove from recents"
+
+msgid "Select all"
+msgstr "Select all"
+
+msgid "Clear selection"
+msgstr "Clear selection"

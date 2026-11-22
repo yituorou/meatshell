@@ -1462,6 +1462,7 @@ export component AppWindow inherits Window {
     callback sftp-tree-expand(string /* tab-id */, string /* path */);
     callback sftp-delete(string /* tab-id */, string /* path */);
     callback sftp-toggle-select(string /* tab-id */, int /* row */);   // (#100)
+    callback sftp-check-all(string /* tab-id */, bool /* check */);    // (#566)
     callback sftp-select-range(string /* tab-id */, int /* from */, int /* to */); // Shift+click
     // SFTP path bookmarks + recent folders (#500), stored per session.
     callback sftp-record-visit(string /* tab-id */, string /* path */);
@@ -1505,6 +1506,7 @@ export component AppWindow inherits Window {
     callback sftp-local-refresh(string /* tab-id */);
     callback sftp-local-open(string /* tab-id */, string /* local-path */);  // OS default app
     callback sftp-local-toggle-select(string /* tab-id */, int /* row */);
+    callback sftp-local-check-all(string /* tab-id */, bool /* check */);
     callback sftp-local-select-range(string /* tab-id */, int /* from */, int /* to */);
     callback sftp-local-copy-path(string /* local-path */);
     callback sftp-local-upload(string /* tab-id */, string /* local-path */);
@@ -2564,6 +2566,7 @@ export component AppWindow inherits Window {
                         sftp-refresh(path) => { root.sftp-refresh(term.id, path); }
                         sftp-tree-expand(path) => { root.sftp-tree-expand(term.id, path); }
                         sftp-toggle-select(i) => { root.sftp-toggle-select(term.id, i); }
+                        sftp-check-all(on) => { root.sftp-check-all(term.id, on); }
                         sftp-select-range(a, b) => { root.sftp-select-range(term.id, a, b); }
                         sftp-bookmarks: term.sftp-bookmarks;
                         sftp-recent: term.sftp-recent;
@@ -2623,6 +2626,7 @@ export component AppWindow inherits Window {
                         sftp-local-refresh() => { root.sftp-local-refresh(term.id); }
                         sftp-local-open(path) => { root.sftp-local-open(term.id, path); }
                         sftp-local-toggle-select(i) => { root.sftp-local-toggle-select(term.id, i); }
+                        sftp-local-check-all(on) => { root.sftp-local-check-all(term.id, on); }
                         sftp-local-select-range(a, b) => { root.sftp-local-select-range(term.id, a, b); }
                         sftp-local-copy-path(path) => { root.sftp-local-copy-path(path); }
                         sftp-local-upload(path) => { root.sftp-local-upload(term.id, path); }

@@ -916,3 +916,9 @@ msgstr "清除最近连接"
 
 msgid "Remove from recents"
 msgstr "从最近连接中移除"
+
+msgid "Select all"
+msgstr "全选"
+
+msgid "Clear selection"
+msgstr "取消全选"

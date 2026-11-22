@@ -264,6 +264,23 @@ pub(super) fn apply_range_selection(entries: &VecModel<SftpEntry>, from: i32, to
     n
 }
 
+/// Check (or clear) every row of a listing — the column header's select-all
+/// box and Ctrl+A (#566). Only rows whose state changes are written back.
+/// Returns the resulting checked count.
+pub(super) fn set_all_selection(entries: &VecModel<SftpEntry>, on: bool) -> usize {
+    let len = entries.row_count();
+    for i in 0..len {
+        let Some(mut e) = entries.row_data(i) else {
+            continue;
+        };
+        if e.selected != on {
+            e.selected = on;
+            entries.set_row_data(i, e);
+        }
+    }
+    if on { len } else { 0 }
+}
+
 /// Uncheck every SFTP entry for a tab and reset its selected-count (#100).
 pub(super) fn clear_sftp_selection(terminals: &VecModel<TerminalState>, tab_id: &str) {
     for ti in 0..terminals.row_count() {
