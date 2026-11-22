@@ -48,6 +48,8 @@ pub(super) fn install_window_event_hook(
         let ev_window_size_tracking_ready = window_size_tracking_ready.clone();
         let ev_pending_window_size_restore = pending_window_size_restore.clone();
         let mut last_cursor_logical: Option<(f32, f32)> = None;
+        // Items of one OS drop, gathered so the drop is handled once (#572).
+        let pending_drop = Rc::new(RefCell::new(PendingDrop::default()));
         let mut macos_wheel_accum = 0.0_f32;
         let hovered_terminal = Rc::new(HoveredTerminal::default());
         {
@@ -144,8 +146,10 @@ pub(super) fn install_window_event_hook(
                             // On macOS/X11/Wayland the compositor delivers
                             // pointer motion during drag-hover as ordinary
                             // CursorMoved events, so the last one we saw is
-                            // the drop point (#356).
-                            handle_file_drop(&win, &sh, path.clone(), last_cursor_logical);
+                            // the drop point (#356). A multi-item drop arrives
+                            // as one event per item: queue them, so the whole
+                            // drop asks about name conflicts once (#572).
+                            queue_file_drop(&win, &sh, &pending_drop, path.clone(), last_cursor_logical);
                         }
                     }
                     WEvent::CursorMoved { position, .. } => {

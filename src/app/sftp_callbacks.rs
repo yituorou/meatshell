@@ -1514,7 +1514,7 @@ fn upload_summary(paths: &[std::path::PathBuf]) -> String {
 }
 
 /// Show `message` in the SFTP status line of `tab_id`.
-fn set_sftp_status(w: &AppWindow, tab_id: &str, message: &str) {
+pub(super) fn set_sftp_status(w: &AppWindow, tab_id: &str, message: &str) {
     use slint::Model as _;
     let terminals = w.get_terminals();
     for i in 0..terminals.row_count() {
