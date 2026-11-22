@@ -403,8 +403,11 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         let sftp_handles = sftp_handles.clone();
         let weak = window.as_weak();
         window.on_sftp_local_upload(move |tab_id: SharedString, path: SharedString| {
-            let Some(w) = weak.upgrade() else { return };
-            upload_local_paths(&w, tab_id.as_str(), &sftp_handles, vec![path.to_string()]);
+            let (weak, sftp_handles) = (weak.clone(), sftp_handles.clone());
+            after_pointer_event(move || {
+                let Some(w) = weak.upgrade() else { return };
+                upload_local_paths(&w, tab_id.as_str(), &sftp_handles, vec![path.to_string()]);
+            });
         });
     }
     {
@@ -416,8 +419,13 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
             let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
                 return;
             };
+            // The selection as it is when the drag ends; the rest waits.
             let paths = selected_paths(model, tab_id.as_str());
-            upload_local_paths(&w, tab_id.as_str(), &sftp_handles, paths);
+            let (weak, sftp_handles) = (weak.clone(), sftp_handles.clone());
+            after_pointer_event(move || {
+                let Some(w) = weak.upgrade() else { return };
+                upload_local_paths(&w, tab_id.as_str(), &sftp_handles, paths);
+            });
         });
     }
     {
@@ -557,13 +565,16 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
         let weak = window.as_weak();
         window.on_sftp_download_to_local(
             move |tab_id: SharedString, remote: SharedString| {
-                let Some(w) = weak.upgrade() else { return };
-                download_into_local_pane(
-                    &w,
-                    tab_id.as_str(),
-                    &sftp_handles,
-                    vec![remote.to_string()],
-                );
+                let (weak, sftp_handles) = (weak.clone(), sftp_handles.clone());
+                after_pointer_event(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    download_into_local_pane(
+                        &w,
+                        tab_id.as_str(),
+                        &sftp_handles,
+                        vec![remote.to_string()],
+                    );
+                });
             },
         );
     }
@@ -576,11 +587,29 @@ fn wire_sftp_split_callbacks(window: &AppWindow, sftp_handles: &SftpHandles) {
             let Some(model) = terminals.as_any().downcast_ref::<VecModel<TerminalState>>() else {
                 return;
             };
+            // The selection as it is when the drag ends; the rest waits.
             let remotes = collect_sftp_selected(model, tab_id.as_str());
-            download_into_local_pane(&w, tab_id.as_str(), &sftp_handles, remotes);
             clear_sftp_selection(model, tab_id.as_str());
+            let (weak, sftp_handles) = (weak.clone(), sftp_handles.clone());
+            after_pointer_event(move || {
+                let Some(w) = weak.upgrade() else { return };
+                download_into_local_pane(&w, tab_id.as_str(), &sftp_handles, remotes);
+            });
         });
     }
+}
+
+/// Run `f` once the current pointer event has been fully handled.
+///
+/// The split view's drag-to-transfer ends inside the pointer-release handler.
+/// A native modal (the "name already exists" question) opened right there,
+/// while the window is still processing the release, comes up inactive behind
+/// it on Windows: the window looks frozen until Alt or Esc surfaces the
+/// dialog, and left alone the app stops responding (#575). Opening it on the
+/// next event-loop turn, after the release, avoids that; for actions that
+/// need no dialog the delay is imperceptible.
+fn after_pointer_event(f: impl FnOnce() + 'static) {
+    slint::Timer::single_shot(std::time::Duration::ZERO, f);
 }
 
 pub(super) fn wire_sftp_callbacks(
