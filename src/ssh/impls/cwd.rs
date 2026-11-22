@@ -11,6 +11,10 @@ pub(super) struct CwdTracker {
     host: Option<String>,
     authoritative: bool,
     title_fallback: bool,
+    /// The last directory reported.
+    last: Option<String>,
+    /// The latest prompt cycle was cancelled (Ctrl+C), not submitted.
+    cancelled: bool,
 }
 
 impl CwdTracker {
@@ -20,21 +24,25 @@ impl CwdTracker {
             host: None,
             authoritative: false,
             title_fallback,
+            last: None,
+            cancelled: false,
         }
     }
 
     pub(super) fn input(&mut self, bytes: &[u8]) {
         // Do not retain or interpret commands/passwords. A submission or cancel
         // starts a new prompt cycle; until then a real OSC 7 remains authoritative.
-        if bytes.iter().any(|byte| matches!(byte, b'\r' | b'\n' | 3)) {
+        // Only the last such key counts: Ctrl+C then Enter is a submission.
+        if let Some(&key) = bytes.iter().rev().find(|byte| matches!(byte, b'\r' | b'\n' | 3)) {
             self.authoritative = false;
+            self.cancelled = key == 3;
         }
     }
 
     pub(super) fn feed(&mut self, text: &str) -> Option<String> {
         let mut reported = None;
         for byte in text.bytes() {
-            match self.osc.feed(byte) {
+            let path = match self.osc.feed(byte) {
                 Some(Notification::Cwd { host, path }) => {
                     // The first login hook identifies the SFTP host. A later
                     // nested SSH must not rebind the title fallback's host.
@@ -42,7 +50,7 @@ impl CwdTracker {
                         self.host = Some(host);
                     }
                     self.authoritative = true;
-                    reported = Some(path);
+                    path
                 }
                 Some(Notification::RootTitle { host, path })
                     if self.title_fallback
@@ -52,10 +60,19 @@ impl CwdTracker {
                             .as_deref()
                             .is_some_and(|expected| same_host(&host, expected)) =>
                 {
-                    reported = Some(path);
+                    path
                 }
-                _ => {}
+                _ => continue,
+            };
+            // Every prompt re-reports the directory, and after the user browsed
+            // the SFTP panel by hand the next report snaps the panel back to the
+            // shell (#59). A prompt redrawn by Ctrl+C ran nothing, so it must
+            // not move the panel (#577); a submitted line or a real cd still does.
+            if self.cancelled && self.last.as_deref() == Some(path.as_str()) {
+                continue;
             }
+            self.last = Some(path.clone());
+            reported = Some(path);
         }
         reported
     }

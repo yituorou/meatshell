@@ -536,3 +536,27 @@ fn can_and_sub_cancel_opaque_strings_and_allow_following_titles() {
         }
     }
 }
+
+#[test]
+fn a_prompt_redrawn_by_ctrl_c_does_not_report_the_same_directory_again() {
+    // #577: browsing the SFTP panel, then Ctrl+C in the terminal, must not
+    // snap the panel back to the shell's directory.
+    let mut tracker = connected();
+    let prompt = |path: &str| format!("^C\r\n\x1b]7;file://host.local{path}\x07$ ");
+    tracker.input(b"\x03");
+    assert_eq!(tracker.feed(&prompt("/home/asus")), None);
+    // Repeated cancels stay quiet too.
+    tracker.input(b"\x03");
+    assert_eq!(tracker.feed(&prompt("/home/asus")), None);
+
+    // A submitted line still re-reports it, so the panel can snap back (#59).
+    tracker.input(b"\r");
+    assert_eq!(tracker.feed(&prompt("/home/asus")), Some("/home/asus".into()));
+    // Ctrl+C then Enter is a submission.
+    tracker.input(b"\x03\r");
+    assert_eq!(tracker.feed(&prompt("/home/asus")), Some("/home/asus".into()));
+
+    // A different directory after a cancel is still followed.
+    tracker.input(b"\x03");
+    assert_eq!(tracker.feed(&prompt("/srv")), Some("/srv".into()));
+}
