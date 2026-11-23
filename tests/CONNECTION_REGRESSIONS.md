@@ -30,6 +30,7 @@ cargo build --locked --features headless
 python tests/ssh_jump_chain_e2e.py --exe target/debug/meatshell
 python tests/ssh_jump_chain_e2e.py --exe target/debug/meatshell --stage-timeouts
 python tests/config_import_e2e.py --exe target/debug/meatshell
+python tests/sftp_folder_e2e.py --exe target/debug/meatshell
 ```
 
 The authentication matrix includes unencrypted RSA PEM and OpenSSH keys, inline
@@ -47,6 +48,15 @@ Network-stage deadlines do not limit human credential/MFA entry or host-key
 confirmation. The handshake budget pauses for host-key decisions, and cancelling
 a test closes its own pending transport and prompts. Disconnect cleanup is
 best-effort and cannot delay the completed test indefinitely.
+
+`sftp_folder_e2e.py` serves a real local directory over a paramiko loopback
+SFTP server and exercises single-file upload/download round-trips through the
+pipelined transfer implementation, including nested remote paths and
+byte-identical round-trips. Whole-folder batches are a GUI-only path: CLI/MCP
+uploads reject directories and the automation adapter returns on the first
+terminal transfer event, so neither can drive a full batch. Batch enumeration,
+queue registration, failure isolation, cancellation and the outcome tally are
+covered by Rust unit tests in `src/sftp/impls/sftp.rs` (`transfer_batch_tests`).
 
 ## Directory following after sudo
 

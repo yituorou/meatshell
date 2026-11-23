@@ -12,6 +12,7 @@ on:
       - "src/sftp/**"
       - "tests/remote_mcp_e2e.py"
       - "tests/tls_proxy_fixture.py"
+      - "tests/sftp_folder_e2e.py"
       - "Cargo.*"
       - ".github/workflows/remote-mcp.yml"
   workflow_dispatch:
@@ -66,6 +67,7 @@ jobs:
           python3 tests/config_import_e2e.py --exe target/release/meatshell
           python3 tests/ssh_jump_chain_e2e.py --exe target/release/meatshell
           python3 tests/ssh_jump_chain_e2e.py --exe target/release/meatshell --stage-timeouts
+          python3 tests/sftp_folder_e2e.py --exe target/release/meatshell
       - name: Stage portable headless package
         shell: bash
         run: |
