@@ -148,8 +148,14 @@ class LoopbackSftp:
                 "sftp", paramiko.SFTPServer, LocalSFTP, str(self.root)
             )
             transport.start_server(server=PasswordServer())
-            while transport.is_active():
-                transport.accept(0.5)
+            # Never call transport.accept() here: popping the session channel
+            # out of the accept queue and dropping the only reference makes
+            # CPython garbage-collect it before the client's subsystem request
+            # arrives, and Channel.__del__ closes the channel (EOF + CLOSE),
+            # so the SFTP handshake fails with "channel closed". The SFTP
+            # subsystem is driven by paramiko's transport thread itself; just
+            # wait for that thread to finish when the client disconnects.
+            transport.join()
         except (EOFError, OSError, paramiko.SSHException):
             pass
         finally:

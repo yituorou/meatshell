@@ -3441,10 +3441,12 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                Flickable {
+                // ScrollView (not a bare Flickable) so the transfer history
+                // gets a visible scrollbar once the rows exceed the popup
+                // height — matches every other scrolling list in the app.
+                ScrollView {
                     vertical-stretch: 1;
-                    content-width: self.width;
-                    content-height: max(self.height, xfer-col.preferred-height);
+                    content-width: self.visible-width;
                     xfer-col := VerticalLayout {
                         alignment: start;
                         spacing: 4px;
