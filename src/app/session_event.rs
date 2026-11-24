@@ -421,6 +421,16 @@ pub(super) fn apply_session_event_to_window(
                         .map(|state| state.transfer_speeds.clone())
                 })
             });
+            // O(1) id → row lookup; folder batches emit thousands of these
+            // events, so a linear scan per event would be quadratic.
+            let row_index = NEW_WINDOW_CORE.with(|slot| {
+                slot.borrow().as_ref().and_then(|core| {
+                    core.window_states
+                        .borrow()
+                        .get(&window_id)
+                        .map(|state| state.transfer_row_index.clone())
+                })
+            });
             let speed = speeds
                 .map(|speeds| speeds.observe(&id, transferred, state, sampled_at))
                 .unwrap_or_default();
@@ -474,18 +484,25 @@ pub(super) fn apply_session_event_to_window(
                 .as_any()
                 .downcast_ref::<VecModel<TransferInfo>>()
             {
-                let mut found = None;
-                for i in 0..model.row_count() {
-                    if let Some(row) = model.row_data(i) {
-                        if row.id.as_str() == id.as_str() {
-                            found = Some(i);
-                            break;
-                        }
-                    }
-                }
-                match found {
+                // Trust the index only while it still points at this id.
+                let located = row_index.as_ref().and_then(|m| {
+                    let idx = *m.borrow().get(&id)?;
+                    model
+                        .row_data(idx)
+                        .map(|r| r.id.as_str() == id.as_str())
+                        .unwrap_or(false)
+                        .then_some(idx)
+                });
+                match located {
                     Some(i) => model.set_row_data(i, rec),
-                    None => model.insert(0, rec), // newest at top
+                    None => {
+                        // Newest at top: the new row takes index 0 and every
+                        // existing row shifts down by one.
+                        if let Some(m) = &row_index {
+                            index_new_row(&mut m.borrow_mut(), &id);
+                        }
+                        model.insert(0, rec);
+                    }
                 }
                 // Drive the breathing indicator on the Transfers toolbar button:
                 // `true` while any row is active (0) or preparing (3); flips back
@@ -582,4 +599,39 @@ thread_local! {
     /// host:port → decision, remembered for this run so a duplicate prompt
     /// (second connection to the same host) is answered without a new dialog.
     pub(super) static HOSTKEY_DECIDED: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
+}
+
+/// Record a new transfer row inserted at the top of the transfers model: the
+/// new id takes index 0 and every existing index shifts down by one. Pure so
+/// the index bookkeeping is testable without constructing Slint components.
+fn index_new_row(index: &mut HashMap<String, usize>, id: &str) {
+    for pos in index.values_mut() {
+        *pos += 1;
+    }
+    index.insert(id.to_string(), 0);
+}
+
+#[cfg(test)]
+mod transfer_row_index_tests {
+    use super::*;
+
+    #[test]
+    fn new_rows_take_zero_and_shift_existing_indices() {
+        let mut index = HashMap::new();
+        index_new_row(&mut index, "a");
+        index_new_row(&mut index, "b");
+        index_new_row(&mut index, "c");
+        assert_eq!(index.get("c"), Some(&0));
+        assert_eq!(index.get("b"), Some(&1));
+        assert_eq!(index.get("a"), Some(&2));
+    }
+
+    #[test]
+    fn clearing_drops_every_index() {
+        let mut index = HashMap::new();
+        index_new_row(&mut index, "a");
+        index_new_row(&mut index, "b");
+        index.clear();
+        assert!(index.is_empty());
+    }
 }
