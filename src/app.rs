@@ -43,6 +43,7 @@ mod session_models;
 mod session_runtime;
 mod session_trigger;
 mod settings_callbacks;
+mod settings_search;
 mod sftp_callbacks;
 mod sftp_complete;
 mod sftp_local;

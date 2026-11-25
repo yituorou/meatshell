@@ -183,6 +183,7 @@ pub(super) fn open_window(
     wire_ui_scale_and_wallpaper(&ctx);
     super::color_theme::wire(&ctx);
     super::terminal_scheme::wire(&ctx);
+    super::settings_search::wire(&window);
 
     let sessions_model: Rc<VecModel<SessionInfo>> = Rc::new(VecModel::default());
     window.set_sessions(ModelRc::from(sessions_model.clone()));
