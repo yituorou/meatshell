@@ -14,5 +14,9 @@ pub struct Palette {
 
 pub struct Wallpaper {
     pub image: Image,
+    /// Small, heavily blurred copy for the frosted-glass backdrop. Slint has
+    /// no runtime blur, so it is baked once here; `image-fit: cover` scales it
+    /// up smoothly and it costs only a few hundred KB.
+    pub blurred: Image,
     pub palette: Palette,
 }

@@ -41,10 +41,36 @@ pub fn load(id: &str) -> Option<Wallpaper> {
         path => decode_custom(path)?,
     };
     let palette = derive_palette(&buf);
+    let blurred = Image::from_rgba8(blur_small(&buf));
     Some(Wallpaper {
         image: Image::from_rgba8(buf),
+        blurred,
         palette,
     })
+}
+
+/// Long edge of the frosted-glass backdrop. Blurring at this size is both
+/// cheap (well under a millisecond-scale workload) and what makes the blur
+/// look wide once `image-fit: cover` stretches it to the window.
+const BLUR_EDGE: u32 = 256;
+/// Gaussian sigma at `BLUR_EDGE` resolution — ~2% of the width, i.e. roughly a
+/// 30px frosted-glass radius on a typical 1400px-wide window.
+const BLUR_SIGMA: f32 = 5.0;
+
+/// Downscale `buf` and blur it for the frosted-glass backdrop.
+fn blur_small(buf: &SharedPixelBuffer<Rgba8Pixel>) -> SharedPixelBuffer<Rgba8Pixel> {
+    let (w, h) = (buf.width(), buf.height());
+    let Some(src) = image::RgbaImage::from_raw(w, h, buf.as_bytes().to_vec()) else {
+        return buf.clone();
+    };
+    let scale = (BLUR_EDGE as f32 / w.max(h) as f32).min(1.0);
+    let nw = ((w as f32 * scale) as u32).max(1);
+    let nh = ((h as f32 * scale) as u32).max(1);
+    let small = image::imageops::resize(&src, nw, nh, image::imageops::FilterType::Triangle);
+    let blurred = image::imageops::blur(&small, BLUR_SIGMA);
+    let mut out = SharedPixelBuffer::<Rgba8Pixel>::new(nw, nh);
+    out.make_mut_bytes().copy_from_slice(blurred.as_raw());
+    out
 }
 
 /// True if `id` names one of the procedurally-drawn built-ins.

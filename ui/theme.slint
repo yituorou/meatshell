@@ -82,6 +82,26 @@ export global Theme {
     in-out property <bool>  wallpaper-active: false;
     in-out property <color> wp-accent: #4a90e2;   // vivid accent from the image
     in-out property <color> wp-tint:   #808080;   // average colour, tints surfaces
+    // Frosted glass: Rust bakes a small blurred copy of the wallpaper (Slint has
+    // no runtime blur). With frost on, windows paint that copy instead of the
+    // sharp image, plus a wash matching light/dark mode, so the gaps between
+    // panels read as frosted glass rather than the raw (possibly bright) image.
+    in-out property <image> wallpaper-blurred;
+    in-out property <bool>  wallpaper-frost: false;   // display mode: frosted glass vs transparency
+    out property <bool> frost-active: root.wallpaper-active && root.wallpaper-frost
+        && root.wallpaper-blurred.width > 0;
+    out property <image> wallpaper-backdrop: root.frost-active ? root.wallpaper-blurred : root.wallpaper;
+    // Window backdrop layer: one full-window layer between the wallpaper and
+    // all panels, in the theme's own root colour (dark in dark mode, light in
+    // light mode), so e.g. a light wallpaper doesn't glare through a dark UI.
+    // Panels keep their own transparency on top of it.
+    // Frosted glass: fixed alpha 0x61 ≈ 38% dark / 0x73 ≈ 45% light over the
+    // blurred image. Transparency: `gap-dim` (user slider "Backdrop layer
+    // opacity", default 0.4) over the sharp image.
+    in-out property <float> gap-dim: 0.4;
+    out property <brush> frost-wash: !root.wallpaper-active ? transparent
+        : root.frost-active ? (root.dark ? #10131a61 : #f4f6fa73)
+        : root.p.bg-root.with-alpha(root.gap-dim);
     // Frosted-panel opacity over a wallpaper (0.30–1.00). User-adjustable via the
     // Interface › Wallpaper opacity slider; bg-root / term-bg derive from it so one
     // control scales the whole wallpaper wash. Default 0.85 (15% transparency).
@@ -112,15 +132,6 @@ export global Theme {
     property <color> base-bg-elevated:  root.p.bg-elevated;
     property <color> base-bg-hover:     root.p.bg-hover;
     property <color> base-bg-active:    root.p.bg-active;
-
-    // Theme-aware veil painted between the wallpaper and the frosted cards.
-    // The 10px seams between cards would otherwise show the raw image, which
-    // never changes with the light/dark switch. Tinting those seams with the
-    // theme's root colour gives them the same dark/light cast as the rest of
-    // the UI, so card edges blend into one backdrop (IntelliJ-style). It
-    // scales with the wallpaper-opacity slider so the whole wash stays one
-    // control: a lower overlay value lets more of the image through the gaps.
-    out property <brush> wallpaper-scrim: base-bg-root.with-alpha(root.panel-alpha * 0.62);
 
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
     // empty / inset areas; panels stay mostly opaque for legible text.

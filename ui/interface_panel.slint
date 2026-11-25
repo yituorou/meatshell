@@ -835,6 +835,8 @@ export component InterfacePanel inherits Rectangle {
     callback copy-text(string);
     property <bool> mcp-json-copied: false;
     in-out property <float> wallpaper-overlay;   // frosted-panel opacity 0.30-1.00
+    in-out property <float> wallpaper-gap-dim;   // transparency-mode gap dimming 0-0.8
+    callback persist-wallpaper-gap-dim(float);
     // Panel layout style: false = rounded floating cards with gaps, true =
     // square flush panels divided by 1px lines.
     in property <bool> flat-panels;
@@ -847,6 +849,7 @@ export component InterfacePanel inherits Rectangle {
     in property <string> color-theme: "default";
     in-out property <string> color-theme-custom: "#4A90E2";
     in property <bool> immersive-colors: true;
+    in property <bool> wallpaper-frost: false;     // display mode: frosted glass (true) / transparency
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
     // Terminal colours page: one scheme for dark mode, one for light.
@@ -864,6 +867,7 @@ export component InterfacePanel inherits Rectangle {
     callback import-term-scheme(bool);
     callback remove-term-scheme(string);
     callback set-immersive-colors(bool);
+    callback set-wallpaper-frost(bool);
     in property <[WslProfileInfo]> wsl-profiles;
     in-out property <string> wsl-new-name: "WSL";
     in-out property <string> wsl-new-distribution;
@@ -1863,6 +1867,27 @@ export component InterfacePanel inherits Rectangle {
                         toggled(v) => { root.set-immersive-colors(v); }
                     }
                 }
+                SettingRow {
+                    label: root.lang-en ? "Wallpaper display mode" : "壁纸显示模式";
+                    desc: root.lang-en
+                        ? "Transparency keeps the wallpaper sharp behind translucent panels. Frosted glass blurs it and tints it light or dark to match the theme, so bright wallpapers don't glare between panels."
+                        : "透明：壁纸保持清晰，透过半透明面板显示。毛玻璃：将壁纸模糊，并按浅色 / 深色主题蒙上对应色调，避免亮色壁纸在面板间隙处过于刺眼。";
+                    show-divider: false;
+                    ComboBox {
+                        width: 150px;
+                        model: root.lang-en
+                            ? ["Frosted glass", "Transparency"]
+                            : ["毛玻璃", "透明"];
+                        current-index: root.wallpaper-frost ? 0 : 1;
+                        selected(v) => {
+                            let frost = v == "Frosted glass" || v == "毛玻璃";
+                            if (frost != root.wallpaper-frost) {
+                                root.set-wallpaper-frost(frost);
+                            }
+                        }
+                    }
+                }
+
                 
                 Rectangle { height: 16px; }
                 SectionHeader { text: root.lang-en ? "PANELS" : "面板"; height: 22px; }
@@ -1899,6 +1924,33 @@ export component InterfacePanel inherits Rectangle {
                         }
                         Text {
                             text: "\{round((1.0 - root.wallpaper-overlay) * 100)}%";
+                            color: Theme.text-secondary;
+                            font-size: 12px * Theme.panel-font;
+                            vertical-alignment: center;
+                            width: 34px;
+                        }
+                    }
+                }
+                // The backdrop layer slider only applies in transparency mode
+                // (frosted glass has its own fixed wash), so hide it there.
+                if !root.wallpaper-frost : SettingRow {
+                    label: root.lang-en ? "Backdrop layer opacity" : "底层遮罩不透明度";
+                    desc: root.lang-en
+                        ? "A layer in the theme's background color under all panels, covering the whole window. Raise it to tone down a wallpaper that clashes with the theme (e.g. a light wallpaper in dark mode)."
+                        : "在所有面板下方铺一层与主题背景同色的遮罩，覆盖整个窗口。调高可压住与主题不搭的壁纸（如深色模式下的浅色壁纸）。";
+                    show-divider: false;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Slider {
+                            width: 150px;
+                            minimum: 0;
+                            maximum: 80;
+                            value: root.wallpaper-gap-dim * 100;
+                            changed(v) => { root.wallpaper-gap-dim = v / 100; }
+                            released(v) => { root.persist-wallpaper-gap-dim(v / 100); }
+                        }
+                        Text {
+                            text: "\{round(root.wallpaper-gap-dim * 100)}%";
                             color: Theme.text-secondary;
                             font-size: 12px * Theme.panel-font;
                             vertical-alignment: center;

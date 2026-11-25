@@ -17,6 +17,8 @@ export component EditorWindow inherits Window {
     in-out property <float> ui-scale <=> Theme.ui-scale;
     in-out property <string> ui-font-family <=> Theme.ui-font-family;
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
+    in-out property <image> wallpaper-blurred <=> Theme.wallpaper-blurred;
+    in-out property <bool> wallpaper-frost <=> Theme.wallpaper-frost;
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
     in-out property <color> wp-tint <=> Theme.wp-tint;
@@ -69,8 +71,15 @@ export component EditorWindow inherits Window {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        source: Theme.wallpaper;
+        source: Theme.wallpaper-backdrop;
         image-fit: cover;
+    }
+    // Light/dark wash over the wallpaper (see Theme.frost-wash).
+    if Theme.wallpaper-active : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.frost-wash;
     }
     Rectangle {
         width: parent.width;
