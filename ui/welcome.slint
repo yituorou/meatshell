@@ -444,10 +444,11 @@ export component Welcome inherits Rectangle {
     }
 
     VerticalLayout {
-        // 10px in compact mode: the same card inset as the resource panel and
-        // the central card, so their edges line up (#560).
-        padding: root.compact ? 10px : 24px;
-        spacing: root.compact ? 12px : 20px;
+        // Card inset in compact mode: the same gap as the resource panel and
+        // the central card, so their edges line up (#560). Flat mode removes
+        // the gap so the panel is flush and divided by its hairline.
+        padding: root.compact ? Theme.card-gap : 24px;
+        spacing: root.compact ? (Theme.flat-panels ? 0px : 12px) : 20px;
 
         // Header (title + tagline) — pinned to the top at its natural height so
         // it can't grab the stretch space and spread apart (seen on macOS); the
@@ -488,8 +489,8 @@ export component Welcome inherits Rectangle {
         Rectangle {
             vertical-stretch: 1;
             background: Theme.card-bg;
-            border-radius: Theme.radius-md;
-            border-width: 1px;
+            border-radius: Theme.card-radius;
+            border-width: Theme.flat-panels ? 0px : 1px;
             border-color: Theme.border-subtle;
 
             VerticalLayout {
