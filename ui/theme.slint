@@ -87,14 +87,21 @@ export global Theme {
     // sharp image, plus a wash matching light/dark mode, so the gaps between
     // panels read as frosted glass rather than the raw (possibly bright) image.
     in-out property <image> wallpaper-blurred;
-    in-out property <bool>  wallpaper-frost: true;
+    in-out property <bool>  wallpaper-frost: false;   // display mode: frosted glass vs transparency
     out property <bool> frost-active: root.wallpaper-active && root.wallpaper-frost
         && root.wallpaper-blurred.width > 0;
     out property <image> wallpaper-backdrop: root.frost-active ? root.wallpaper-blurred : root.wallpaper;
-    // Dark glass in dark mode, light glass in light mode (alpha 0x61 ≈ 38%,
-    // 0x73 ≈ 45%). Transparent when frost is off.
-    out property <brush> frost-wash: !root.frost-active ? transparent
-        : (root.dark ? #10131a61 : #f4f6fa73);
+    // Window backdrop layer: one full-window layer between the wallpaper and
+    // all panels, in the theme's own root colour (dark in dark mode, light in
+    // light mode), so e.g. a light wallpaper doesn't glare through a dark UI.
+    // Panels keep their own transparency on top of it.
+    // Frosted glass: fixed alpha 0x61 ≈ 38% dark / 0x73 ≈ 45% light over the
+    // blurred image. Transparency: `gap-dim` (user slider "Backdrop layer
+    // opacity", default 0.4) over the sharp image.
+    in-out property <float> gap-dim: 0.4;
+    out property <brush> frost-wash: !root.wallpaper-active ? transparent
+        : root.frost-active ? (root.dark ? #10131a61 : #f4f6fa73)
+        : root.p.bg-root.with-alpha(root.gap-dim);
     // Frosted-panel opacity over a wallpaper (0.30–1.00). User-adjustable via the
     // Interface › Wallpaper opacity slider; bg-root / term-bg derive from it so one
     // control scales the whole wallpaper wash. Default 0.85 (15% transparency).

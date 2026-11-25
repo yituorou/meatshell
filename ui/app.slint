@@ -756,6 +756,9 @@ export component AppWindow inherits Window {
     // User-adjustable wallpaper overlay opacity (0.30–1.00), persisted.
     in-out property <float> wallpaper-overlay <=> Theme.panel-alpha;
     callback persist-wallpaper-overlay(float);
+    // Transparency mode: how much the gaps between panels are dimmed (0–0.8).
+    in-out property <float> wallpaper-gap-dim <=> Theme.gap-dim;
+    callback persist-wallpaper-gap-dim(float);
     // Colour theme presets + the immersive-colours switch (Settings ›
     // Wallpaper & theme). Rust fills the palettes from the chosen preset.
     in-out property <ThemePalette> theme-palette-dark <=> Theme.palette-dark;
@@ -1590,9 +1593,9 @@ export component AppWindow inherits Window {
         source: Theme.wallpaper-backdrop;
         image-fit: cover;
     }
-    // Frosted-glass wash over the blurred wallpaper (light/dark to match the
-    // theme) — tames bright wallpapers in the gaps between panels.
-    if Theme.frost-active : Rectangle {
+    // Light/dark wash over the wallpaper (blurred in frosted-glass mode; a
+    // fainter veil in transparency mode) — tames bright wallpapers in the gaps.
+    if Theme.wallpaper-active : Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
@@ -5584,6 +5587,7 @@ export component AppWindow inherits Window {
                     mcp-config-json: root.mcp-config-json;
                     copy-text(t) => { root.copy-text(t); }
                     wallpaper-overlay <=> root.wallpaper-overlay;
+                    wallpaper-gap-dim <=> root.wallpaper-gap-dim;
                     current-wallpaper: root.current-wallpaper;
                     custom-wallpaper-name: root.custom-wallpaper-name;
                     wsl-profiles: root.wsl-profiles;
@@ -5707,6 +5711,7 @@ export component AppWindow inherits Window {
                     remove-credential(id) => { root.remove-credential(id); }
                     pick-credential-key => { root.pick-credential-key(); }
                     persist-wallpaper-overlay(v) => { root.persist-wallpaper-overlay(v); }
+                    persist-wallpaper-gap-dim(v) => { root.persist-wallpaper-gap-dim(v); }
                 }
             }
             Rectangle {

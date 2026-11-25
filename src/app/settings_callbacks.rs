@@ -465,6 +465,7 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_welcome_collapsed(welcome_collapsed);
         window.set_sidebar_collapsed(sidebar_collapsed);
         window.set_wallpaper_overlay(s.wallpaper_overlay());
+        window.set_wallpaper_gap_dim(s.wallpaper_gap_dim());
         window.set_update_check_enabled(s.update_check_enabled()); // #184
         if collapse_sftp {
             window.set_sftp_collapsed(true);
@@ -567,6 +568,14 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.on_persist_wallpaper_overlay(move |v| {
             let mut s = store.borrow_mut();
             s.set_wallpaper_overlay(v);
+            let _ = s.save();
+        });
+    }
+    {
+        let store = store.clone();
+        window.on_persist_wallpaper_gap_dim(move |v| {
+            let mut s = store.borrow_mut();
+            s.set_wallpaper_gap_dim(v);
             let _ = s.save();
         });
     }

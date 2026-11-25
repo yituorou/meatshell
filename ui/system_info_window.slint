@@ -217,8 +217,8 @@ export component SystemInfoWindow inherits Window {
         source: Theme.wallpaper-backdrop;
         image-fit: cover;
     }
-    // Frosted-glass wash (see Theme.frost-wash).
-    if Theme.frost-active : Rectangle {
+    // Light/dark wash over the wallpaper (see Theme.frost-wash).
+    if Theme.wallpaper-active : Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
