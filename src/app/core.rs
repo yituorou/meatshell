@@ -74,6 +74,10 @@ pub struct WindowState {
     /// otherwise they keep firing for the whole process lifetime.
     pub timers: Rc<RefCell<Vec<slint::Timer>>>,
     pub(super) transfer_speeds: Rc<super::transfer_speeds::TransferSpeeds>,
+    /// Transfer id → row index in the window's `transfers` VecModel, so the
+    /// high-frequency SftpTransfer upserts stay O(1) with folder batches that
+    /// contain thousands of rows. UI-thread only, same lifecycle as the model.
+    pub(super) transfer_row_index: Rc<RefCell<HashMap<String, usize>>>,
     pub content_size: Rc<Cell<(f32, f32)>>,
     /// Strong handles: both windows start hidden, and the Slint backend only
     /// keeps a component alive while its window is visible — without these
