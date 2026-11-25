@@ -33,12 +33,12 @@ import { ProcWindow, ProcRow } from "proc_window.slint";
 import { SystemInfoWindow, SysInfoRow, SysMetricRow, SysNetRow } from "system_info_window.slint";
 import { EditorWindow } from "editor_window.slint";
 import { EditorPane, EditorFindResult, EditorDoc } from "editor_pane.slint";
-import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ColorThemeItem, TermSchemeItem } from "interface_panel.slint";
+import { InterfacePanel, OutputRuleItem, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ColorThemeItem, TermSchemeItem, SettingsHit } from "interface_panel.slint";
 // Re-export so `slint::include_modules!` generates the detached Rust window types.
 export { ProcWindow, SystemInfoWindow, EditorWindow }
 import { ComboBox, SpinBox, LineEdit, Button, ScrollView, CheckBox, Palette } from "std-widgets.slint";
 
-export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem, TermColors, TermSchemeItem, SftpPathSuggestion, SftpPathSuggestions }
+export { SessionInfo, LaunchItem, SessionDraft, JumpHop, TabInfo, SftpEntry, SftpTreeNode, TunnelInfo, QuickCmd, PortFwd, WslProfileInfo, CustomAgentInfo, CustomShellInfo, CredentialInfo, UpdateMirrorRow, ThemePalette, ColorThemeItem, TermColors, TermSchemeItem, SettingsHit, SftpPathSuggestion, SftpPathSuggestions }
 
 // --- TerminalState ---------------------------------------------------------
 // Per-terminal view-model exposed to Rust. A TabInfo has the metadata; the
@@ -805,6 +805,8 @@ export component AppWindow inherits Window {
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
     callback set-immersive-colors(bool);
+    // Settings search box (Rust: settings_search.rs).
+    callback search-settings(string /* query */, bool /* lang-en */) -> [SettingsHit];
     // Terminal colour schemes (Settings › Terminal colours): one for dark mode,
     // one for light. Rust fills the Theme colours and the picker list.
     in-out property <TermColors> term-colors-dark <=> Theme.term-colors-dark;
@@ -5699,6 +5701,7 @@ export component AppWindow inherits Window {
                     set-color-theme(id) => { root.set-color-theme(id); }
                     set-color-theme-custom(hex) => { root.set-color-theme-custom(hex) }
                     set-immersive-colors(v) => { root.set-immersive-colors(v); }
+                    search-settings(q, en) => { root.search-settings(q, en) }
                     wallpaper-frost: root.wallpaper-frost;
                     set-wallpaper-frost(v) => { root.set-wallpaper-frost(v); }
                     term-schemes: root.term-schemes;

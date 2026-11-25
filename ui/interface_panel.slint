@@ -336,12 +336,53 @@ component SectionHeader inherits Text {
     vertical-alignment: center;
 }
 
+// One settings-search result (Rust fills these from an index of this file).
+export struct SettingsHit {
+    page: string,        // ifd-page id to open
+    page-title: string,  // nav title, in the current language
+    label: string,       // row / section / page label
+    detail: string,      // row description ("" if none)
+    focus: string,       // SettingRow label to scroll to + highlight ("" = top)
+}
+
+// Search → row hand-off: the panel sets `label` (and bumps `request`) when a
+// result is opened; the matching SettingRow highlights itself and, once laid
+// out, reports its absolute y so the panel can scroll it into view.
+global SettingsFocus {
+    in-out property <string> label;
+    in-out property <int> request;
+    in-out property <length> target-y;
+    in-out property <int> reported;
+}
+
 // A settings row: label (+ optional description) on the left, a control slot on
 // the right via @children. Right-aligned and vertically centered.
 component SettingRow inherits Rectangle {
     in property <string> label;
     in property <string> desc;
     in property <bool> show-divider: true;
+    // Settings search: highlight + scroll into view when this row was opened.
+    property <bool> search-hit: SettingsFocus.label != "" && root.label == SettingsFocus.label;
+    property <int> handled-request: -1;
+    // Drawn a little wider than the row so the text isn't flush with its edge.
+    Rectangle {
+        x: -8px;
+        width: parent.width + 16px;
+        height: parent.height;
+        border-radius: 6px;
+        background: root.search-hit ? Theme.accent.with-alpha(0.16) : transparent;
+        animate background { duration: 250ms; }
+    }
+    Timer {
+        // A short delay so the freshly opened page has its final layout.
+        interval: 40ms;
+        running: root.search-hit && root.handled-request != SettingsFocus.request;
+        triggered => {
+            root.handled-request = SettingsFocus.request;
+            SettingsFocus.target-y = root.absolute-position.y;
+            SettingsFocus.reported = SettingsFocus.request;
+        }
+    }
     VerticalLayout {
         HorizontalLayout {
             spacing: 14px;
@@ -877,6 +918,39 @@ export component InterfacePanel inherits Rectangle {
     // bar's launch menu (#427).
     in property <string> start-page: "font";
     property <string> ifd-page: root.start-page;
+
+    // --- Settings search ----------------------------------------------------
+    // Rust searches an index built from this file (labels, descriptions,
+    // section headers, option text — both languages).
+    callback search-settings(string /* query */, bool /* lang-en */) -> [SettingsHit];
+    property <string> settings-query;
+    property <[SettingsHit]> settings-hits;
+    function run-settings-search(q: string) {
+        root.settings-query = q;
+        root.settings-hits = q == "" ? [] : root.search-settings(q, root.lang-en);
+    }
+    function open-settings-hit(h: SettingsHit) {
+        search-box.text = "";
+        root.run-settings-search("");
+        root.ifd-page = h.page;
+        settings-scroll.content-y = 0;
+        SettingsFocus.request += 1;
+        SettingsFocus.label = h.focus;
+    }
+    // A matching row reported its position → scroll it ~24px below the top.
+    property <int> focus-reported: SettingsFocus.reported;
+    changed focus-reported => {
+        let delta = SettingsFocus.target-y - settings-scroll.absolute-position.y - 24px;
+        settings-scroll.content-y = max(
+            min(0px, settings-scroll.content-y - delta),
+            min(0px, settings-scroll.visible-height - settings-scroll.content-height));
+    }
+    // Fade the highlight out after a moment.
+    Timer {
+        interval: 2200ms;
+        running: SettingsFocus.label != "";
+        triggered => { SettingsFocus.label = ""; }
+    }
     in property <[CustomAgentInfo]> custom-agents;
     in-out property <string> agent-new-name;
     in-out property <string> agent-new-command;
@@ -978,14 +1052,56 @@ export component InterfacePanel inherits Rectangle {
                 x: parent.width - 1px; width: 1px; height: parent.height;
                 background: Theme.border-subtle;
             }
+            // Settings search box (searches every page; see search-settings).
+            search-box := LineEdit {
+                x: 10px;
+                y: 10px;
+                width: parent.width - 21px;
+                height: 30px;
+                font-size: 12px * Theme.panel-font;
+                placeholder-text: root.lang-en ? "Search settings…" : "搜索设置…";
+                edited(text) => { root.run-settings-search(text); }
+                // Enter opens the top result.
+                accepted(text) => {
+                    if (root.settings-hits.length > 0) {
+                        root.open-settings-hit(root.settings-hits[0]);
+                    }
+                }
+            }
+            if root.settings-query != "" : Rectangle {
+                // Clear (×) inside the box's right edge.
+                x: search-box.x + search-box.width - 26px;
+                y: search-box.y + 4px;
+                width: 22px;
+                height: 22px;
+                border-radius: 11px;
+                background: clear-ta.has-hover ? Theme.bg-hover : transparent;
+                Text {
+                    text: "\u{E5CD}";
+                    font-family: "Material Icons";
+                    font-size: 14px;
+                    color: Theme.text-secondary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                clear-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        search-box.text = "";
+                        root.run-settings-search("");
+                    }
+                }
+            }
             nav-scroll := ScrollView {
+                y: 44px;
                 width: 100%;
-                height: 100%;
+                height: parent.height - 44px;
                 content-width: self.visible-width;
                 content-height: max(self.visible-height, nav-items.preferred-height);
                 nav-items := VerticalLayout {
                     width: nav-scroll.visible-width;
                     padding: 10px;
+                    padding-top: 2px;
                     spacing: 2px;
                     alignment: start;
                 NavItem {
@@ -1094,7 +1210,77 @@ export component InterfacePanel inherits Rectangle {
             // wallpaper-opacity slider (items 6/7).
             background: transparent;
 
+            // --- Settings search results (replace the page while typing) ---
+            if root.settings-query != "" : results-scroll := ScrollView {
+                width: 100%;
+                height: 100%;
+                content-width: self.visible-width;
+                content-height: max(self.visible-height, results-list.preferred-height);
+                results-list := VerticalLayout {
+                    width: results-scroll.visible-width;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 12px;
+                    padding-bottom: 16px;
+                    spacing: 2px;
+                    alignment: start;
+                    SectionHeader {
+                        height: 24px;
+                        text: root.settings-hits.length == 0
+                            ? (root.lang-en ? "NO MATCHING SETTINGS" : "没有匹配的设置")
+                            : (root.lang-en ? "\{root.settings-hits.length} RESULTS" : "\{root.settings-hits.length} 个结果");
+                    }
+                    for hit in root.settings-hits : Rectangle {
+                        height: hit-col.preferred-height;
+                        border-radius: 6px;
+                        background: hit-ta.has-hover ? Theme.bg-hover : transparent;
+                        hit-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.open-settings-hit(hit); }
+                        }
+                        hit-col := VerticalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            padding-top: 7px;
+                            padding-bottom: 7px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: hit.label;
+                                    font-size: 13px * Theme.panel-font;
+                                    color: Theme.text-primary;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                // Which page it lives on.
+                                Rectangle {
+                                    width: page-chip.preferred-width + 14px;
+                                    height: 18px;
+                                    border-radius: 9px;
+                                    background: Theme.bg-active;
+                                    page-chip := Text {
+                                        text: hit.page-title;
+                                        font-size: 10px * Theme.panel-font;
+                                        color: Theme.text-secondary;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            if hit.detail != "" : Text {
+                                text: hit.detail;
+                                font-size: 11px * Theme.panel-font;
+                                color: Theme.text-muted;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+
             settings-scroll := ScrollView {
+                visible: root.settings-query == "";
                 width: 100%;
                 height: 100%;
                 content-width: self.visible-width;
