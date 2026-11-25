@@ -211,6 +211,13 @@ component WinBtn inherits Rectangle {
 component IconBtn inherits Rectangle {
     in property <string> icon;
     in property <brush> icon-color: Theme.text-secondary;
+    // Toggled-on / popup-open buttons tint the glyph instead of keeping the
+    // caller's idle colour (#579), so "on" reads the same for every button.
+    in property <brush> active-icon-color: Theme.accent;
+    // One optical size for every toolbar glyph (#579). The old binding used
+    // Theme.fs-md (13–14px), which made the 26px buttons look mostly empty and
+    // left the icons visibly smaller than the tab titles next to them.
+    in property <length> icon-size: 16px;
     in property <string> tooltip;
     in property <bool> active;
     // `breathe=true` makes the button add a separate pulse layer underneath
@@ -245,11 +252,21 @@ component IconBtn inherits Rectangle {
     // Replaces the previous `ta.has-hover || root.active` branch of the
     // combined background expression so opening a popup no longer keeps the
     // animate background loop running (#breathing-light).
+    //
+    // Active is a faint accent wash rather than the old solid `bg-hover` fill
+    // (#579): the command bar is on by default, so a full grey square made the
+    // toolbar look like one permanently pressed button and drowned out the
+    // icons beside it. The accent tint stays legible next to the hover fill.
+    //
+    // The short fade keeps the cluster from flickering as the pointer sweeps
+    // across it (#579); 120ms is short enough that a click still feels instant.
     static-bg := Rectangle {
         x: 0px; y: 0px;
         width: 100%; height: 100%;
         border-radius: Theme.radius-sm;
-        background: ta.has-hover || root.active ? Theme.bg-hover : transparent;
+        background: ta.has-hover ? Theme.bg-hover
+            : (root.active ? Theme.accent.with-alpha(0.16) : transparent);
+        animate background { duration: 120ms; easing: ease-out; }
     }
 
     // Layer 2 — breathing pulse, only while `breathe=true`.
@@ -295,8 +312,8 @@ component IconBtn inherits Rectangle {
     Text {
         text: root.icon;
         font-family: "Material Icons";
-        color: root.icon-color;
-        font-size: Theme.fs-md;
+        color: root.active ? root.active-icon-color : root.icon-color;
+        font-size: root.icon-size;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -590,11 +607,25 @@ export component AppWindow inherits Window {
         root.custom-titlebar ? 3 * 46px + 16px : root.dock-right-gap + 4px;
     property <length> toolbar-y-off:
         root.custom-titlebar ? 0px : root.dock-top-gap;
+    // Vertical placement: the icons must sit on the tab strip's centre line.
+    //
+    // Custom title bar (Windows/Linux): 38px bar, 26px button → 6px inset.
+    //
+    // Native title bar (macOS, #579): the tab strip is NOT directly under the
+    // 28px reserved title-bar strip — the central area is a floating card inset
+    // by `central-inset-top` (10px), so the strip really starts at
+    // titlebar-inset + 10. Centring on `titlebar-inset` alone left every icon
+    // 10px high, straddling the strip's top edge. The popups follow the same
+    // shift so they stay anchored under their buttons.
     property <length> toolbar-y:
-        (root.custom-titlebar ? 6px : 5px + root.titlebar-inset) + root.toolbar-y-off;
+        (root.custom-titlebar
+            ? 6px
+            : root.central-inset-top + 5px + root.titlebar-inset) + root.toolbar-y-off;
     // Top edge of the Settings / Transfers popups anchored under the icons.
     property <length> toolbar-popup-y:
-        (root.custom-titlebar ? 40px : 40px + root.titlebar-inset) + root.toolbar-y-off;
+        (root.custom-titlebar
+            ? 40px
+            : root.central-inset-top + 40px + root.titlebar-inset) + root.toolbar-y-off;
     in-out property <bool> about-open: false;     // centered About dialog
     callback open-repo();                          // open the project's GitHub page
     in-out property <bool> shortcuts-open: false; // centered keyboard-shortcuts dialog (#103)
@@ -3202,7 +3233,9 @@ export component AppWindow inherits Window {
         x: root.width - 94px - root.toolbar-x-off; y: root.toolbar-y;
         visible: !root.term-fullscreen;
         icon: Theme.dark ? "\u{E518}" : "\u{E51C}";
-        icon-color: Theme.dark ? #f5c542 : #5856d6;
+        // Neutral like its neighbours (#579): the amber sun / indigo moon were
+        // the only decorative colours in the row, so the cluster read as a mix
+        // of unrelated icons. Sun vs moon already says which theme is active.
         tooltip: root.lang-en ? "Toggle theme" : "切换主题";
         clicked => { root.toggle-theme(); }
     }
@@ -3210,7 +3243,6 @@ export component AppWindow inherits Window {
         x: root.width - 124px - root.toolbar-x-off; y: root.toolbar-y;
         visible: !root.term-fullscreen;
         icon: "\u{E627}";
-        icon-color: root.sync-input ? Theme.accent : Theme.text-secondary;
         active: root.sync-input;
         tooltip: root.lang-en
             ? (root.sync-input ? "Sync input: ON" : "Sync input")
@@ -3221,7 +3253,10 @@ export component AppWindow inherits Window {
         x: root.width - 154px - root.toolbar-x-off; y: root.toolbar-y;
         visible: !root.term-fullscreen;
         icon: "\u{E86F}";   // Material "code" — command bar
-        active: !root.cmd-bar-hidden;
+        // No permanent `active`: the command bar is shown by default, so an
+        // always-on highlight looked like a stuck pressed state in the idle
+        // toolbar (#579). Dim the glyph while the bar is hidden instead.
+        icon-color: root.cmd-bar-hidden ? Theme.text-muted : Theme.text-secondary;
         tooltip: root.lang-en
             ? (root.cmd-bar-hidden ? "Show command bar" : "Hide command bar")
             : (root.cmd-bar-hidden ? "显示命令栏" : "隐藏命令栏");
@@ -3231,7 +3266,6 @@ export component AppWindow inherits Window {
         x: root.width - 184px - root.toolbar-x-off; y: root.toolbar-y;
         visible: !root.term-fullscreen;
         icon: "\u{F10D}";   // Material "push_pin" — always on top (#450)
-        icon-color: root.pinned ? Theme.accent : Theme.text-secondary;
         active: root.pinned;
         tooltip: root.lang-en
             ? (root.pinned ? "Unpin window (stop keeping on top)" : "Pin window (keep on top)")
