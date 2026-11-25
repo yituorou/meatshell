@@ -835,6 +835,10 @@ export component InterfacePanel inherits Rectangle {
     callback copy-text(string);
     property <bool> mcp-json-copied: false;
     in-out property <float> wallpaper-overlay;   // frosted-panel opacity 0.30-1.00
+    // Panel layout style: false = rounded floating cards with gaps, true =
+    // square flush panels divided by 1px lines.
+    in property <bool> flat-panels;
+    callback set-flat-panels(bool);
     // Active wallpaper id: "" / "builtin:light" / "builtin:dark" / a file path.
     in property <string> current-wallpaper;
     in property <string> custom-wallpaper-name;   // basename for the file row
@@ -1859,7 +1863,21 @@ export component InterfacePanel inherits Rectangle {
                         toggled(v) => { root.set-immersive-colors(v); }
                     }
                 }
-
+                
+                Rectangle { height: 16px; }
+                SectionHeader { text: root.lang-en ? "PANELS" : "面板"; height: 22px; }
+                SettingRow {
+                    label: root.lang-en ? "Flat panels" : "扁平面板";
+                    desc: root.lang-en
+                        ? "Off keeps the rounded cards separated by gaps. On removes the rounding and gaps, dividing the panels with thin lines."
+                        : "关闭时保留圆角卡片和卡片间隔；开启后取消圆角与间隔，改用细线分隔各个面板。";
+                    show-divider: false;
+                    Switch {
+                        on: root.flat-panels;
+                        toggled(v) => { root.set-flat-panels(v); }
+                    }
+                }
+                
                 Rectangle { height: 16px; }
                 SectionHeader { text: root.lang-en ? "OVERLAY" : "遮罩"; height: 22px; }
                 SettingRow {

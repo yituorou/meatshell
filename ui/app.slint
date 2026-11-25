@@ -753,6 +753,10 @@ export component AppWindow inherits Window {
     // User-adjustable wallpaper overlay opacity (0.30–1.00), persisted.
     in-out property <float> wallpaper-overlay <=> Theme.panel-alpha;
     callback persist-wallpaper-overlay(float);
+    // Panel layout style (Settings › Wallpaper & theme): rounded floating
+    // cards separated by gaps, or square panels divided by 1px lines.
+    in-out property <bool> flat-panels <=> Theme.flat-panels;
+    callback set-flat-panels(bool);
     // Colour theme presets + the immersive-colours switch (Settings ›
     // Wallpaper & theme). Rust fills the palettes from the chosen preset.
     in-out property <ThemePalette> theme-palette-dark <=> Theme.palette-dark;
@@ -1588,6 +1592,17 @@ export component AppWindow inherits Window {
         image-fit: cover;
     }
 
+    // Theme-aware scrim over the wallpaper (below every panel). The gaps
+    // between the 10px-inset cards then take on the current light/dark tint
+    // instead of exposing the raw image, so seams read as one continuous
+    // backdrop and card edges transition naturally (IntelliJ-style).
+    if Theme.wallpaper-active : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.wallpaper-scrim;
+    }
+
     // Zen (focus) mode keyboard toggle — same persist path as the Settings
     // switch (#zen).
     toggle-zen-key => {
@@ -2210,7 +2225,7 @@ export component AppWindow inherits Window {
                     y: root.central-inset-top;
                     width: parent.width - root.central-inset-left - root.central-inset-right;
                     height: parent.height - root.central-inset-top - root.central-inset-bottom;
-                    border-radius: root.hide-panels ? 0px : Theme.radius-md;
+                    border-radius: root.hide-panels ? 0px : Theme.card-radius;
                     clip: true;
                 // Split-pane area (v0.5): panes tile this rect; each pane has its own
                 // tab strip + active terminal / welcome. Rust flattens the split tree
@@ -2756,9 +2771,11 @@ export component AppWindow inherits Window {
                 }
                 }
                 // The card's hairline, drawn over the panes so a terminal's own
-                // background cannot cover it.
-                if !root.hide-panels : Rectangle {
-                    border-radius: Theme.radius-md;
+                // background cannot cover it. Flat mode omits it: the docked
+                // panels draw their own 1px divider on the facing edge, which
+                // keeps multi-edge corners from doubling the line.
+                if !root.hide-panels && !Theme.flat-panels : Rectangle {
+                    border-radius: Theme.card-radius;
                     border-width: 1px;
                     border-color: Theme.border-subtle;
                 }
@@ -2972,12 +2989,13 @@ export component AppWindow inherits Window {
                     remove-session(id) => { root.remove-session(id); }
                 }
                 if gp.kind == "quick" : QuickDockPanel {
-                    // Inset card, like the resource and session panels (#560).
-                    x: 10px;
-                    y: 10px;
-                    width: parent.width - 20px;
-                    height: parent.height - 20px;
-                    border-radius: Theme.radius-md;
+                    // Inset card, like the resource and session panels (#560);
+                    // flat mode removes the gap and the rounding.
+                    x: Theme.card-gap;
+                    y: Theme.card-gap;
+                    width: parent.width - Theme.card-gap * 2;
+                    height: parent.height - Theme.card-gap * 2;
+                    border-radius: Theme.card-radius;
                     commands: root.quick-commands;
                     dock-edge: gp.edge;
                     activate(command, send-enter) => {
@@ -3007,6 +3025,18 @@ export component AppWindow inherits Window {
                         }
                         root.panel-dragging = false;
                     }
+                }
+                // Flat layout: one 1px line on the panel's central-facing edge.
+                // It replaces the rounded card's gap and, because panels on a
+                // later edge are drawn on top, also separates perpendicular
+                // neighbours (e.g. a top panel's full-width bottom line splits
+                // it from the left panel underneath its corner).
+                if Theme.flat-panels : Rectangle {
+                    x: gp.edge == "left" ? parent.width - 1px : 0px;
+                    y: gp.edge == "top" ? parent.height - 1px : 0px;
+                    width: gp.edge == "left" || gp.edge == "right" ? 1px : parent.width;
+                    height: gp.edge == "left" || gp.edge == "right" ? parent.height : 1px;
+                    background: Theme.border-subtle;
                 }
                 // Drag the panel's in-edge (central-facing) edge to resize its
                 // extent along the dock normal (width on left/right, height on
@@ -3091,8 +3121,22 @@ export component AppWindow inherits Window {
                 y: dd.y;
                 width: dd.w;
                 height: dd.h;
-                background: dd-ta.pressed ? Theme.accent : (dd-ta.has-hover ? Theme.border-strong : transparent);
+                // Flat mode: the 4px grab band is filled with the card surface
+                // and carries a single 1px line down its middle, so two flush
+                // panels read as one surface split by a divider. Hover / drag
+                // feedback still tints the band like the card layout.
+                background: dd-ta.pressed
+                    ? Theme.accent
+                    : (dd-ta.has-hover ? Theme.border-strong
+                        : (Theme.flat-panels ? Theme.card-bg : transparent));
                 animate background { duration: 100ms; }
+                if Theme.flat-panels : Rectangle {
+                    x: dd.vertical ? 0px : parent.width / 2;
+                    y: dd.vertical ? parent.height / 2 : 0px;
+                    width: dd.vertical ? parent.width : 1px;
+                    height: dd.vertical ? 1px : parent.height;
+                    background: Theme.border-subtle;
+                }
                 dd-ta := TouchArea {
                     mouse-cursor: dd.vertical ? ns-resize : ew-resize;
                     moved => {
@@ -3152,6 +3196,14 @@ export component AppWindow inherits Window {
                     border-width: root.dock-target == "bottom" ? 2px : 0px;
                     border-color: Theme.accent;
                 }
+            }
+
+            // Flat layout: one hairline between the window chrome above and
+            // whatever starts the dock area (a top panel, or the tab strip).
+            if Theme.flat-panels : Rectangle {
+                x: 0px; y: 0px;
+                width: parent.width; height: 1px;
+                background: Theme.border-subtle;
             }
         }
         }
@@ -5575,6 +5627,8 @@ export component AppWindow inherits Window {
                     mcp-config-json: root.mcp-config-json;
                     copy-text(t) => { root.copy-text(t); }
                     wallpaper-overlay <=> root.wallpaper-overlay;
+                    flat-panels: root.flat-panels;
+                    set-flat-panels(v) => { root.set-flat-panels(v); }
                     current-wallpaper: root.current-wallpaper;
                     custom-wallpaper-name: root.custom-wallpaper-name;
                     wsl-profiles: root.wsl-profiles;

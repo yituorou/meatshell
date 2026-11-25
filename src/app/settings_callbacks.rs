@@ -465,6 +465,7 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
         window.set_welcome_collapsed(welcome_collapsed);
         window.set_sidebar_collapsed(sidebar_collapsed);
         window.set_wallpaper_overlay(s.wallpaper_overlay());
+        window.set_flat_panels(s.flat_panels());
         window.set_update_check_enabled(s.update_check_enabled()); // #184
         if collapse_sftp {
             window.set_sftp_collapsed(true);
@@ -568,6 +569,23 @@ pub(super) fn wire_layout_prefs(ctx: &WinCtx) {
             let mut s = store.borrow_mut();
             s.set_wallpaper_overlay(v);
             let _ = s.save();
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        window.on_set_flat_panels(move |flat: bool| {
+            {
+                let mut s = store.borrow_mut();
+                s.set_flat_panels(flat);
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_flat_panels(flat);
+                // The central card's insets are computed in Rust; recompute them
+                // for the new gap (the panels themselves re-layout in Slint).
+                w.invoke_dock_layout_changed();
+            }
         });
     }
     {

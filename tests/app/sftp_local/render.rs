@@ -1213,6 +1213,54 @@ fn delete_key_deletes_checked_entries_or_the_highlighted_row() {
 }
 
 #[test]
+fn flat_panels_are_square_and_flush() {
+    // Settings › Wallpaper & theme › Flat panels: no card gap, no rounding;
+    // the panels are flush and separated by hairlines. Saves
+    // `target/flat-panels-qa.png` for a visual check.
+    std::thread::spawn(|| {
+        let (width, height) = (1300u32, 760u32);
+        let (ui, window) = build_ui(false, 300.0, 0.0, width, height, "bottom");
+        let dock_h = height as f32 - 38.0;
+        let (left_w, right_w) = (280.0, 230.0);
+        ui.set_welcome_as_sidebar(true);
+        ui.set_flat_panels(true);
+        let panel = |kind: &str, edge: &str, x: f32, w: f32| PanelGeomInfo {
+            kind: kind.into(),
+            edge: edge.into(),
+            x,
+            y: 0.0,
+            w,
+            h: dock_h,
+        };
+        ui.set_dock_panels(ModelRc::from(Rc::new(VecModel::from(vec![
+            panel("welcome", "left", 0.0, left_w),
+            panel("sidebar", "right", width as f32 - right_w, right_w),
+        ]))));
+        let central_w = width as f32 - left_w - right_w;
+        ui.set_dock_central_x(left_w);
+        ui.set_dock_central_w(central_w);
+        ui.set_dock_central_h(dock_h);
+        let [l, t, r, b] = super::super::panes::central_insets(&["left", "right"], true);
+        ui.set_central_inset_left(l);
+        ui.set_central_inset_top(t);
+        ui.set_central_inset_right(r);
+        ui.set_central_inset_bottom(b);
+        let mut pane = ui.get_panes().row_data(0).unwrap();
+        pane.w = central_w - l - r;
+        pane.h = dock_h - t - b;
+        ui.set_panes(ModelRc::from(Rc::new(VecModel::from(vec![pane]))));
+        assert_eq!((l, t, r, b), (0.0, 0.0, 0.0, 0.0));
+
+        let pixels = render_frame(&window, width, height);
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| [p.r, p.g, p.b]).collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/flat-panels-qa.png");
+        image::save_buffer(path, &bytes, width, height, image::ColorType::Rgb8).unwrap();
+    })
+    .join()
+    .unwrap();
+}
+
+#[test]
 fn docked_panels_and_the_terminal_are_floating_cards() {
     // #560: the session list (left), the resource panel (right) and the
     // tab/terminal area are all inset cards with one 10px gap, top edges
@@ -1239,7 +1287,7 @@ fn docked_panels_and_the_terminal_are_floating_cards() {
         ui.set_dock_central_x(left_w);
         ui.set_dock_central_w(central_w);
         ui.set_dock_central_h(dock_h);
-        let [l, t, r, b] = super::super::panes::central_insets(&["left", "right"]);
+        let [l, t, r, b] = super::super::panes::central_insets(&["left", "right"], false);
         ui.set_central_inset_left(l);
         ui.set_central_inset_top(t);
         ui.set_central_inset_right(r);

@@ -86,6 +86,10 @@ export global Theme {
     // Interface › Wallpaper opacity slider; bg-root / term-bg derive from it so one
     // control scales the whole wallpaper wash. Default 0.85 (15% transparency).
     in-out property <float> panel-alpha: 0.85;
+    // Panel layout style (Settings › Wallpaper & theme): rounded floating cards
+    // separated by gaps (default), or square panels flush against each other and
+    // divided by 1px lines. Rust persists the choice.
+    in-out property <bool> flat-panels: false;
     property <float> tint-amt: 0.10;              // how far surfaces pull to wp-tint
 
     // Frost a base surface: pull it slightly toward the wallpaper tint and make
@@ -108,6 +112,15 @@ export global Theme {
     property <color> base-bg-elevated:  root.p.bg-elevated;
     property <color> base-bg-hover:     root.p.bg-hover;
     property <color> base-bg-active:    root.p.bg-active;
+
+    // Theme-aware veil painted between the wallpaper and the frosted cards.
+    // The 10px seams between cards would otherwise show the raw image, which
+    // never changes with the light/dark switch. Tinting those seams with the
+    // theme's root colour gives them the same dark/light cast as the rest of
+    // the UI, so card edges blend into one backdrop (IntelliJ-style). It
+    // scales with the wallpaper-opacity slider so the whole wash stays one
+    // control: a lower overlay value lets more of the image through the gaps.
+    out property <brush> wallpaper-scrim: base-bg-root.with-alpha(root.panel-alpha * 0.62);
 
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
     // empty / inset areas; panels stay mostly opaque for legible text.
@@ -221,6 +234,14 @@ export global Theme {
     out property <length> radius-sm: 4px * root.ui-scale;
     out property <length> radius-md: 6px * root.ui-scale;
     out property <length> radius-lg: 10px * root.ui-scale;
+
+    // Card layout geometry: the docked panels inset their card by `card-gap`
+    // inside the rect Rust gave them, and the central card keeps the same
+    // distance from the window edges (Rust mirrors this in `central_insets`).
+    // Flat mode removes both the gap and the rounding so panels touch; their
+    // 1px hairlines then read as divider lines.
+    out property <length> card-gap: root.flat-panels ? 0px : 10px;
+    out property <length> card-radius: root.flat-panels ? 0px : root.radius-md;
 
     out property <length> gap-xs: 4px * root.ui-scale;
     out property <length> gap-sm: 8px * root.ui-scale;

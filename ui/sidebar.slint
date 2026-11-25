@@ -514,13 +514,13 @@ export component Sidebar inherits Rectangle {
 
     // --- Vertical stack (docked left/right) --------------------------------
     if !root.lay-horizontal : Rectangle {
-        x: 10px;
-        y: 10px;
-        width: parent.width - 20px;
-        height: parent.height - 20px;
+        x: Theme.card-gap;
+        y: Theme.card-gap;
+        width: parent.width - Theme.card-gap * 2;
+        height: parent.height - Theme.card-gap * 2;
         background: Theme.card-bg;
-        border-radius: Theme.radius-md;
-        border-width: 1px;
+        border-radius: Theme.card-radius;
+        border-width: Theme.flat-panels ? 0px : 1px;
         border-color: Theme.border-subtle;
         clip: true;
 
@@ -565,13 +565,13 @@ export component Sidebar inherits Rectangle {
 
     // --- Horizontal row (docked top/bottom) --------------------------------
     if root.lay-horizontal : Rectangle {
-        x: 10px;
-        y: 10px;
-        width: parent.width - 20px;
-        height: parent.height - 20px;
+        x: Theme.card-gap;
+        y: Theme.card-gap;
+        width: parent.width - Theme.card-gap * 2;
+        height: parent.height - Theme.card-gap * 2;
         background: Theme.card-bg;
-        border-radius: Theme.radius-md;
-        border-width: 1px;
+        border-radius: Theme.card-radius;
+        border-width: Theme.flat-panels ? 0px : 1px;
         border-color: Theme.border-subtle;
         clip: true;
 

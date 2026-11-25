@@ -1594,6 +1594,14 @@ impl ConfigStore {
     pub fn set_wallpaper_overlay(&mut self, v: f32) {
         self.cache.wallpaper_overlay = v.clamp(0.30, 1.0);
     }
+    /// Panel layout: false = rounded floating cards with gaps (default),
+    /// true = square flush panels divided by 1px lines.
+    pub fn flat_panels(&self) -> bool {
+        self.cache.flat_panels
+    }
+    pub fn set_flat_panels(&mut self, flat: bool) {
+        self.cache.flat_panels = flat;
+    }
     /// Colour theme preset id; "" = the default MeatShell palette.
     pub fn color_theme(&self) -> &str {
         &self.cache.color_theme
