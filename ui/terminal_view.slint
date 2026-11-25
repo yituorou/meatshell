@@ -115,7 +115,7 @@ export component QuickDockPanel inherits Rectangle {
     callback dock-drag-end();
 
     background: Theme.card-bg;
-    border-width: 1px;
+    border-width: Theme.flat-panels ? 0px : 1px;
     border-color: Theme.border-subtle;
     clip: true;
 

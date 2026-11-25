@@ -366,6 +366,11 @@ pub struct ConfigFile {
     /// Interface › Wallpaper opacity slider. 0 = use the current default.
     #[serde(default)]
     pub wallpaper_overlay: f32,
+    /// Panel layout style (Settings › Wallpaper & theme): false = rounded
+    /// floating cards separated by gaps, true = square panels flush together
+    /// and divided by 1px lines. Default false keeps the card layout.
+    #[serde(default)]
+    pub flat_panels: bool,
     /// Colour theme preset id (Settings › Wallpaper & theme). Empty = default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color_theme: String,
