@@ -381,6 +381,15 @@ pub struct ConfigFile {
     /// the interface or switches light/dark. Default false keeps them on.
     #[serde(default)]
     pub immersive_colors_disabled: bool,
+    /// Wallpaper display mode (Settings › Wallpaper & theme):
+    /// "" / "transparency" = the sharp wallpaper shows through translucent
+    /// panels (default); "frosted-glass" = blurred wallpaper + light/dark wash.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub wallpaper_display_mode: String,
+    /// Transparency mode's backdrop layer opacity (0.0–0.8): a full-window
+    /// layer in the theme's root colour under all panels. None = default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallpaper_gap_dim: Option<f32>,
     /// Terminal colour scheme used in dark mode (Settings › Terminal colours).
     /// Empty = the default MeatShell terminal colours.
     #[serde(default, skip_serializing_if = "String::is_empty")]

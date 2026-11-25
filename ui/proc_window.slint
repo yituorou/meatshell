@@ -83,6 +83,8 @@ export component ProcWindow inherits Window {
     // Immersive wallpaper — mirrored from the main window so this detached window
     // gets the same frosted-glass backdrop (synced in app.rs::sync_proc_theme).
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
+    in-out property <image> wallpaper-blurred <=> Theme.wallpaper-blurred;
+    in-out property <bool> wallpaper-frost <=> Theme.wallpaper-frost;
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
     in-out property <color> wp-tint <=> Theme.wp-tint;
@@ -145,8 +147,15 @@ export component ProcWindow inherits Window {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        source: Theme.wallpaper;
+        source: Theme.wallpaper-backdrop;
         image-fit: cover;
+    }
+    // Light/dark wash over the wallpaper (see Theme.frost-wash).
+    if Theme.wallpaper-active : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.frost-wash;
     }
     // Content backdrop: opaque bg-panel without a wallpaper (the original look),
     // frosted-translucent over the wallpaper when active so the table stays
