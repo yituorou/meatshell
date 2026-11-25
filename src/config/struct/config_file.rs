@@ -376,6 +376,10 @@ pub struct ConfigFile {
     /// the interface or switches light/dark. Default false keeps them on.
     #[serde(default)]
     pub immersive_colors_disabled: bool,
+    /// Turn off the frosted-glass backdrop (blurred wallpaper + light/dark
+    /// wash behind the panels). Default false keeps it on.
+    #[serde(default)]
+    pub wallpaper_frost_disabled: bool,
     /// Terminal colour scheme used in dark mode (Settings › Terminal colours).
     /// Empty = the default MeatShell terminal colours.
     #[serde(default, skip_serializing_if = "String::is_empty")]

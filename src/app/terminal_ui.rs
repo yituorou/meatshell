@@ -468,6 +468,7 @@ pub(super) fn apply_wallpaper(
             let (ar, ag, ab) = wp.palette.accent;
             let (tr, tg, tb) = wp.palette.tint;
             window.set_wallpaper_img(wp.image);
+            window.set_wallpaper_blurred(wp.blurred);
             window.set_wp_accent(slint::Color::from_rgb_u8(ar, ag, ab));
             window.set_wp_tint(slint::Color::from_rgb_u8(tr, tg, tb));
             // Only the built-ins (designed as a light/dark pair) auto-set the

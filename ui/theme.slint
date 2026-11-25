@@ -82,6 +82,19 @@ export global Theme {
     in-out property <bool>  wallpaper-active: false;
     in-out property <color> wp-accent: #4a90e2;   // vivid accent from the image
     in-out property <color> wp-tint:   #808080;   // average colour, tints surfaces
+    // Frosted glass: Rust bakes a small blurred copy of the wallpaper (Slint has
+    // no runtime blur). With frost on, windows paint that copy instead of the
+    // sharp image, plus a wash matching light/dark mode, so the gaps between
+    // panels read as frosted glass rather than the raw (possibly bright) image.
+    in-out property <image> wallpaper-blurred;
+    in-out property <bool>  wallpaper-frost: true;
+    out property <bool> frost-active: root.wallpaper-active && root.wallpaper-frost
+        && root.wallpaper-blurred.width > 0;
+    out property <image> wallpaper-backdrop: root.frost-active ? root.wallpaper-blurred : root.wallpaper;
+    // Dark glass in dark mode, light glass in light mode (alpha 0x61 ≈ 38%,
+    // 0x73 ≈ 45%). Transparent when frost is off.
+    out property <brush> frost-wash: !root.frost-active ? transparent
+        : (root.dark ? #10131a61 : #f4f6fa73);
     // Frosted-panel opacity over a wallpaper (0.30–1.00). User-adjustable via the
     // Interface › Wallpaper opacity slider; bg-root / term-bg derive from it so one
     // control scales the whole wallpaper wash. Default 0.85 (15% transparency).

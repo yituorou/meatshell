@@ -747,6 +747,9 @@ export component AppWindow inherits Window {
     callback set-renderer-mode(string);                    // applies next launch (#280)
     // Wallpaper / immersive theming — Rust drives these from the wallpaper module.
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
+    in-out property <image> wallpaper-blurred <=> Theme.wallpaper-blurred;
+    in-out property <bool> wallpaper-frost <=> Theme.wallpaper-frost;
+    callback set-wallpaper-frost(bool);            // toggle + persist frosted glass
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
     in-out property <color> wp-tint <=> Theme.wp-tint;
@@ -1584,8 +1587,16 @@ export component AppWindow inherits Window {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        source: Theme.wallpaper;
+        source: Theme.wallpaper-backdrop;
         image-fit: cover;
+    }
+    // Frosted-glass wash over the blurred wallpaper (light/dark to match the
+    // theme) — tames bright wallpapers in the gaps between panels.
+    if Theme.frost-active : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.frost-wash;
     }
 
     // Zen (focus) mode keyboard toggle — same persist path as the Settings
@@ -5605,6 +5616,8 @@ export component AppWindow inherits Window {
                     set-color-theme(id) => { root.set-color-theme(id); }
                     set-color-theme-custom(hex) => { root.set-color-theme-custom(hex) }
                     set-immersive-colors(v) => { root.set-immersive-colors(v); }
+                    wallpaper-frost: root.wallpaper-frost;
+                    set-wallpaper-frost(v) => { root.set-wallpaper-frost(v); }
                     term-schemes: root.term-schemes;
                     term-scheme-preview: root.term-scheme-preview;
                     term-scheme-slot-dark: root.term-scheme-slot-dark;

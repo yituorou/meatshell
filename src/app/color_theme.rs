@@ -434,6 +434,7 @@ pub(super) fn apply_color_theme(window: &AppWindow, store: &ConfigStore) {
     }
     window.set_color_themes(ModelRc::new(VecModel::from(items(custom))));
     window.set_immersive_colors(store.immersive_colors());
+    window.set_wallpaper_frost(store.wallpaper_frost());
 }
 
 /// Mirror the theme into the detached windows of `ctx` (their Theme global is
@@ -540,6 +541,24 @@ pub(super) fn wire(ctx: &WinCtx) {
             }
             registry.broadcast_config_changed();
             true
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let registry = registry.clone();
+        let (proc, sys, editor) = detached.clone();
+        window.on_set_wallpaper_frost(move |on: bool| {
+            {
+                let mut s = store.borrow_mut();
+                s.set_wallpaper_frost(on);
+                let _ = s.save();
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_wallpaper_frost(on);
+                sync_detached(&w, &proc, &sys, &editor);
+            }
+            registry.broadcast_config_changed();
         });
     }
     {

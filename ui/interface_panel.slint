@@ -843,6 +843,7 @@ export component InterfacePanel inherits Rectangle {
     in property <string> color-theme: "default";
     in-out property <string> color-theme-custom: "#4A90E2";
     in property <bool> immersive-colors: true;
+    in property <bool> wallpaper-frost: true;      // frosted-glass backdrop
     callback set-color-theme(string);
     callback set-color-theme-custom(string) -> bool;
     // Terminal colours page: one scheme for dark mode, one for light.
@@ -860,6 +861,7 @@ export component InterfacePanel inherits Rectangle {
     callback import-term-scheme(bool);
     callback remove-term-scheme(string);
     callback set-immersive-colors(bool);
+    callback set-wallpaper-frost(bool);
     in property <[WslProfileInfo]> wsl-profiles;
     in-out property <string> wsl-new-name: "WSL";
     in-out property <string> wsl-new-distribution;
@@ -1857,6 +1859,17 @@ export component InterfacePanel inherits Rectangle {
                     Switch {
                         on: root.immersive-colors;
                         toggled(v) => { root.set-immersive-colors(v); }
+                    }
+                }
+                SettingRow {
+                    label: root.lang-en ? "Frosted glass" : "毛玻璃效果";
+                    desc: root.lang-en
+                        ? "Blur the wallpaper behind the whole window and tint it light or dark to match the theme, so bright wallpapers don't glare between panels."
+                        : "将整个窗口背后的壁纸模糊，并按浅色 / 深色主题蒙上一层对应色调，避免亮色壁纸在面板间隙处过于刺眼。";
+                    show-divider: false;
+                    Switch {
+                        on: root.wallpaper-frost;
+                        toggled(v) => { root.set-wallpaper-frost(v); }
                     }
                 }
 

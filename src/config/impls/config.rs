@@ -1615,6 +1615,13 @@ impl ConfigStore {
     pub fn set_immersive_colors(&mut self, on: bool) {
         self.cache.immersive_colors_disabled = !on;
     }
+    /// Whether the wallpaper is shown as frosted glass (on by default).
+    pub fn wallpaper_frost(&self) -> bool {
+        !self.cache.wallpaper_frost_disabled
+    }
+    pub fn set_wallpaper_frost(&mut self, on: bool) {
+        self.cache.wallpaper_frost_disabled = !on;
+    }
     /// Terminal colour scheme id for dark (`dark == true`) or light mode;
     /// "" = the default MeatShell terminal colours.
     pub fn terminal_scheme(&self, dark: bool) -> &str {
