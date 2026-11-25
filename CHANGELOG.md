@@ -5,6 +5,11 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **右上角工具栏图标统一，不再有常亮的按下状态（#579）。** 设置、传输、主题、会话同步、命令栏、置顶、更新七个图标统一为 16px 和同一套中性色：深色模式下不再有孤立的琥珀色太阳图标，命令栏按钮也不会因为命令栏默认开启而一直显示成按下的灰块（隐藏时图标变暗）。悬停与弹窗打开改用淡强调色底，并带 120ms 过渡。
+- **macOS 上右上角图标不再偏高（#579）。** 有原生标题栏时，标签栏上方还留着悬浮卡片的 10px 内边距，之前只按标题栏高度计算，七个图标比标签栏中线高出 10px、压在标签栏上沿。现在按卡片内边距一起计算，图标与标签文字同一条中线，设置 / 传输弹窗也随之下移对齐。
+- **Consistent top-right toolbar icons, no permanently pressed button (#579).** The seven icons (settings, transfers, theme, session sync, command bar, pin, updates) now share one 16px size and one neutral colour: the lone amber sun is gone, and the command bar button no longer looks pressed just because the bar is on by default (its glyph dims while the bar is hidden). Hover and open-popup states use a faint accent wash with a 120ms fade.
+- **The top-right icons no longer sit too high on macOS (#579).** With a native title bar the tab strip is another 10px down — the floating-card inset above it — but the icons were placed from the title-bar height alone, so all seven rode 10px above the strip's centre line and crossed its top edge. They are now centred on the strip, and the Settings / Transfers popups follow them down.
+
 ## [0.8.4] - 2026-11-22
 
 - **最近连接。** 欢迎页的会话列表上方显示最近连接过的会话；Home 以侧栏显示时，没有打开任何标签的主区域会显示最近连接列表，一键重连。每行显示会话类型、地址和相对时间（如“3 分钟前”），悬停出现 × 可单独移除，也可清空全部；最多保留 20 条。面板透明度跟随 壁纸与主题 中的面板不透明度。
