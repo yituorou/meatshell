@@ -78,6 +78,11 @@ export struct TerminalState {
     scroll-offset: int,    // current scrollback offset (0 = live bottom)
     is-alt-screen: bool,
     mouse-tracked: bool,     // remote app wants mouse events (btop/htop/mc)
+    // Completion popup anchored at the cursor on the shell's prompt line
+    // (#583 follow-up). Empty list = no popup.
+    hint-items: [string],
+    hint-row: int,
+    hint-col: int,
     find-matches: [TermMatch], // search-highlight rectangles
     find-current: TermMatch,   // the current find match on screen; len 0 = none (#535)
     selection: [TermMatch],    // drag-selection highlight rectangles
@@ -706,11 +711,16 @@ export component AppWindow inherits Window {
     in property <[string]> command-history;          // oldest first (newest last, #113)
     in property <[string]> history-view;             // filtered dropdown, oldest first (newest last, #101)
     in property <[string]> history-preview;          // history-view flattened to one line each (#419)
+    in property <[bool]> history-is-command;         // row is a $PATH command, not history (#583)
     callback run-command(string /* tab-id */, string /* cmd */, bool /* to-all */);
     callback copy-text(string);                 // copy a history command (#96)
     callback delete-history(int /* index */);   // remove a history entry (#96)
     callback delete-history-cmd(string /* cmd */);   // remove a history entry by command (#101)
-    callback search-history(string /* query */);     // filter the history dropdown (#101)
+    callback search-history(string /* query */, bool /* include-commands */);
+    // Terminal prompt-line completion popup (#583 follow-up): accept row N of
+    // this tab's candidate list, or hide it for the word on screen.
+    callback accept-hint(string /* tab-id */, int /* index */);
+    callback dismiss-hint(string /* tab-id */);
     in-out property <bool> quick-cmd-manage-open: false;  // manage dialog
     in-out property <length> qcm-dialog-width: 560px;
     in-out property <length> qcm-dialog-height: 560px;
@@ -2455,6 +2465,11 @@ export component AppWindow inherits Window {
                         scroll-offset: term.scroll-offset;
                         is-alt-screen: term.is-alt-screen;
                         mouse-tracked: term.mouse-tracked;
+                        hint-items: term.hint-items;
+                        accept-hint(index) => { root.accept-hint(term.id, index); }
+                        dismiss-hint() => { root.dismiss-hint(term.id); }
+                        hint-row: term.hint-row;
+                        hint-col: term.hint-col;
                         find-matches: term.find-matches;
                         find-current: term.find-current;
                         selection: term.selection;
@@ -2560,11 +2575,12 @@ export component AppWindow inherits Window {
                         command-history: root.command-history;
                         history-view: root.history-view;
                         history-preview: root.history-preview;
+                        history-is-command: root.history-is-command;
                         run-command(cmd, all) => { root.run-command(term.id, cmd, all); }
                         copy-text(t) => { root.copy-text(t); }
                         delete-history(i) => { root.delete-history(i); }
                         delete-history-cmd(c) => { root.delete-history-cmd(c); }
-                        search-history(q) => { root.search-history(q); }
+                        search-history(q, with-cmds) => { root.search-history(q, with-cmds); }
                         manage-quick-commands() => {
                             root.qcm-name = "";
                             root.qcm-command = "";

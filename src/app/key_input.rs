@@ -75,15 +75,26 @@ pub(super) fn wire_key_input(
     }
     // History search (#101): filter the dropdown by a case-insensitive substring.
     // The current query is shared so a delete from a filtered view re-filters.
+    // `include_commands` is true only while the user types in the command bar,
+    // where `$PATH` commands join the list like WindTerm's OneKey (#583).
     let hist_query: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+    // Whether the last search merged `$PATH` commands, so deleting a row from
+    // the popup re-renders the same list instead of dropping to history only.
+    let hist_with_commands: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    // Indexing `$PATH` means one `read_dir` pass over every entry in it. Do it
+    // off the UI thread so the first keystroke in the command bar is not the
+    // one that pays for it (#583).
+    std::thread::spawn(command_names);
     {
         let store_rc = store.clone();
         let weak = window.as_weak();
         let hist_query = hist_query.clone();
-        window.on_search_history(move |query: SharedString| {
+        let hist_with_commands = hist_with_commands.clone();
+        window.on_search_history(move |query: SharedString, include_commands: bool| {
             *hist_query.borrow_mut() = query.to_string();
+            hist_with_commands.set(include_commands);
             if let Some(w) = weak.upgrade() {
-                set_history_view(&w, &store_rc.borrow(), &query);
+                set_history_view(&w, &store_rc.borrow(), &query, include_commands);
             }
         });
     }
@@ -93,6 +104,7 @@ pub(super) fn wire_key_input(
         let store_rc = store.clone();
         let weak = window.as_weak();
         let hist_query = hist_query.clone();
+        let hist_with_commands = hist_with_commands.clone();
         window.on_delete_history_cmd(move |cmd: SharedString| {
             {
                 let mut s = store_rc.borrow_mut();
@@ -104,7 +116,12 @@ pub(super) fn wire_key_input(
             if let Some(w) = weak.upgrade() {
                 let s = store_rc.borrow();
                 w.set_command_history(history_model(&s));
-                set_history_view(&w, &s, &hist_query.borrow());
+                set_history_view(
+                    &w,
+                    &s,
+                    &hist_query.borrow(),
+                    hist_with_commands.get(),
+                );
             }
         });
     }
@@ -975,6 +992,65 @@ pub(super) fn wire_key_input(
         let pending_paste = pending_paste.clone();
         window.on_paste_confirm_cancelled(move || {
             clear_pending_paste(&pending_paste);
+        });
+    }
+
+    // Completion popup on the shell prompt line (#583 follow-up).
+    //
+    // Accepting a row types only the missing suffix into the PTY, so the shell
+    // sees the same bytes its own Tab completion would have produced; the
+    // popup then closes and the normal echo repaint takes over.
+    {
+        let bufs_hint = bufs.clone();
+        let handles_hint = handles.clone();
+        let weak = window.as_weak();
+        window.on_accept_hint(move |tab_id: SharedString, index: i32| {
+            let tid = tab_id.to_string();
+            let accepted = with_term_buf(&bufs_hint, &tid, |buf| {
+                let hint = prompt_hint::hint_for(buf.parser.screen())?;
+                let suffix = hint.suffix(index.max(0) as usize)?;
+                Some((hint.typed, suffix))
+            })
+            .flatten();
+            // Hold the popup shut for the word that was just completed: on a
+            // slow link the echo can arrive a frame or two later, and without
+            // this the cached hint would pop the list back open in between.
+            if let Some((typed, _)) = accepted.as_ref() {
+                prompt_hint::dismiss(&tid, typed);
+            }
+            let suffix = accepted.map(|(_, suffix)| suffix);
+            if let Some(win) = weak.upgrade() {
+                clear_hint(&win, &tid);
+            }
+            let (Some(suffix), Some(sender)) = (
+                suffix,
+                handles_hint
+                    .borrow()
+                    .get(tid.as_str())
+                    .map(|h| h.commands.clone()),
+            ) else {
+                return;
+            };
+            let _ = sender.send(SessionCommand::RawInput(suffix.into_bytes()));
+        });
+    }
+    // Esc hides the popup for the word currently on screen; typing anything new
+    // brings it back (see prompt_hint::dismissed).
+    {
+        let bufs_dismiss = bufs.clone();
+        let weak = window.as_weak();
+        window.on_dismiss_hint(move |tab_id: SharedString| {
+            let tid = tab_id.to_string();
+            let typed = with_term_buf(&bufs_dismiss, &tid, |buf| {
+                prompt_hint::hint_for(buf.parser.screen()).map(|hint| hint.typed)
+            })
+            .flatten();
+            if let Some(typed) = typed {
+                prompt_hint::dismiss(&tid, &typed);
+            }
+            if let Some(win) = weak.upgrade() {
+                clear_hint(&win, &tid);
+            }
         });
     }
 
