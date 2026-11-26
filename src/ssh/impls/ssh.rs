@@ -2614,9 +2614,15 @@ async fn run_session(
     const PROC_CMD: &[u8] = b"PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH; while :; do echo __ME__; id -un 2>/dev/null; echo __PS__; ps -eo pid,user:32,pcpu,pmem,args --sort=-pcpu 2>/dev/null | head -n 41 | cut -c -200; echo __PSTICK__; sleep 2; done\n";
     // GPU sampling is its own channel: `nvidia-smi` can block for seconds while
     // the driver initialises, and that must never delay CPU/memory/network
-    // samples. If the host has no NVIDIA tooling (or no `timeout`), the channel
-    // exits immediately and the UI simply hides the GPU row.
-    const GPU_CMD: &[u8] = b"PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH; command -v nvidia-smi >/dev/null 2>&1 || exit 0; command -v timeout >/dev/null 2>&1 || exit 0; while :; do echo __GPU__; timeout 2 nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true; echo __GSTICK__; sleep 3; done\n";
+    // samples. If the host has no NVIDIA tooling the channel exits immediately
+    // and the UI simply hides the GPU row.
+    //
+    // Path: distro packages land in `/usr/bin`, but NVIDIA container images also
+    // ship the tool in `/usr/local/nvidia/bin`, and some hosts expose it through
+    // `/usr/local/bin`; search all of them before giving up. `timeout` is only a
+    // guard against a wedged driver, so a slim image without coreutils still
+    // gets samples (the query just runs uncapped).
+    const GPU_CMD: &[u8] = b"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/nvidia/bin; export PATH; command -v nvidia-smi >/dev/null 2>&1 || exit 0; while :; do echo __GPU__; if command -v timeout >/dev/null 2>&1; then timeout 2 nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true; else nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true; fi; echo __GSTICK__; sleep 3; done\n";
     let mut proc_channel: Option<Channel<Msg>> = None;
     let mut sys_channel: Option<Channel<Msg>> = None;
     let mut gpu_channel: Option<Channel<Msg>> = None;
@@ -2627,6 +2633,11 @@ async fn run_session(
     // row the GPU channel is closed instead of being spawned every tick.
     const GPU_EMPTY_FRAME_LIMIT: u32 = 3;
     let mut gpu_empty_frames: u32 = 0;
+    // A driver that is mid-upgrade or just rebound (NVML version mismatch,
+    // module reload) starts returning samples again without any user action, so
+    // a closed GPU channel is retried instead of staying dead until reconnect.
+    const GPU_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut gpu_retry_deadline: Option<tokio::time::Instant> = None;
 
     // --- Port forwarding / tunnels (#56) --------------------------------
     // The handle is shared between the shell and listener tasks. A short async
@@ -2823,6 +2834,7 @@ async fn run_session(
                             proc_buf.clear();
                             gpu_buf.clear();
                             gpu_empty_frames = 0;
+                            gpu_retry_deadline = None;
                             // Hide the row immediately instead of leaving the
                             // last sample on screen.
                             let _ = events.send(SessionEvent::GpuStats { gpus: Vec::new() });
@@ -2846,6 +2858,7 @@ async fn run_session(
                             gpu_channel =
                                 open_auxiliary_channel(&handle, GPU_CMD, "gpu monitor").await;
                             gpu_empty_frames = 0;
+                            gpu_retry_deadline = None;
                             prev_cpu = None;
                             prev_net.clear();
                             prev_net_at = std::time::Instant::now();
@@ -3259,12 +3272,20 @@ async fn run_session(
                             let _ = events.send(SessionEvent::GpuStats { gpus });
                         }
                         if gpu_empty_frames >= GPU_EMPTY_FRAME_LIMIT {
-                            // nvidia-smi present but no usable driver: stop
-                            // spawning it; re-enabling monitoring retries.
+                            // nvidia-smi present but no usable driver (NVML
+                            // version mismatch, driver upgrade, module reload):
+                            // stop spawning it every frame, but schedule a retry
+                            // so a recovering driver reappears on its own.
                             if let Some(gpu) = gpu_channel.take() {
                                 let _ = gpu.close().await;
                             }
                             gpu_empty_frames = 0;
+                            gpu_retry_deadline =
+                                Some(tokio::time::Instant::now() + GPU_RETRY_DELAY);
+                            tracing::debug!(
+                                "[GPU] no usable sample; retrying in {:?}",
+                                GPU_RETRY_DELAY
+                            );
                         }
                         // A GPU frame is a few hundred bytes; 64 KiB is a
                         // generous ceiling for a server that never terminates
@@ -3281,6 +3302,20 @@ async fn run_session(
                         let _ = events.send(SessionEvent::GpuStats { gpus: Vec::new() });
                     }
                     _ => {}
+                }
+            }
+            _ = async {
+                match gpu_retry_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                gpu_retry_deadline = None;
+                if resource_monitoring {
+                    gpu_channel =
+                        open_auxiliary_channel(&handle, GPU_CMD, "gpu monitor").await;
+                    gpu_empty_frames = 0;
+                    tracing::debug!("[GPU] retrying nvidia-smi channel");
                 }
             }
         }
