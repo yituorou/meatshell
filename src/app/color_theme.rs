@@ -352,25 +352,25 @@ const PRESETS: &[Preset] = &[
         id: "signal-room",
         name_en: "Signal Room",
         name_zh: "信号舱",
-        swatch: hex(0xe85d2a),
-        dark: seeds(0x0a0c0f, 0x12151a, 0xe9e7e2, 0xe85d2a, 0x08090c),
-        light: seeds(0xf4f0e8, 0xfffdf8, 0x1b1a17, 0xc7471c, 0xfffdf8),
+        swatch: hex(0xe8562a),
+        dark: seeds(0x0a0c0f, 0x0c0f13, 0xe9e7e2, 0xe8562a, 0x0a0c0f),
+        light: seeds(0xefe9dd, 0xf6f0e5, 0x1b1a17, 0xd2542a, 0xf6f0e5),
     },
     Preset {
         id: "aurora-ink",
         name_en: "Aurora Ink",
         name_zh: "极光墨",
         swatch: hex(0xbd7f3d),
-        dark: seeds(0x080d0b, 0x0d1311, 0xeeeae1, 0xbd7f3d, 0x060a08),
-        light: seeds(0xeef0ec, 0xfbfcf9, 0x1a1f1c, 0x8f6224, 0xfbfcf9),
+        dark: seeds(0x070b0a, 0x070b09, 0xf2efe7, 0xbd7f3d, 0x060a08),
+        light: seeds(0xe4e8e1, 0xf4f6f1, 0x1a1f1c, 0x8f6224, 0xf4f6f1),
     },
     Preset {
         id: "liquid-chrome",
         name_en: "Liquid Chrome",
         name_zh: "液态铬",
         swatch: hex(0x1f4fd8),
-        dark: seeds(0x16181b, 0x1c1f24, 0xe8e9ec, 0x5b8bff, 0x0f1114),
-        light: seeds(0xeeede7, 0xfffefc, 0x16181b, 0x1f4fd8, 0xfffefc),
+        dark: seeds(0x16181b, 0x1d2025, 0xe8e9ec, 0x5b8bff, 0x101214),
+        light: seeds(0xf2f1ee, 0xfffefc, 0x191b1f, 0x1f4fd8, 0xfffefc),
     },
 ];
 
@@ -551,6 +551,12 @@ pub(super) fn wire(ctx: &WinCtx) {
             if let Some(w) = weak.upgrade() {
                 disable_immersive_for_preset(id, &w, &store, &bufs);
                 apply_color_theme(&w, &store.borrow());
+                // The skins are flush layouts (Theme.card-gap → 0), so the
+                // central card's insets have to be recomputed now — Rust owns
+                // the geometry and the terminal hit-test reads the same numbers.
+                // Not `changed skin` in Slint: that fires during window init and
+                // re-enters the dock engine before the window is shown.
+                w.invoke_dock_layout_changed();
                 sync_detached(&w, &proc, &sys, &editor);
             }
             registry.broadcast_config_changed();

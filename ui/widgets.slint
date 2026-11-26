@@ -250,28 +250,35 @@ export component Dial inherits Rectangle {
     in property <float> percent;          // 0..1
     in property <length> thickness: 4px;
     in property <brush> ring: Theme.accent;
-    in property <color> track: Theme.dark ? #ffffff26 : #00000024;
+    in property <color> track: Theme.dark ? #ffffff12 : #00000010;
     in property <string> caption;
     in property <brush> caption-color: Theme.text-muted;
-
-    // 36 segments = 10° apart; one entry per lit position (Slint repeats over
-    // models, not over a count).
+    // The board draws this as a conic sweep, which Slint can't start at 12
+    // o'clock (Rectangle has no rotation and conic gradients begin at 3).
+    // 72 ticks of 5° with 45% overlap is indistinguishable from a continuous
+    // arc at 38–52px, and it lets the unlit track be a different brush.
     property <[int]> ticks: [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-        18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+        18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71
     ];
 
     background: transparent;
-    property <length> radius: min(self.width, self.height) / 2 - root.thickness / 2 - 1px;
+    property <length> dia: min(self.width, self.height);
+    property <length> radius: root.dia / 2 - root.thickness / 2;
     property <float> filled: clamp(root.percent, 0.0, 1.0) * root.ticks.length;
+    // 1.45× the arc length per tick: adjacent ticks overlap, so the seam never
+    // shows as a dotted ring.
+    property <length> tick-w: max(1.2px, 6.2832 * self.radius / root.ticks.length * 1.45);
 
     for v[i] in root.ticks : Rectangle {
-        property <angle> a: i * 10deg;
-        width: max(1.5px, root.thickness * 0.55);
+        property <angle> a: i * 5deg;
+        width: root.tick-w;
         height: root.thickness;
         x: parent.width / 2 + Math.sin(self.a) * root.radius - self.width / 2;
         y: parent.height / 2 - Math.cos(self.a) * root.radius - self.height / 2;
-        border-radius: self.width / 2;
+        border-radius: root.thickness / 2;
         background: i < root.filled ? root.ring : root.track;
     }
 
@@ -282,7 +289,9 @@ export component Dial inherits Rectangle {
             text: Math.round(root.percent * 100);
             color: Theme.text-primary;
             font-family: Theme.font-mono;
-            font-size: Theme.fs-sm;
+            // The board sets the numeral at 9px inside a 38px dial; this keeps
+            // that ratio when the caller scales the gauge up.
+            font-size: max(9px * Theme.ui-scale, root.dia * 0.24);
             font-weight: 600;
             horizontal-alignment: center;
         }

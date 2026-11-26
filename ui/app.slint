@@ -532,6 +532,9 @@ export component AppWindow inherits Window {
     in property <string> net-top-up;        // ↑ tx rate text
     in property <string> net-top-down;      // ↓ rx rate text
     in property <[float]> net-top-history;
+    // The same series as an SVG polyline (1000 × 18 viewbox), built by Rust
+    // because Slint can't repeat Path elements with `for`.
+    in property <string> net-top-path;
     in property <string> net-bot-up;
     in property <string> net-bot-down;
     in property <[float]> net-bot-history;
@@ -1648,98 +1651,90 @@ export component AppWindow inherits Window {
     // gradients only: large animated fills are what makes the software
     // renderer drop frames, so movement stays in the small signal strip and in
     // hover/state transitions.
+    // The three backdrops are transcribed from the design board's mockups,
+    // not re-interpreted: same base colours, same blob geometry (the board's
+    // .wp layer is inset -14% and 62% opaque), same 104° chrome sheen.
     if Theme.skin-signal : Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        background: Theme.dark
-            ? @linear-gradient(180deg, #1b212b 0%, #0d1015 38%, #080a0d 100%)
-            : @linear-gradient(180deg, #fffdf8 0%, #f4f0e8 62%, #ece5d9 100%);
-        // Sodium haze off the top edge, so the skin glows without any chrome.
-        Rectangle {
-            x: 0; y: 0;
-            width: parent.width;
-            height: parent.height * 0.45;
-            background: Theme.dark
-                ? @radial-gradient(circle, #ff6b3540 0%, #ff6b351c 42%, #ff6b3500 74%)
-                : @radial-gradient(circle, #e85d2a2e 0%, #e85d2a12 42%, #e85d2a00 74%);
-        }
+        // .sig { background:#0a0c0f } — one flat ink, no haze. The skin's
+        // character comes from the strip and the accent, not from a glow.
+        background: Theme.dark ? #0a0c0f : #efe9dd;
     }
     if Theme.skin-aurora : Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
-        background: Theme.dark
-            ? @linear-gradient(165deg, #0c1511 0%, #050807 52%, #0a080d 100%)
-            : @linear-gradient(165deg, #f7f9f5 0%, #e9ece7 55%, #f6eef0 100%);
-        // Base wash across the whole window, then three blobs for local
-        // variation. They have to be strong: the panels sit at 68% opacity, so
-        // only a third of this reaches the eye — a 30% wash would vanish.
-        // Slint has no runtime blur, so the softness is baked into the stops.
+        background: Theme.dark ? #070b0a : #e4e8e1;
+        // .aur .wp is inset -14% and blurred 42px at 62% opacity. Without
+        // runtime blur the softness has to be baked into six gradient stops,
+        // and the blobs have to be oversized so their edges never land inside
+        // the window — that oversized falloff is what "drift" looks like.
+        Rectangle {
+            x: -parent.width * 0.16; y: -parent.height * 0.36;
+            width: parent.width * 0.84; height: parent.height * 0.98;
+            background: Theme.dark
+                ? @radial-gradient(circle, #f5a95cc4 0%, #f5a95c8c 18%, #f5a95c52 36%, #f5a95c26 54%, #f5a95c18 74%, #f5a95c00 100%)
+                : @radial-gradient(circle, #dd9a428c 0%, #dd9a4266 18%, #dd9a423c 36%, #dd9a421c 54%, #dd9a4212 74%, #dd9a4200 100%);
+        }
+        Rectangle {
+            x: parent.width * 0.34; y: -parent.height * 0.28;
+            width: parent.width * 0.88; height: parent.height * 0.96;
+            background: Theme.dark
+                ? @radial-gradient(circle, #5fd0a0b0 0%, #5fd0a07e 18%, #5fd0a04a 36%, #5fd0a020 54%, #5fd0a015 74%, #5fd0a000 100%)
+                : @radial-gradient(circle, #4a8f6a80 0%, #4a8f6a5c 18%, #4a8f6a36 36%, #4a8f6a18 54%, #4a8f6a0f 74%, #4a8f6a00 100%);
+        }
+        Rectangle {
+            x: parent.width * 0.00; y: parent.height * 0.30;
+            width: parent.width * 0.94; height: parent.height * 0.90;
+            background: Theme.dark
+                ? @radial-gradient(circle, #e05c8cb0 0%, #e05c8c7c 18%, #e05c8c48 36%, #e05c8c20 54%, #e05c8c16 74%, #e05c8c00 100%)
+                : @radial-gradient(circle, #c05a8078 0%, #c05a8056 18%, #c05a8032 36%, #c05a8016 54%, #c05a8010 74%, #c05a8000 100%);
+        }
+        // One low-alpha wash across the whole window: on a 6px panel seam the
+        // three blobs alone read as separate spotlights instead of one sky.
         Rectangle {
             x: 0; y: 0;
             width: parent.width; height: parent.height;
             background: Theme.dark
-                ? @linear-gradient(150deg, #f0b26b4a 0%, #79c9a440 46%, #d96a9445 100%)
-                : @linear-gradient(150deg, #e0a8655c 0%, #7fae934a 46%, #c47a9752 100%);
+                ? @linear-gradient(150deg, #f5a95c20 0%, #5fd0a018 46%, #e05c8c20 100%)
+                : @linear-gradient(150deg, #dd9a421c 0%, #7fae9318 46%, #c47a971c 100%);
         }
-        Rectangle {
-            x: -parent.width * 0.16; y: -parent.height * 0.30;
-            width: parent.width * 0.78; height: parent.height * 0.95;
-            background: Theme.dark
-                ? @radial-gradient(circle, #f0b26bb8 0%, #f0b26b78 30%, #f0b26b2e 55%, #f0b26b00 78%)
-                : @radial-gradient(circle, #d99a4a8a 0%, #d99a4a52 30%, #d99a4a1e 55%, #d99a4a00 78%);
-        }
-        Rectangle {
-            x: parent.width * 0.46; y: -parent.height * 0.18;
-            width: parent.width * 0.72; height: parent.height * 0.86;
-            background: Theme.dark
-                ? @radial-gradient(circle, #79c9a4a0 0%, #79c9a466 32%, #79c9a426 58%, #79c9a400 80%)
-                : @radial-gradient(circle, #4f8f6f70 0%, #4f8f6f42 32%, #4f8f6f16 58%, #4f8f6f00 80%);
-        }
-        Rectangle {
-            x: parent.width * 0.06; y: parent.height * 0.44;
-            width: parent.width * 0.80; height: parent.height * 0.78;
-            background: Theme.dark
-                ? @radial-gradient(circle, #d96a948c 0%, #d96a9456 34%, #d96a941e 60%, #d96a9400 82%)
-                : @radial-gradient(circle, #b25a7c66 0%, #b25a7c38 34%, #b25a7c12 60%, #b25a7c00 82%);
-        }
-        // Light leaking off the top edge, so the window frame still reads as an
-        // edge instead of a hard cut into the darkest corner.
+        // .aur .glow: a 1px light along the frame plus a faint inner bloom.
         Rectangle {
             x: 0; y: 0;
-            width: parent.width; height: parent.height * 0.16;
-            background: Theme.dark
-                ? @linear-gradient(180deg, #ffffff12 0%, #ffffff00 100%)
-                : @linear-gradient(180deg, #ffffffb8 0%, #ffffff00 100%);
+            width: parent.width; height: 1px;
+            background: Theme.dark ? #ffffff29 : #ffffff;
+        }
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
+            background: @radial-gradient(circle, #f5a95c00 55%, #f5a95c10 100%);
         }
     }
     if Theme.skin-chrome : Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height;
+        // .chr + .chr .body: paper at the top, cool aluminium at the bottom.
         background: Theme.dark
-            ? @linear-gradient(180deg, #1d2126 0%, #14171a 54%, #0e1012 100%)
-            : @linear-gradient(180deg, #fbfaf7 0%, #eeece5 56%, #e1dfd6 100%);
-        // Two reflections: a broad soft one off the left shoulder and a narrow
-        // hard one down the middle. Together they read as brushed metal — a
-        // single band looked like a smudge.
+            ? @linear-gradient(180deg, #1d2126 0%, #16181b 54%, #101214 100%)
+            : @linear-gradient(180deg, #f5f4f0 0%, #efeeea 48%, #e6e4dd 100%);
+        // .chr .sheen, 104°, at the board's own stops (0 → .55 white → .045
+        // black → .35 white → 0). One fixed reflection; no looping animation,
+        // because a full-window redraw every frame is exactly what the board's
+        // performance redline forbids.
         Rectangle {
-            x: -parent.width * 0.12; y: 0;
-            width: parent.width * 0.72; height: parent.height;
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
             background: Theme.dark
-                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff0e 34%, #ffffff00 70%)
-                : @linear-gradient(104deg, #ffffff00 0%, #ffffffb0 34%, #ffffff00 72%);
+                ? @linear-gradient(104deg,
+                    #ffffff00 24%, #ffffff12 40%, #00000024 48%, #ffffff0f 56%, #ffffff00 66%)
+                : @linear-gradient(104deg,
+                    #ffffff00 24%, #ffffff8c 41%, #0000000b 48%, #ffffff59 55%, #ffffff00 66%);
         }
-        Rectangle {
-            x: parent.width * 0.30; y: 0;
-            width: parent.width * 0.30; height: parent.height;
-            background: Theme.dark
-                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff20 42%, #00000033 56%, #ffffff00 100%)
-                : @linear-gradient(104deg, #ffffff00 0%, #ffffff 42%, #00000012 58%, #ffffff00 100%);
-        }
-        // Milled top edge — the highlight that makes aluminium look milled
-        // rather than painted.
+        // .chr .main: inset 0 1px 0 #fff — the milled top edge.
         Rectangle {
             x: 0; y: 0;
             width: parent.width; height: 1px;
@@ -1832,7 +1827,25 @@ export component AppWindow inherits Window {
             // bar keeps handling the window drag in this region.
             if root.titlebar-inset > 0px : Rectangle {
                 height: root.titlebar-inset;
-                background: Theme.bg-panel;
+                // The board's title bar is its own gradient, one step above the
+                // window body, with a 1px rule underneath — that pair is what
+                // makes the signal strip below it read as a recessed channel.
+                background: Theme.skin-signal
+                    ? (Theme.dark
+                        ? @linear-gradient(180deg, #111419 0%, #0d1014 100%)
+                        : @linear-gradient(180deg, #fbf7ef 0%, #f6f0e5 100%))
+                    : Theme.skin-chrome
+                    ? (Theme.dark
+                        ? @linear-gradient(180deg, #1f2329 0%, #171a1e 100%)
+                        : @linear-gradient(180deg, #fbfaf8 0%, #efeeea 100%))
+                    : Theme.skin-aurora
+                    ? (Theme.dark ? #070b09b3 : #f4f6f1b3)
+                    : Theme.bg-panel;
+                Rectangle {
+                    x: 0; y: parent.height - self.height;
+                    width: parent.width; height: 1px;
+                    background: Theme.skin-styled ? Theme.border-subtle : transparent;
+                }
             }
 
             // Immersive custom title bar (#119) — only on frameless platforms
@@ -1891,7 +1904,8 @@ export component AppWindow inherits Window {
             // layout is untouched to the pixel.
             if Theme.skin-signal && !root.term-fullscreen : SignalBand {
                 height: Theme.signal-band-h;
-                values: root.net-top-history;
+                commands: root.net-top-path;
+                live: !root.zen-mode;
             }
 
             // Dock area — fills below the title bar. The resource sidebar and the
@@ -6006,5 +6020,20 @@ export component AppWindow inherits Window {
                     background: Theme.text-muted; }
         Rectangle { x: parent.width - 5px;  y: parent.height - 9px;  width: 2px; height: 2px;
                     background: Theme.text-muted; }
+    }
+
+    // Liquid Chrome's signature sheen. It has to sit on top of every panel,
+    // exactly like the board (.chr .sheen, z-index 4) — painted in the backdrop
+    // layer it was invisible, because the panels are opaque. A plain Rectangle
+    // takes no input, so nothing underneath loses its clicks.
+    if Theme.skin-chrome && !root.term-fullscreen : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: Theme.dark
+            ? @linear-gradient(104deg,
+                #ffffff00 24%, #ffffff10 40%, #00000026 48%, #ffffff0d 56%, #ffffff00 66%)
+            : @linear-gradient(104deg,
+                #ffffff00 24%, #ffffff8c 41%, #0000000b 48%, #ffffff59 55%, #ffffff00 66%);
     }
 }
