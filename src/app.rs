@@ -9,6 +9,7 @@ mod agents;
 mod auth_dialogs;
 mod aux_windows;
 mod color_theme;
+mod completion;
 mod credentials;
 mod terminal_scheme;
 pub(crate) mod core;
@@ -68,6 +69,7 @@ mod window_events;
 
 use self::auth_dialogs::*;
 use self::aux_windows::*;
+use self::completion::*;
 use self::dock_stacks::*;
 use self::editor_host::*;
 use self::editor_tabs::*;
