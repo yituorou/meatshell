@@ -130,8 +130,28 @@ export global Theme {
     // instead of a flat rectangle.
     out property <brush> skin-edge: root.skin-signal ? (root.dark ? #ff8a5c66 : #d2542a4d)
         : root.skin-aurora ? (root.dark ? #f0b26b55 : #b07a344a)
-        : root.skin-chrome ? (root.dark ? #ffffff29 : #ffffff)
+        : root.skin-chrome ? (root.dark ? #ffffff3d : #ffffff)
         : transparent;
+    // Card hairline. Chrome is machined metal: a white edge on top that falls
+    // into a dark shadow at the bottom, so the 1px outline reads as thickness
+    // rather than as a stroke. Signal / aurora keep a light top edge only.
+    out property <brush> skin-card-border: root.skin-signal
+        ? @linear-gradient(180deg, #ffffff21 0%, #ffffff0d 9%, #ffffff00 100%)
+        : root.skin-aurora
+        ? @linear-gradient(180deg, #ffffff26 0%, #ffffff0a 10%, #ffffff00 100%)
+        : root.skin-chrome
+        ? (root.dark
+            ? @linear-gradient(180deg, #ffffff33 0%, #ffffff14 10%, #ffffff00 100%)
+            : @linear-gradient(180deg, #ffffff 0%, #0000000f 42%, #0000002e 100%))
+        : root.border-subtle;
+    // Aurora is glass over light: panels stay slightly translucent so the
+    // backdrop's washes read through them instead of being walled off. Nested
+    // surfaces sit a little denser than the outer card.
+    property <float> aurora-glass: 0.68;
+    // Height of the Signal Room's live-throughput strip. app.slint reserves it
+    // above the dock area (and shifts the floating toolbar down by the same
+    // amount); 0 for every other skin, so their layout is untouched.
+    out property <length> signal-band-h: root.skin-signal ? 18px : 0px;
     property <float> tint-amt: 0.10;              // how far surfaces pull to wp-tint
 
     // Frost a base surface: pull it slightly toward the wallpaper tint and make
@@ -158,37 +178,37 @@ export global Theme {
     // Surface ladders per skin. Each skin has a dark and a light variant so the
     // app's dark/light switch keeps working; the light variants are the same
     // material under daylight, not a different design.
-    property <color> skin-root: root.skin-signal ? (root.dark ? #0a0c0f : #f4f0e8)
-        : root.skin-aurora ? (root.dark ? #080d0b : #eef0ec)
-        : root.skin-chrome ? (root.dark ? #16181b : #eeede7)
+    property <color> skin-root: root.skin-signal ? (root.dark ? #07090c : #e9e1d2)
+        : root.skin-aurora ? (root.dark ? #050807 : #dfe4dc)
+        : root.skin-chrome ? (root.dark ? #16181b : #e7e5de)
         : root.p.bg-root;
-    property <color> skin-root-top: root.skin-signal ? (root.dark ? #161c25 : #fffdf9)
-        : root.skin-aurora ? (root.dark ? #0f1713 : #fafbf8)
-        : root.skin-chrome ? (root.dark ? #1f232a : #faf9f5)
+    property <color> skin-root-top: root.skin-signal ? (root.dark ? #0e1218 : #f4ede1)
+        : root.skin-aurora ? (root.dark ? #0a100d : #ecefe8)
+        : root.skin-chrome ? (root.dark ? #1f232a : #f1efe9)
         : root.p.bg-root;
-    property <color> skin-panel-top: root.skin-signal ? (root.dark ? #1a2029 : #fffdf9)
-        : root.skin-aurora ? (root.dark ? #121a16 : #fdfefc)
-        : root.skin-chrome ? (root.dark ? #21252b : #ffffff)
+    property <color> skin-panel-top: root.skin-signal ? (root.dark ? #161c25 : #fffdf9)
+        : root.skin-aurora ? (root.dark ? #101814 : #fdfefc)
+        : root.skin-chrome ? (root.dark ? #23272e : #ffffff)
         : root.p.bg-panel;
-    property <color> skin-panel: root.skin-signal ? (root.dark ? #12151a : #fffdf8)
-        : root.skin-aurora ? (root.dark ? #0d1311 : #fbfcf9)
-        : root.skin-chrome ? (root.dark ? #1c1f24 : #fffefc)
+    property <color> skin-panel: root.skin-signal ? (root.dark ? #0e1217 : #f9f4ec)
+        : root.skin-aurora ? (root.dark ? #0a110e : #f8faf6)
+        : root.skin-chrome ? (root.dark ? #1c1f24 : #f4f2ec)
         : root.p.bg-panel;
-    property <color> skin-panel-alt: root.skin-signal ? (root.dark ? #171b21 : #f7f3ec)
-        : root.skin-aurora ? (root.dark ? #111815 : #f2f4f0)
-        : root.skin-chrome ? (root.dark ? #22262c : #f4f3ee)
+    property <color> skin-panel-alt: root.skin-signal ? (root.dark ? #12171d : #f2ecdf)
+        : root.skin-aurora ? (root.dark ? #0d1411 : #eef1ea)
+        : root.skin-chrome ? (root.dark ? #22262c : #efede6)
         : root.p.bg-panel-alt;
-    property <color> skin-elevated: root.skin-signal ? (root.dark ? #1c212a : #fffefb)
-        : root.skin-aurora ? (root.dark ? #161f1b : #fdfefb)
-        : root.skin-chrome ? (root.dark ? #282d34 : #fbfaf6)
+    property <color> skin-elevated: root.skin-signal ? (root.dark ? #171d25 : #fffdf7)
+        : root.skin-aurora ? (root.dark ? #131b17 : #fcfdf9)
+        : root.skin-chrome ? (root.dark ? #282d34 : #faf9f5)
         : root.p.bg-elevated;
-    property <color> skin-hover: root.skin-signal ? (root.dark ? #232935 : #efe9df)
-        : root.skin-aurora ? (root.dark ? #1d2823 : #e7eae3)
-        : root.skin-chrome ? (root.dark ? #30363e : #f0eee8)
+    property <color> skin-hover: root.skin-signal ? (root.dark ? #1c2430 : #eae3d4)
+        : root.skin-aurora ? (root.dark ? #1a241f : #e6eadf)
+        : root.skin-chrome ? (root.dark ? #30363e : #eae8e1)
         : root.p.bg-hover;
-    property <color> skin-active: root.skin-signal ? (root.dark ? #2b323f : #e6dfd2)
-        : root.skin-aurora ? (root.dark ? #25332c : #dde1d8)
-        : root.skin-chrome ? (root.dark ? #3a414a : #e7e5de)
+    property <color> skin-active: root.skin-signal ? (root.dark ? #253040 : #e0d8c7)
+        : root.skin-aurora ? (root.dark ? #232f29 : #dce1d6)
+        : root.skin-chrome ? (root.dark ? #3a414a : #e2e0d9)
         : root.p.bg-active;
 
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
@@ -204,12 +224,20 @@ export global Theme {
     // while a faint top-to-bottom step reads as a surface with a light source.
     out property <brush> bg-panel: root.skin-classic
         ? frost(base-bg-panel, root.panel-alpha)
+        : root.skin-aurora
+        ? @linear-gradient(180deg,
+            skin-panel-top.with-alpha(root.aurora-glass) 0%,
+            skin-panel.with-alpha(root.aurora-glass - 0.04) 100%)
         : @linear-gradient(180deg, skin-panel-top 0%, skin-panel 100%);
     out property <brush> bg-panel-alt: root.skin-classic
         ? frost(base-bg-panel-alt, root.panel-alpha)
+        : root.skin-aurora
+        ? skin-panel-alt.with-alpha(min(1.0, root.aurora-glass + 0.06))
         : skin-panel-alt;
     out property <brush> bg-elevated: root.skin-classic
         ? frost(base-bg-elevated, root.panel-alpha)
+        : root.skin-aurora
+        ? skin-elevated.with-alpha(min(1.0, root.aurora-glass + 0.08))
         : skin-elevated;
     out property <brush> bg-hover: root.skin-classic
         ? frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04))
@@ -235,7 +263,11 @@ export global Theme {
     // Active terminal tab: with wallpaper, pull from the image's average colour
     // so the strip feels immersed; without wallpaper, make the active tab one
     // clear step darker/lighter than the surrounding tab bar (#200).
-    out property <brush> tab-active-bg: root.skin-styled ? root.bg-panel-alt
+    // Styled skins drop the boxed look for a surface + a 2px light beneath the
+    // label (see tabs.slint), so the fill here only sets the tint.
+    out property <brush> tab-active-bg: root.skin-signal ? skin-panel-alt
+        : root.skin-aurora ? #ffffff12
+        : root.skin-chrome ? (root.dark ? #2b3138 : #ffffff)
         : (root.immersive-active
             ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
             : (root.wallpaper-active
@@ -263,6 +295,10 @@ export global Theme {
         ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
     out property <brush> accent-pressed: root.immersive-active && !root.skin-styled
         ? root.wp-accent.darker(0.12) : root.p.accent-pressed;
+    // The same accent as a plain colour: several properties (drop-shadow,
+    // border colours) are typed <color> and can't take a <brush>.
+    out property <color> accent-color: root.immersive-active && !root.skin-styled
+        ? root.wp-accent : root.p.accent;
 
     out property <brush> success: dark ? #4ec9b0 : #34c759;
     out property <brush> warning: dark ? #e2a84a : #ff9f0a;

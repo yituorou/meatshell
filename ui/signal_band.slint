@@ -1,0 +1,100 @@
+import { Theme } from "theme.slint";
+
+// --- SignalBand -------------------------------------------------------------
+// The Signal Room's signature: an 18px strip between the window chrome and the
+// dock area that draws the active connection's throughput as a mirrored trace.
+//
+// The samples are the same 2s network history the resource panel's sparkline
+// uses (`net-top-history`), so the band never invents data — it only makes the
+// link's activity visible at a glance. The one continuous animation in the app
+// lives here: a sodium sweep with a scan line, which is what turns a row of
+// ticks into something that reads as "alive".
+export component SignalBand inherits Rectangle {
+    in property <[float]> values;       // 0..1, already normalised by Rust
+    in property <bool> live: true;      // false pauses the sweep (unfocused)
+
+    background: Theme.dark ? #06080b : #f2ece2;
+    clip: true;
+
+    property <int> n: max(1, values.length);
+    property <length> slot: root.width / root.n;
+    // Never wider than 3px: at 60 coarse samples a wide bar turns the trace
+    // into a row of pills. Thin ticks read as a waveform instead.
+    property <length> bar-w: min(3px, max(1px, root.slot * 0.3));
+    property <brush> trace: Theme.dark ? #ff8a5c : #d2542a;
+    property <color> band-bg: Theme.dark ? #06080b : #f2ece2;
+
+    // Recessed channel: a hairline top and bottom so the strip reads as cut
+    // into the chrome rather than painted onto it.
+    Rectangle {
+        x: 0; y: 0; width: parent.width; height: 1px;
+        background: Theme.dark ? #00000080 : #00000012;
+    }
+    Rectangle {
+        x: 0; y: parent.height - self.height;
+        width: parent.width; height: 1px;
+        background: Theme.dark ? #ffffff0f : #ffffffcc;
+    }
+    // Zero line: the trace reads as a signal riding on a carrier.
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 1px;
+        background: Theme.dark ? #ffffff0d : #0000000d;
+    }
+
+    // Mirrored ticks — thin, so the strip reads as a waveform and not a bar
+    // chart, even at 60 coarse samples across a wide window. An idle link
+    // still shows a 5px comb, so the strip never collapses into a divider.
+    for v[i] in values : Rectangle {
+        property <length> h: 5px + (parent.height - 12px) * Math.sqrt(clamp(v, 0.0, 1.0));
+        x: i * root.slot + (root.slot - root.bar-w) / 2;
+        y: (parent.height - self.h) / 2;
+        width: root.bar-w;
+        height: self.h;
+        border-radius: root.bar-w / 2;
+        opacity: i == root.n - 1 ? 1.0 : 0.82;
+        background: @linear-gradient(180deg,
+            root.trace.with-alpha(0.28) 0%,
+            root.trace 50%,
+            root.trace.with-alpha(0.28) 100%);
+    }
+
+    // Sweep: a soft wake with a harder scan line at its head. Driven by a timer
+    // rather than an `animate` loop because Slint has no infinite iteration;
+    // `animate x` smooths the 50ms steps out.
+    property <float> phase: 0.0;
+    Rectangle {
+        x: -120px + root.phase * (parent.width + 120px);
+        width: 120px;
+        height: parent.height;
+        background: @linear-gradient(90deg,
+            transparent 0%,
+            root.trace.with-alpha(Theme.dark ? 0.20 : 0.12) 78%,
+            root.trace.with-alpha(Theme.dark ? 0.42 : 0.26) 100%);
+    }
+    Timer {
+        interval: 50ms;
+        running: root.live && Theme.window-focused;
+        triggered => {
+            root.phase += 0.004;
+            if (root.phase > 1.0) {
+                root.phase = 0.0;
+            }
+        }
+    }
+
+    // Fade both ends so the trace never runs into the readout or the window
+    // edge: a soft wedge on the right, a short one on the left.
+    Rectangle {
+        x: 0; y: 0;
+        width: 28px; height: parent.height;
+        background: @linear-gradient(90deg, root.band-bg 0%, transparent 100%);
+    }
+    Rectangle {
+        x: parent.width - self.width; y: 0;
+        width: 28px; height: parent.height;
+        background: @linear-gradient(90deg, transparent 0%, root.band-bg 100%);
+    }
+}
