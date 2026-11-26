@@ -244,6 +244,19 @@ pub(super) fn install_window_event_hook(
                     WEvent::Focused(f) => {
                         focused = *f;
                         apply_activity(focused, minimized, occluded);
+                        if !*f {
+                            // A press held across deactivation loses its release on
+                            // Windows: alt+tab breaks the mouse capture without a
+                            // WM_LBUTTONUP, winit's WM_CAPTURECHANGED handler only
+                            // resets its capture count and never synthesizes the
+                            // Release, so Slint's mouse grab stays stuck on its
+                            // item stack. Every later wheel or click is routed to
+                            // that stale stack without hit-testing — the terminal
+                            // stops reacting to both. Exit clears the grab (and
+                            // hover); the next real mouse move re-establishes both.
+                            slint_window
+                                .dispatch_event(slint::platform::WindowEvent::PointerExited);
+                        }
                         if *f {
                             #[cfg(target_os = "windows")]
                             slint_window.with_winit_window(|window| window.set_ime_allowed(true));

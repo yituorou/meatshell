@@ -769,13 +769,15 @@ impl TermBuffer {
         if bytes.is_empty() {
             return;
         }
-        // CSI 3 J means "erase saved lines". The vt100 crate clears its own
-        // scrollback, but MeatShell maintains a separate rendered history and a
-        // raw replay stream for resize reflow. Drop both sides of that history,
+        // CSI 3 J means "erase saved lines", and CSI 2 J ("erase display") is
+        // what `clear` and Ctrl+L send when the terminfo has no E3 capability.
+        // Both mean the pre-erase scrollback is gone. The vt100 crate clears its
+        // own scrollback, but MeatShell maintains a separate rendered history and
+        // a raw replay stream for resize reflow. Drop both sides of that history,
         // including when the CSI sequence was split across SSH reads (#319).
         //
         // Only the new bytes (plus the last 3 retained ones, for a split
-        // sequence) can contain a new CSI 3 J. Scanning the whole retained
+        // sequence) can contain a new erase sequence. Scanning the whole retained
         // stream instead cost a 2 MiB memmove + scan per chunk, which
         // dominated ingest during log floods.
         let carry = self.raw.len().min(3);
@@ -786,14 +788,32 @@ impl TermBuffer {
             probe.extend_from_slice(bytes);
             probe
                 .windows(4)
-                .rposition(|window| window == b"\x1b[3J")
+                .rposition(|window| window == b"\x1b[3J" || window == b"\x1b[2J")
                 .map(|position| window_start + position + 4)
         };
         // Retain the (post-rewrite) stream, capped, so a resize can replay it at
         // the new width and reflow already-printed output (#169).
         self.raw.extend(bytes.iter().copied());
-        if let Some(end) = erase_saved_through {
-            self.raw.drain(..end);
+        // The replay stream follows the same alternate-screen rule as the wipe
+        // below: frames an alt-screen program repaints with `CSI 2J` must not
+        // trim the replay bytes of the normal screen, or a resize after leaving
+        // tmux/vim could not rebuild the pre-tmux output that `history` still
+        // holds.
+        if !self.parser.screen().alternate_screen() {
+            if let Some(end) = erase_saved_through {
+                self.raw.drain(..end);
+            }
+        }
+        self.cap_raw();
+        self.feed_batched(bytes);
+        // The wipe runs after feeding: an alt-screen switch (`?1049h`) precedes
+        // the erase inside the same chunk, and tmux/vim keep repainting their alt
+        // screen with `CSI 2J` every frame — those frames must not drop the
+        // normal screen's scrollback. Landing on the normal screen after the
+        // feed is exactly the `clear` / Ctrl+L case, where wheeling up used to
+        // show the pre-clear output again. (A plain disconnect has no erase and
+        // keeps its history — see `release_history_keep_screen`, #451.)
+        if erase_saved_through.is_some() && !self.parser.screen().alternate_screen() {
             // Erasing the scrollback is evicting every history row at once:
             // move the selection with the live screen instead of dropping it.
             // Ink-based CLIs (Grok CLI, Gemini CLI…) send `CSI 2J CSI 3J CSI H`
@@ -818,8 +838,6 @@ impl TermBuffer {
             self.prev.clear();
             self.view_offset = 0;
         }
-        self.cap_raw();
-        self.feed_batched(bytes);
     }
 
     /// Feed a (already HVP-rewritten) byte slice to vt100 in bounded batches,
