@@ -995,6 +995,65 @@ pub(super) fn wire_key_input(
         });
     }
 
+    // Completion popup on the shell prompt line (#583 follow-up).
+    //
+    // Accepting a row types only the missing suffix into the PTY, so the shell
+    // sees the same bytes its own Tab completion would have produced; the
+    // popup then closes and the normal echo repaint takes over.
+    {
+        let bufs_hint = bufs.clone();
+        let handles_hint = handles.clone();
+        let weak = window.as_weak();
+        window.on_accept_hint(move |tab_id: SharedString, index: i32| {
+            let tid = tab_id.to_string();
+            let accepted = with_term_buf(&bufs_hint, &tid, |buf| {
+                let hint = prompt_hint::hint_for(buf.parser.screen())?;
+                let suffix = hint.suffix(index.max(0) as usize)?;
+                Some((hint.typed, suffix))
+            })
+            .flatten();
+            // Hold the popup shut for the word that was just completed: on a
+            // slow link the echo can arrive a frame or two later, and without
+            // this the cached hint would pop the list back open in between.
+            if let Some((typed, _)) = accepted.as_ref() {
+                prompt_hint::dismiss(&tid, typed);
+            }
+            let suffix = accepted.map(|(_, suffix)| suffix);
+            if let Some(win) = weak.upgrade() {
+                clear_hint(&win, &tid);
+            }
+            let (Some(suffix), Some(sender)) = (
+                suffix,
+                handles_hint
+                    .borrow()
+                    .get(tid.as_str())
+                    .map(|h| h.commands.clone()),
+            ) else {
+                return;
+            };
+            let _ = sender.send(SessionCommand::RawInput(suffix.into_bytes()));
+        });
+    }
+    // Esc hides the popup for the word currently on screen; typing anything new
+    // brings it back (see prompt_hint::dismissed).
+    {
+        let bufs_dismiss = bufs.clone();
+        let weak = window.as_weak();
+        window.on_dismiss_hint(move |tab_id: SharedString| {
+            let tid = tab_id.to_string();
+            let typed = with_term_buf(&bufs_dismiss, &tid, |buf| {
+                prompt_hint::hint_for(buf.parser.screen()).map(|hint| hint.typed)
+            })
+            .flatten();
+            if let Some(typed) = typed {
+                prompt_hint::dismiss(&tid, &typed);
+            }
+            if let Some(win) = weak.upgrade() {
+                clear_hint(&win, &tid);
+            }
+        });
+    }
+
     // Context menu → 清空缓存: reset the local vt100 buffer (drops scrollback),
     // wipe the displayed screen, then nudge the remote to redraw a fresh prompt.
     {

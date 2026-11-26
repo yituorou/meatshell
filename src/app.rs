@@ -32,6 +32,7 @@ mod misc_callbacks;
 mod open_window;
 mod panes;
 mod port_forward;
+mod prompt_hint;
 mod quick_commands;
 mod recents;
 mod resource_ui;

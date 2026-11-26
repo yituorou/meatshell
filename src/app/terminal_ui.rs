@@ -228,9 +228,17 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         let sel = buf.selection_rects_visible(cols);
         // One row's worth of work, so it is safe on every frame (#535).
         let current = buf.find_current_rect().unwrap_or_default();
-        (b, matches, sel, current)
+        // Only the live view has a meaningful cursor: scrolled-back renders
+        // report `cursor_row` offset into the scrollback, and alt-screen / mouse
+        // tracking screens belong to the remote app, not to a shell prompt.
+        let hint = if buf.view_offset == 0 && !b.is_alt && !b.mouse_tracked {
+            prompt_hint::hint_for_cached(tab_id, buf.parser.screen())
+        } else {
+            None
+        };
+        (b, matches, sel, current, hint)
     });
-    let Some((b, matches, sel, current)) = data else {
+    let Some((b, matches, sel, current, hint)) = data else {
         return;
     };
     let spans = std::cell::Cell::new(Some(b.spans));
@@ -265,8 +273,40 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         }
         row.scroll_max = smax;
         row.scroll_offset = soff;
+        // Completion popup on the prompt line (#583 follow-up). The model is
+        // only replaced when its rows actually change: this flush runs once per
+        // frame during output floods, and a new ModelRc makes Slint rebuild the
+        // popup's repeater.
+        let items = hint.as_ref().map(|h| h.items.as_slice()).unwrap_or(&[]);
+        if !strings_match(&row.hint_items, items) {
+            let rows: Vec<SharedString> = items.iter().map(|name| name.as_str().into()).collect();
+            row.hint_items = ModelRc::from(Rc::new(VecModel::from(rows)));
+        }
+        let want_row = hint.as_ref().map(|h| h.row).unwrap_or(-1);
+        let want_col = hint.as_ref().map(|h| h.col).unwrap_or(0);
+        if row.hint_row != want_row {
+            row.hint_row = want_row;
+        }
+        if row.hint_col != want_col {
+            row.hint_col = want_col;
+        }
     });
     win.window().request_redraw();
+}
+
+/// Hide the completion popup for one tab immediately.
+///
+/// Accepting a row and pressing Esc must feel instant, so they cannot wait for
+/// the next render flush (which may be far away while the shell is idle).
+pub(super) fn clear_hint(win: &AppWindow, tab_id: &str) {
+    use slint::Model as _;
+    set_terminal_row(win, tab_id, |row| {
+        if row.hint_row != -1 || row.hint_items.row_count() > 0 {
+            row.hint_items = ModelRc::from(Rc::new(VecModel::<SharedString>::default()));
+            row.hint_row = -1;
+            row.hint_col = 0;
+        }
+    });
 }
 
 /// True when two small overlay models (find matches, selection rects) hold the
@@ -274,6 +314,17 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
 fn model_matches(old: &ModelRc<TermMatch>, new: &ModelRc<TermMatch>) -> bool {
     use slint::Model as _;
     old.row_count() == new.row_count() && old.iter().zip(new.iter()).all(|(a, b)| a == b)
+}
+
+/// True when `model` already holds exactly `items`, so the completion popup's
+/// repeater can keep its elements.
+fn strings_match(model: &ModelRc<SharedString>, items: &[String]) -> bool {
+    use slint::Model as _;
+    model.row_count() == items.len()
+        && model
+            .iter()
+            .zip(items)
+            .all(|(existing, wanted)| existing.as_str() == wanted.as_str())
 }
 
 /// Identity of a span ignoring its row, so a line that only moved up the
