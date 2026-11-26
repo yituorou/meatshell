@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **命令栏输入时给出 OneKey 式补全（#583）。** 在命令栏敲命令时，下拉提示除了历史记录，还会列出本机 `$PATH` 里以所输内容开头的已安装命令（输入 `cle` 会补到 `clear`），这些行左侧带一个终端图标以便区分；匹配大小写不敏感，只补全命令名本身（输入空格后不再混入命令），`$PATH` 索引在启动时后台建立一次，Tab 补全到高亮项。
+- **OneKey-style completion while typing in the command bar (#583).** The suggestion popup now lists installed `$PATH` commands that start with what you typed (`cle` → `clear`) next to matching history, marked with a terminal glyph on their row. Matching is case-insensitive, only the command word is completed (typing a space stops the command suggestions), the `$PATH` index is built once in the background at startup, and Tab completes the highlighted row.
+
 ## [0.8.5] - 2026-11-25
 
 - **设置搜索。** 设置侧栏顶部新增搜索框，可搜索所有页面的设置项：名称、说明、分组标题、页面名称以及下拉选项 / 按钮文字，中英文均可搜索，与界面语言无关；多个词同时匹配。输入时右侧显示结果列表，每条标注所在页面；点击结果或按回车打开第一条，会跳转到对应页面、滚动到该设置并短暂高亮。

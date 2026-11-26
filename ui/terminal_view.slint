@@ -400,6 +400,9 @@ export component TerminalView inherits Rectangle {
     // Same rows as history-view, one line each for display (#419). Actions
     // (run / copy / delete / recall) keep using the raw history-view strings.
     in property <[string]> history-preview;
+    // Parallel to history-view: true when the row is a $PATH command rather
+    // than a history entry (#583). Those rows cannot be deleted from history.
+    in property <[bool]> history-is-command;
     property <bool> send-to-all: false;
     in property <bool> cmd-bar-hidden: false;  // toolbar toggle hides the whole bar
     // Effective terminal font size in px: per-session zoom override when > 0,
@@ -434,7 +437,10 @@ export component TerminalView inherits Rectangle {
     callback copy-text(string);                // copy a history command to clipboard (#96)
     callback delete-history(int /* index */);  // remove a history entry (#96)
     callback delete-history-cmd(string /* cmd */); // remove a history entry by command (#101)
-    callback search-history(string /* query */);   // filter the history dropdown (#101)
+    // Filter the dropdown. `include-commands` is true only for the live
+    // suggestions under the command input, where $PATH commands join the list
+    // (#583); the Ctrl+R panel passes false and sees history only.
+    callback search-history(string /* query */, bool /* include-commands */);
 
     callback send-key(string, bool, bool, bool);
     // Temporary on-device diagnostics for #312. Rust redacts printable text.
@@ -663,7 +669,7 @@ export component TerminalView inherits Rectangle {
     // is recreated empty because the `if` subtree is destroyed on close (#101).
     changed history-open => {
         if (root.history-open) {
-            if (!root.history-autocomplete) { root.search-history(""); }
+            if (!root.history-autocomplete) { root.search-history("", false); }
             // List is oldest→newest (#101): default-select the newest entry.
             root.history-selected = root.history-view.length > 0
                 ? root.history-view.length - 1 : 0;
@@ -1693,7 +1699,9 @@ export component TerminalView inherits Rectangle {
                                 root.history-cursor = -1;
                                 root.quick-open = false;
                                 root.history-autocomplete = self.text != "";
-                                root.search-history(self.text);
+                                // Live suggestions merge $PATH commands with the
+                                // matching history — WindTerm's OneKey (#583).
+                                root.search-history(self.text, true);
                                 root.history-open = root.history-autocomplete;
                                 // Oldest→newest list: default-select the newest match.
                                 root.history-selected = root.history-view.length > 0
@@ -2177,6 +2185,15 @@ export component TerminalView inherits Rectangle {
                             }
                             HorizontalLayout {
                                 padding-left: 8px; padding-right: 4px; spacing: 1px;
+                                // $PATH commands are marked so a row that was never
+                                // in the history is not mistaken for one (#583).
+                                if (idx < root.history-is-command.length) && root.history-is-command[idx] : Text {
+                                    text: "\u{E86F}"; // code/terminal — installed command
+                                    font-family: "Material Icons";
+                                    color: Theme.text-muted;
+                                    font-size: Theme.fs-xs;
+                                    vertical-alignment: center;
+                                }
                                 Text {
                                     text: idx < root.history-preview.length ? root.history-preview[idx] : h;
                                     color: Theme.text-secondary;
@@ -2216,8 +2233,10 @@ export component TerminalView inherits Rectangle {
                                            color: Theme.text-secondary; font-size: Theme.fs-sm;
                                            horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                // Delete (×) — remove this entry.
-                                Rectangle {
+                                // Delete (×) — remove this entry. Only history
+                                // rows can be deleted; a $PATH command is not
+                                // ours to forget (#583).
+                                if !((idx < root.history-is-command.length) && root.history-is-command[idx]) : Rectangle {
                                     width: 24px; y: (parent.height - self.height) / 2; height: 24px;
                                     border-radius: Theme.radius-sm;
                                     background: hdel.has-hover ? Theme.danger.with-alpha(0.18) : transparent;
@@ -2274,7 +2293,7 @@ export component TerminalView inherits Rectangle {
                                     // detected" (#349 / #343).
                                     init => { root.history-search-focus-pending = true; }
                                     edited => {
-                                        root.search-history(self.text);
+                                        root.search-history(self.text, false);
                                         root.history-selected = root.history-view.length > 0 ? root.history-view.length - 1 : 0;
                                         h-flick.scroll-to-newest();
                                     }

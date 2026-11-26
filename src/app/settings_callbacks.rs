@@ -113,7 +113,7 @@ pub(super) fn apply_saved_appearance(ctx: &WinCtx) {
         &all_quick_group_names(&store.borrow()),
     ));
     window.set_command_history(history_model(&store.borrow()));
-    set_history_view(&window, &store.borrow(), ""); // #101, #419
+    set_history_view(&window, &store.borrow(), "", false); // #101, #419
 }
 
 /// Interface toggles: SFTP follows cd, command bar, download prompt, paste and zen settings.
