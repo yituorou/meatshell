@@ -110,6 +110,28 @@ export global Theme {
     // separated by gaps (default), or square panels flush against each other and
     // divided by 1px lines. Rust persists the choice.
     in-out property <bool> flat-panels: false;
+
+    // --- Appearance skin ---------------------------------------------------
+    // 0 classic (frosted wallpaper, the original look), 1 signal room,
+    // 2 aurora ink, 3 liquid chrome. A skin owns the material — surface fills,
+    // backdrop and edge light — while the palette preset still owns the
+    // colours, so the two can never contradict each other: each skin ships
+    // with a matching preset in `color_theme.rs`.
+    //
+    // Classic falls through to every existing expression, so choosing it keeps
+    // the app pixel-identical to before this property existed.
+    in-out property <int> skin: 0;
+    out property <bool> skin-classic: root.skin == 0;
+    out property <bool> skin-signal:  root.skin == 1;
+    out property <bool> skin-aurora:  root.skin == 2;
+    out property <bool> skin-chrome:  root.skin == 3;
+    out property <bool> skin-styled:  root.skin != 0;
+    // 1px light on the top edge of a card: the cheapest way to read as glass
+    // instead of a flat rectangle.
+    out property <brush> skin-edge: root.skin-signal ? (root.dark ? #ff8a5c66 : #d2542a4d)
+        : root.skin-aurora ? (root.dark ? #f0b26b55 : #b07a344a)
+        : root.skin-chrome ? (root.dark ? #ffffff29 : #ffffff)
+        : transparent;
     property <float> tint-amt: 0.10;              // how far surfaces pull to wp-tint
 
     // Frost a base surface: pull it slightly toward the wallpaper tint and make
@@ -133,20 +155,75 @@ export global Theme {
     property <color> base-bg-hover:     root.p.bg-hover;
     property <color> base-bg-active:    root.p.bg-active;
 
+    // Surface ladders per skin. Each skin has a dark and a light variant so the
+    // app's dark/light switch keeps working; the light variants are the same
+    // material under daylight, not a different design.
+    property <color> skin-root: root.skin-signal ? (root.dark ? #0a0c0f : #f4f0e8)
+        : root.skin-aurora ? (root.dark ? #080d0b : #eef0ec)
+        : root.skin-chrome ? (root.dark ? #16181b : #eeede7)
+        : root.p.bg-root;
+    property <color> skin-root-top: root.skin-signal ? (root.dark ? #161c25 : #fffdf9)
+        : root.skin-aurora ? (root.dark ? #0f1713 : #fafbf8)
+        : root.skin-chrome ? (root.dark ? #1f232a : #faf9f5)
+        : root.p.bg-root;
+    property <color> skin-panel-top: root.skin-signal ? (root.dark ? #1a2029 : #fffdf9)
+        : root.skin-aurora ? (root.dark ? #121a16 : #fdfefc)
+        : root.skin-chrome ? (root.dark ? #21252b : #ffffff)
+        : root.p.bg-panel;
+    property <color> skin-panel: root.skin-signal ? (root.dark ? #12151a : #fffdf8)
+        : root.skin-aurora ? (root.dark ? #0d1311 : #fbfcf9)
+        : root.skin-chrome ? (root.dark ? #1c1f24 : #fffefc)
+        : root.p.bg-panel;
+    property <color> skin-panel-alt: root.skin-signal ? (root.dark ? #171b21 : #f7f3ec)
+        : root.skin-aurora ? (root.dark ? #111815 : #f2f4f0)
+        : root.skin-chrome ? (root.dark ? #22262c : #f4f3ee)
+        : root.p.bg-panel-alt;
+    property <color> skin-elevated: root.skin-signal ? (root.dark ? #1c212a : #fffefb)
+        : root.skin-aurora ? (root.dark ? #161f1b : #fdfefb)
+        : root.skin-chrome ? (root.dark ? #282d34 : #fbfaf6)
+        : root.p.bg-elevated;
+    property <color> skin-hover: root.skin-signal ? (root.dark ? #232935 : #efe9df)
+        : root.skin-aurora ? (root.dark ? #1d2823 : #e7eae3)
+        : root.skin-chrome ? (root.dark ? #30363e : #f0eee8)
+        : root.p.bg-hover;
+    property <color> skin-active: root.skin-signal ? (root.dark ? #2b323f : #e6dfd2)
+        : root.skin-aurora ? (root.dark ? #25332c : #dde1d8)
+        : root.skin-chrome ? (root.dark ? #3a414a : #e7e5de)
+        : root.p.bg-active;
+
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
     // empty / inset areas; panels stay mostly opaque for legible text.
-    out property <brush> bg-root:      frost(base-bg-root, max(0.0, root.panel-alpha - 0.44));
-    out property <brush> bg-panel:     frost(base-bg-panel, root.panel-alpha);
-    out property <brush> bg-panel-alt: frost(base-bg-panel-alt, root.panel-alpha);
-    out property <brush> bg-elevated:  frost(base-bg-elevated, root.panel-alpha);
-    out property <brush> bg-hover:     frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04));
-    out property <brush> bg-active:    frost(base-bg-active, min(1.0, root.panel-alpha + 0.08));
+    // A styled skin replaces the frost with its own opaque surface: the point
+    // of signal / aurora / chrome is that the app keeps its identity whatever
+    // image is behind it, so the wallpaper is covered (see the backdrop layers
+    // in app.slint) rather than showing through.
+    out property <brush> bg-root: root.skin-classic
+        ? frost(base-bg-root, max(0.0, root.panel-alpha - 0.44))
+        : @linear-gradient(180deg, skin-root-top 0%, skin-root 64%);
+    // Styled panels get a 4% vertical lift: a flat rectangle reads as a block,
+    // while a faint top-to-bottom step reads as a surface with a light source.
+    out property <brush> bg-panel: root.skin-classic
+        ? frost(base-bg-panel, root.panel-alpha)
+        : @linear-gradient(180deg, skin-panel-top 0%, skin-panel 100%);
+    out property <brush> bg-panel-alt: root.skin-classic
+        ? frost(base-bg-panel-alt, root.panel-alpha)
+        : skin-panel-alt;
+    out property <brush> bg-elevated: root.skin-classic
+        ? frost(base-bg-elevated, root.panel-alpha)
+        : skin-elevated;
+    out property <brush> bg-hover: root.skin-classic
+        ? frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04))
+        : skin-hover;
+    out property <brush> bg-active: root.skin-classic
+        ? frost(base-bg-active, min(1.0, root.panel-alpha + 0.08))
+        : skin-active;
     // Floating cards (resource panel, Quick connect, quick commands, recent
     // connections). In dark mode the plain panel colour sits too close to the
     // window behind it to show the card's edge, so cards get a lighter slate
     // there; light mode already has the contrast and keeps bg-panel.
     in-out property <color> card-dark: #2D3440;
-    out property <brush> card-bg: root.dark ? frost(root.card-dark, root.panel-alpha) : root.bg-panel;
+    out property <brush> card-bg: root.skin-styled ? root.bg-panel
+        : (root.dark ? frost(root.card-dark, root.panel-alpha) : root.bg-panel);
     // Settings dialog: 20% less transparent than the other panels so its dense
     // grey labels stay legible even at a low wallpaper overlay (user request).
     out property <brush> bg-panel-strong: frost(base-bg-panel, min(1.0, root.panel-alpha + 0.20));
@@ -158,14 +235,16 @@ export global Theme {
     // Active terminal tab: with wallpaper, pull from the image's average colour
     // so the strip feels immersed; without wallpaper, make the active tab one
     // clear step darker/lighter than the surrounding tab bar (#200).
-    out property <brush> tab-active-bg: root.immersive-active
-        ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
-        : (root.wallpaper-active
-            ? root.p.tab-active-bg.with-alpha(min(1.0, root.panel-alpha + 0.10))
-            : root.p.tab-active-bg);
-    out property <brush> tab-active-border: root.immersive-active
-        ? root.wp-accent.with-alpha(0.72)
-        : root.p.tab-active-border;
+    out property <brush> tab-active-bg: root.skin-styled ? root.bg-panel-alt
+        : (root.immersive-active
+            ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
+            : (root.wallpaper-active
+                ? root.p.tab-active-bg.with-alpha(min(1.0, root.panel-alpha + 0.10))
+                : root.p.tab-active-bg));
+    out property <brush> tab-active-border: root.skin-styled ? root.accent
+        : (root.immersive-active
+            ? root.wp-accent.with-alpha(0.72)
+            : root.p.tab-active-border);
 
     out property <brush> border-subtle: root.p.border-subtle;
     out property <brush> border-strong: root.p.border-strong;
@@ -176,9 +255,14 @@ export global Theme {
     out property <brush> text-secondary: root.p.text-secondary;
     out property <brush> text-muted:     root.p.text-muted;
 
-    out property <brush> accent:         root.immersive-active ? root.wp-accent                 : root.p.accent;
-    out property <brush> accent-hover:   root.immersive-active ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
-    out property <brush> accent-pressed: root.immersive-active ? root.wp-accent.darker(0.12)   : root.p.accent-pressed;
+    // A styled skin keeps its preset's accent: immersive colours come from the
+    // wallpaper, and the whole point of a skin is to not depend on the image.
+    out property <brush> accent:         root.immersive-active && !root.skin-styled
+        ? root.wp-accent : root.p.accent;
+    out property <brush> accent-hover:   root.immersive-active && !root.skin-styled
+        ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
+    out property <brush> accent-pressed: root.immersive-active && !root.skin-styled
+        ? root.wp-accent.darker(0.12) : root.p.accent-pressed;
 
     out property <brush> success: dark ? #4ec9b0 : #34c759;
     out property <brush> warning: dark ? #e2a84a : #ff9f0a;
@@ -197,7 +281,8 @@ export global Theme {
     };
     property <TermColors> tc: root.dark ? root.term-colors-dark : root.term-colors-light;
     property <color> base-term-bg: root.tc.custom ? root.tc.bg : root.p.term-bg;
-    out property <brush> term-bg: root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg;
+    out property <brush> term-bg: root.skin-styled ? base-term-bg
+        : (root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg);
     out property <brush> term-fg: root.tc.fg;
     out property <color> term-cursor: root.tc.cursor;
     out property <brush> term-selection: root.tc.custom ? root.tc.selection : root.accent.with-alpha(0.40);

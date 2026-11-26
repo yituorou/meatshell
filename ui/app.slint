@@ -780,6 +780,9 @@ export component AppWindow inherits Window {
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
     in-out property <image> wallpaper-blurred <=> Theme.wallpaper-blurred;
     in-out property <bool> wallpaper-frost <=> Theme.wallpaper-frost;
+    // Appearance skin (0 classic, 1 signal, 2 aurora, 3 chrome). Rust sets it
+    // from the colour-theme preset, so the material always matches the palette.
+    in-out property <int> skin <=> Theme.skin;
     callback set-wallpaper-frost(bool);            // toggle + persist frosted glass
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
@@ -1637,6 +1640,66 @@ export component AppWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: Theme.frost-wash;
+    }
+
+    // Appearance-skin backdrop — painted over the wallpaper, because a styled
+    // skin has to look the same whatever image the user picked. Static
+    // gradients only: large animated fills are what makes the software
+    // renderer drop frames, so movement stays in the small signal strip and in
+    // hover/state transitions.
+    if Theme.skin-signal : Rectangle {
+        background: Theme.dark
+            ? @linear-gradient(180deg, #1b212b 0%, #0d1015 38%, #0a0c0f 100%)
+            : @linear-gradient(180deg, #fffdf8 0%, #f4f0e8 62%, #ece5d9 100%);
+        // Sodium haze off the top edge, so the skin glows without any chrome.
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: parent.height * 0.30;
+            background: Theme.dark
+                ? @radial-gradient(circle, #ff6b3526 0%, #ff6b3500 70%)
+                : @radial-gradient(circle, #e85d2a1f 0%, #e85d2a00 70%);
+        }
+    }
+    if Theme.skin-aurora : Rectangle {
+        background: Theme.dark
+            ? @linear-gradient(165deg, #101a15 0%, #080d0b 52%, #0d0a10 100%)
+            : @linear-gradient(165deg, #f7f9f5 0%, #eef0ec 55%, #f6eef0 100%);
+        Rectangle {
+            x: -parent.width * 0.15; y: -parent.height * 0.25;
+            width: parent.width * 0.9; height: parent.height * 0.9;
+            background: Theme.dark
+                ? @radial-gradient(circle, #f0b26b2e 0%, #f0b26b00 62%)
+                : @radial-gradient(circle, #c98a3f22 0%, #c98a3f00 62%);
+        }
+        Rectangle {
+            x: parent.width * 0.45; y: -parent.height * 0.10;
+            width: parent.width * 0.8; height: parent.height * 0.85;
+            background: Theme.dark
+                ? @radial-gradient(circle, #79c9a42a 0%, #79c9a400 60%)
+                : @radial-gradient(circle, #4f8f6f1f 0%, #4f8f6f00 60%);
+        }
+        Rectangle {
+            x: parent.width * 0.10; y: parent.height * 0.45;
+            width: parent.width * 0.85; height: parent.height * 0.75;
+            background: Theme.dark
+                ? @radial-gradient(circle, #d96a9424 0%, #d96a9400 62%)
+                : @radial-gradient(circle, #b25a7c1c 0%, #b25a7c00 62%);
+        }
+    }
+    if Theme.skin-chrome : Rectangle {
+        background: Theme.dark
+            ? @linear-gradient(180deg, #1b1e22 0%, #14171a 60%, #101214 100%)
+            : @linear-gradient(180deg, #f8f7f3 0%, #ecebe4 58%, #e3e1d9 100%);
+        // One fixed reflection band: the material reads as brushed metal even
+        // when nothing is hovered.
+        Rectangle {
+            x: -parent.width * 0.1; y: 0;
+            width: parent.width * 0.6; height: parent.height;
+            background: Theme.dark
+                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff12 46%, #00000026 54%, #ffffff00 82%)
+                : @linear-gradient(104deg, #ffffff00 0%, #ffffff9e 46%, #0000000a 54%, #ffffff00 82%);
+        }
     }
 
     // Zen (focus) mode keyboard toggle — same persist path as the Settings
@@ -2814,6 +2877,18 @@ export component AppWindow inherits Window {
                     border-radius: Theme.card-radius;
                     border-width: 1px;
                     border-color: Theme.border-subtle;
+                    // Styled skins get a 1px light along the top edge: the card
+                    // then reads as a pane of glass instead of a flat block.
+                    // Faded at both ends so it never turns into a hard line.
+                    if Theme.skin-styled : Rectangle {
+                        x: Theme.card-radius;
+                        y: 0;
+                        width: parent.width - Theme.card-radius * 2;
+                        height: 1px;
+                        background: @linear-gradient(90deg,
+                            transparent 0%, Theme.skin-edge 18%,
+                            Theme.skin-edge 82%, transparent 100%);
+                    }
                 }
                 }
             }
