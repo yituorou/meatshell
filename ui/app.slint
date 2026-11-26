@@ -531,6 +531,10 @@ export component AppWindow inherits Window {
     in property <float> swap-percent;
     in property <string> mem-detail;
     in property <string> swap-detail;
+    in property <bool> gpu-available;
+    in property <float> gpu-percent;
+    in property <string> gpu-detail;
+    in property <bool> gpu-percent-na;
     // Dual network panel.  "top" follows the active tab (remote NIC on a
     // session tab, local on the welcome tab); "bot" is always the local machine.
     in property <string> net-top-up;        // ↑ tx rate text
@@ -691,6 +695,7 @@ export component AppWindow inherits Window {
     in property <[SysInfoRow]> sys-overview-rows;
     in property <[SysInfoRow]> sys-cpu-info-rows;
     in property <[SysInfoRow]> sys-gpu-info-rows;
+    in property <[SysInfoRow]> sys-gpu-live-rows;
     in property <[SysInfoRow]> sys-cpu-usage-rows;
     in property <[SysInfoRow]> sys-memory-rows;
     in property <[SysInfoRow]> sys-swap-rows;
@@ -2135,6 +2140,7 @@ export component AppWindow inherits Window {
                 swap-percent: root.swap-percent;
                 mem-detail: root.mem-detail;
                 swap-detail: root.swap-detail;
+                gpu-available: root.gpu-available; gpu-percent: root.gpu-percent; gpu-detail: root.gpu-detail; gpu-percent-na: root.gpu-percent-na;
                 net-top-up: root.net-top-up;
                 net-top-down: root.net-top-down;
                 net-top-history: root.net-top-history;
@@ -2952,6 +2958,7 @@ export component AppWindow inherits Window {
                     swap-percent: root.swap-percent;
                     mem-detail: root.mem-detail;
                     swap-detail: root.swap-detail;
+                    gpu-available: root.gpu-available; gpu-percent: root.gpu-percent; gpu-detail: root.gpu-detail; gpu-percent-na: root.gpu-percent-na;
                     net-top-up: root.net-top-up;
                     net-top-down: root.net-top-down;
                     net-top-history: root.net-top-history;

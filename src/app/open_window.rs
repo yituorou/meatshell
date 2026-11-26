@@ -105,6 +105,7 @@ pub(super) fn open_window(
     let sys_overview_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
     let sys_cpu_info_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
     let sys_gpu_info_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
+    let sys_gpu_live_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
     let sys_cpu_usage_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
     let sys_memory_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
     let sys_swap_model: Rc<VecModel<SysInfoRow>> = Rc::new(VecModel::default());
@@ -116,6 +117,7 @@ pub(super) fn open_window(
     window.set_sys_overview_rows(ModelRc::from(sys_overview_model.clone()));
     window.set_sys_cpu_info_rows(ModelRc::from(sys_cpu_info_model.clone()));
     window.set_sys_gpu_info_rows(ModelRc::from(sys_gpu_info_model.clone()));
+    window.set_sys_gpu_live_rows(ModelRc::from(sys_gpu_live_model.clone()));
     window.set_sys_cpu_usage_rows(ModelRc::from(sys_cpu_usage_model.clone()));
     window.set_sys_memory_rows(ModelRc::from(sys_memory_model.clone()));
     window.set_sys_swap_rows(ModelRc::from(sys_swap_model.clone()));
@@ -156,6 +158,7 @@ pub(super) fn open_window(
     sys_win.set_overview_rows(ModelRc::from(sys_overview_model.clone()));
     sys_win.set_cpu_info_rows(ModelRc::from(sys_cpu_info_model.clone()));
     sys_win.set_gpu_info_rows(ModelRc::from(sys_gpu_info_model.clone()));
+    sys_win.set_gpu_live_rows(ModelRc::from(sys_gpu_live_model.clone()));
     sys_win.set_cpu_usage_rows(ModelRc::from(sys_cpu_usage_model.clone()));
     sys_win.set_memory_rows(ModelRc::from(sys_memory_model.clone()));
     sys_win.set_swap_rows(ModelRc::from(sys_swap_model.clone()));

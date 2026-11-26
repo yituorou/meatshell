@@ -81,6 +81,11 @@ pub(super) fn refresh_sidebar(
         win.set_swap_percent(snap.swap_percent);
         win.set_mem_detail(format_mem(snap.mem_used_mib, snap.mem_total_mib).into());
         win.set_swap_detail(format_mem(snap.swap_used_mib, snap.swap_total_mib).into());
+        // Local GPU monitoring is intentionally out of scope (#268).
+        win.set_gpu_available(false);
+        win.set_gpu_percent(0.0);
+        win.set_gpu_percent_na(false);
+        win.set_gpu_detail("".into());
     };
     let clear_stats = |win: &AppWindow| {
         win.set_cpu_percent(0.0);
@@ -88,6 +93,10 @@ pub(super) fn refresh_sidebar(
         win.set_swap_percent(0.0);
         win.set_mem_detail("".into());
         win.set_swap_detail("".into());
+        win.set_gpu_available(false);
+        win.set_gpu_percent(0.0);
+        win.set_gpu_percent_na(false);
+        win.set_gpu_detail("".into());
     };
 
     // Process monitor (#23) lives in a shared model (the AppWindow and the
@@ -115,7 +124,8 @@ pub(super) fn refresh_sidebar(
                              swap_detail: SharedString,
                              nets: Vec<SysNetRow>,
                              disks: Vec<DiskInfo>,
-                             sys: SystemDetails| {
+                             sys: SystemDetails,
+                             gpus: &[GpuSample]| {
         if !win.get_system_info_window_open() {
             return;
         }
@@ -160,6 +170,13 @@ pub(super) fn refresh_sidebar(
             .downcast_ref::<VecModel<SysInfoRow>>()
         {
             vm.set_vec(pairs_to_rows(&sys.gpu_info, 4));
+        }
+        if let Some(vm) = win
+            .get_sys_gpu_live_rows()
+            .as_any()
+            .downcast_ref::<VecModel<SysInfoRow>>()
+        {
+            vm.set_vec(gpu_detail_rows(gpus));
         }
         if let Some(vm) = win
             .get_sys_cpu_usage_rows()
@@ -212,6 +229,7 @@ pub(super) fn refresh_sidebar(
             }],
             Vec::new(),
             SystemDetails::default(),
+            &[],
         );
     };
     win.set_proc_available(false);
@@ -262,6 +280,17 @@ pub(super) fn refresh_sidebar(
             win.set_swap_detail(
                 format_mem(st.swap_used_kib / 1024, st.swap_total_kib / 1024).into(),
             );
+            if let Some(summary) = gpu_summary(&st.gpus) {
+                win.set_gpu_available(true);
+                win.set_gpu_percent(summary.percent.unwrap_or(0.0));
+                win.set_gpu_percent_na(summary.percent.is_none());
+                win.set_gpu_detail(summary.detail.into());
+            } else {
+                win.set_gpu_available(false);
+                win.set_gpu_percent(0.0);
+                win.set_gpu_percent_na(false);
+                win.set_gpu_detail("".into());
+            }
             let (name, rx, tx) = selected_iface(&st);
             win.set_net_top_up(format_bytes_per_sec(tx).into());
             win.set_net_top_down(format_bytes_per_sec(rx).into());
@@ -284,6 +313,7 @@ pub(super) fn refresh_sidebar(
                 net_rows(&st.net),
                 disk_rows(&st.disks),
                 st.sys.clone(),
+                &st.gpus,
             );
         }
         // Disconnected / timed-out session.
@@ -304,6 +334,7 @@ pub(super) fn refresh_sidebar(
                 Vec::new(),
                 Vec::new(),
                 SystemDetails::default(),
+                &[],
             );
         }
         // Still connecting.
@@ -324,6 +355,7 @@ pub(super) fn refresh_sidebar(
                 Vec::new(),
                 Vec::new(),
                 SystemDetails::default(),
+                &[],
             );
         }
         // Welcome tab (or unknown) → local machine top + bottom.

@@ -6,6 +6,18 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
+msgid "GPU status"
+msgstr "GPU 状态"
+
+msgid "Utilization"
+msgstr "利用率"
+
+msgid "VRAM"
+msgstr "显存"
+
+msgid "VRAM used"
+msgstr "显存占用"
+
 msgid "Not connected"
 msgstr "未连接"
 
