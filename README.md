@@ -112,10 +112,6 @@ open /Applications/meatshell.app
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 使用；完整署名见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-### 计划中
-
-- [ ] 会话密码改用 OS 钥匙串存储
-
 ## 技术栈
 
 | 模块          | 选型                                                              |

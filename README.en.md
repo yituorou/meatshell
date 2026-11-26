@@ -16,7 +16,7 @@ the tens-of-MB range of a native binary.
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/02-terminal-htop.png" alt="Terminal + SFTP" width="800"><br>
+  <img src="docs/screenshots/02-terminal-htop-en.png" alt="Terminal + SFTP" width="800"><br>
   <em>Tabbed terminal (full-screen btop) + SFTP file browser + remote resource monitoring</em>
 </p>
 
@@ -116,10 +116,6 @@ open /Applications/meatshell.app
 Color emoji graphics are provided by [Twemoji](https://github.com/jdecked/twemoji)
 under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full attribution.
-
-### Planned
-
-- [ ] Store session passwords in the OS keychain
 
 ## Tech stack
 
