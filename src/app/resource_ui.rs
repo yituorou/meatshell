@@ -16,6 +16,34 @@ pub(super) fn normalized_model(buf: &[f32]) -> ModelRc<f32> {
     ModelRc::from(Rc::new(VecModel::from(scaled)))
 }
 
+/// SVG polyline for the Signal Room's 18px strip.
+///
+/// Slint 1.18 refuses `for` inside a `Path`, so the trace is built here, where
+/// a loop is allowed. The viewbox is fixed at 1000 × 18 and the widget stretches
+/// it, so only the sample count matters: x runs edge to edge, y runs from the
+/// carrier (15.5) up to the top (3) as the rate rises, and the curve is
+/// normalised against the window's own peak so an idle link still shows a line
+/// instead of collapsing onto the baseline.
+pub(super) fn trace_path(buf: &[f32]) -> String {
+    let max = buf.iter().cloned().fold(1.0_f32, f32::max);
+    let n = buf.len();
+    if n == 0 {
+        return "M 0 15.5 L 1000 15.5".to_string();
+    }
+    let mut path = String::with_capacity(n * 16 + 16);
+    for (i, v) in buf.iter().enumerate() {
+        let x = i as f32 / (n - 1).max(1) as f32 * 1000.0;
+        let t = (v / max).clamp(0.0, 1.0).powf(0.6);
+        let y = 15.5 - t * 12.5;
+        if i == 0 {
+            path.push_str(&format!("M {x:.1} {y:.1}"));
+        } else {
+            path.push_str(&format!(" L {x:.1} {y:.1}"));
+        }
+    }
+    path
+}
+
 /// Build the filesystem-usage model (path, "avail/total", used fraction).
 pub(super) fn disk_rows(disks: &[(String, u64, u64)]) -> Vec<DiskInfo> {
     disks

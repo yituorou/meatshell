@@ -164,20 +164,29 @@ component SingleTab inherits Rectangle {
         }
     }
 
-    // Active-tab light: a 2px sodium line under the label, faded at both ends
-    // and glowing a little, instead of the old full outline.
+    // .sig .tab.on: inset 0 1px 0 rgba(255,255,255,.1) — the top edge that
+    // makes the active tab read as a raised surface on the strip.
     if active && Theme.skin-styled : Rectangle {
-        x: 9px;
+        x: 0; y: 0;
+        width: parent.width; height: 1px;
+        background: Theme.dark ? #ffffff1a : #ffffff;
+    }
+
+    // Active-tab light. The board's indicator is a fixed 42×2 bar, centred
+    // under the label, running sodium → #ffb08a with a 12px glow. Narrow tabs
+    // fall back to the label width minus its padding so the bar never
+    // overhangs.
+    if active && Theme.skin-styled : Rectangle {
+        x: (parent.width - self.width) / 2;
         y: parent.height - 2px;
-        width: parent.width - 18px;
+        width: min(42px, parent.width - 18px);
         height: 2px;
         border-radius: 1px;
         background: @linear-gradient(90deg,
-            Theme.accent-color.with-alpha(0.35) 0%,
-            Theme.accent-color 55%,
-            Theme.accent-color.with-alpha(0.9) 100%);
+            Theme.signal-trace 0%,
+            Theme.signal-trace-hi 100%);
         drop-shadow-blur: 6px;
-        drop-shadow-color: Theme.accent-color.with-alpha(0.5);
+        drop-shadow-color: Theme.signal-trace.with-alpha(0.55);
     }
 }
 
@@ -328,7 +337,10 @@ export component TabBar inherits Rectangle {
     property <bool> menu-target-logging;
 
     height: 36px;
-    background: Theme.bg-panel-alt;
+    // The board's strip is the rail's own surface (#0c0f13); only the active
+    // tab steps up to #14181e. Using bg-panel-alt here made the strip and the
+    // active tab the same colour, which erased the step.
+    background: Theme.skin-styled ? Theme.bg-panel : Theme.bg-panel-alt;
 
     // --- Drag-to-reorder state (#408) --------------------------------------
     // Nothing here touches the model: the slots stay exactly where they are for
