@@ -298,6 +298,18 @@ export component TerminalView inherits Rectangle {
     in property <int> scroll-offset;    // current offset (0 = live bottom) (#103)
     in property <bool>   is-alt-screen;
     in property <bool>   mouse-tracked;   // remote app wants mouse events (btop/htop/mc)
+    // Completion popup for the command being typed on the shell prompt line
+    // (#583 follow-up). Rust only fills these when the line really looks like
+    // "prompt + one bare command word"; an empty list draws nothing, and every
+    // key still goes to the shell while it is closed.
+    in property <[string]> hint-items;
+    in property <int>    hint-row;
+    in property <int>    hint-col;
+    // Row highlighted in the popup. Owned by the view so arrow keys redraw
+    // without a round trip through Rust.
+    in-out property <int> hint-selected: 0;
+    callback accept-hint(int /* index */);
+    callback dismiss-hint();
     in property <[TermMatch]> find-matches; // search-highlight rectangles
     in property <TermMatch> find-current;   // the match Enter/▲/▼ is on; len 0 = none visible (#535)
     in property <[TermMatch]> selection;    // drag-selection highlight rectangles
@@ -667,6 +679,9 @@ export component TerminalView inherits Rectangle {
     // scroll-clip.view-y; nothing to sync imperatively here anymore.
     // Reset the history filter whenever the dropdown opens; the search box itself
     // is recreated empty because the `if` subtree is destroyed on close (#101).
+    // A new candidate list always starts on its best row, the way an editor's
+    // completion popup does.
+    changed hint-items => { root.hint-selected = 0; }
     changed history-open => {
         if (root.history-open) {
             if (!root.history-autocomplete) { root.search-history("", false); }
@@ -1085,6 +1100,60 @@ export component TerminalView inherits Rectangle {
                                 && (key-capture.cursor-blink || !Theme.window-focused);
                         }
 
+                        // IDEA-style completion popup for the command being
+                        // typed (#583 follow-up). Anchored on the cursor cell,
+                        // opened below it when the grid has room and above it
+                        // otherwise. Purely an overlay: the grid underneath is
+                        // untouched and the shell never learns about it.
+                        if root.hint-items.length > 0 && root.hint-row >= 0 : Rectangle {
+                            // Stay inside the grid horizontally: at the right
+                            // edge the list slides left instead of being clipped.
+                            x: max(0px, min(root.hint-col * root.cell-w,
+                                parent.width - self.width));
+                            // The grid is clipped by `scroll-clip`, so "is there
+                            // room below" is measured against the visible
+                            // viewport, not the whole view: a prompt on the last
+                            // row has no room and the list flips above the cursor.
+                            y: (root.hint-row + 1) * root.cell-h + self.height
+                                    <= scroll-clip.height - 8px - scroll-clip.view-y
+                                ? (root.hint-row + 1) * root.cell-h
+                                : max(0px, root.hint-row * root.cell-h - self.height);
+                            width: max(140px, hint-list.preferred-width + 20px);
+                            height: root.hint-items.length * 22px + 8px;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 12px;
+                            drop-shadow-color: #00000060;
+
+                            hint-list := VerticalLayout {
+                                padding: 4px;
+                                spacing: 0;
+                                for item[i] in root.hint-items : Rectangle {
+                                    height: 22px;
+                                    border-radius: 3px;
+                                    background: i == root.hint-selected ? Theme.accent : transparent;
+                                    hint-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.hint-selected = i;
+                                            root.accept-hint(i);
+                                        }
+                                    }
+                                    Text {
+                                        x: 6px;
+                                        text: item;
+                                        color: i == root.hint-selected ? white : Theme.text-primary;
+                                        font-family: Theme.term-font-family;
+                                        font-size: Theme.fs-sm;
+                                        vertical-alignment: center;
+                                        height: 22px;
+                                    }
+                                }
+                            }
+                        }
+
                         // Top-most transparent interaction layer. On macOS,
                         // scroll events over rendered terminal text may not reach
                         // the older body TouchArea below the spans, so keep the
@@ -1322,10 +1391,27 @@ export component TerminalView inherits Rectangle {
                     let act = root.match-shortcut(event.text, event.modifiers.control,
                         event.modifiers.meta, event.modifiers.alt, event.modifiers.shift,
                         root.is-alt-screen);
-                    // Hidden (inactive tab) views that still hold focus reject
-                    // the window-scoped actions so the window-level fallback
-                    // applies them to the visible session (#zoom, #zen).
-                    if (!root.visible && (act == "zen" || act == "fullscreen"
+                    // The completion popup owns ↑/↓/Tab/Esc while it is open, the
+                    // way an IDEA popup does. Everything else — including Enter,
+                    // which still runs the command as typed — goes to the shell.
+                    if (root.hint-items.length > 0
+                            && !event.modifiers.control && !event.modifiers.meta
+                            && !event.modifiers.alt
+                            && (event.text == Key.UpArrow || event.text == Key.DownArrow
+                                || event.text == Key.Tab || event.text == Key.Escape)) {
+                        if (event.text == Key.UpArrow) {
+                            root.hint-selected = max(0, root.hint-selected - 1);
+                        } else if (event.text == Key.DownArrow) {
+                            root.hint-selected = min(root.hint-items.length - 1,
+                                root.hint-selected + 1);
+                        } else if (event.text == Key.Tab) {
+                            root.accept-hint(root.hint-selected);
+                            root.hint-selected = 0;
+                        } else {
+                            root.dismiss-hint();
+                        }
+                        accept
+                    } else if (!root.visible && (act == "zen" || act == "fullscreen"
                             || act == "zoom-in" || act == "zoom-out" || act == "zoom-reset"
                             || act == "zoom-in-all" || act == "zoom-out-all"
                             || act == "zoom-reset-all")) {
