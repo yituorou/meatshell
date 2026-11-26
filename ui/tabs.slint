@@ -51,7 +51,9 @@ component SingleTab inherits Rectangle {
     height: 30px;
     width: self.preferred-width;
     border-radius: Theme.radius-sm;
-    border-width: active ? 2px : 0px;
+    // Styled skins drop the 2px outline: a boxed tab reads as a button, while
+    // the design wants a surface with a light line under the label.
+    border-width: Theme.skin-styled ? 0px : (active ? 2px : 0px);
     border-color: active ? Theme.accent : transparent;
     background: lifted ? Theme.bg-active
         : (active ? Theme.tab-active-bg
@@ -162,6 +164,21 @@ component SingleTab inherits Rectangle {
         }
     }
 
+    // Active-tab light: a 2px sodium line under the label, faded at both ends
+    // and glowing a little, instead of the old full outline.
+    if active && Theme.skin-styled : Rectangle {
+        x: 9px;
+        y: parent.height - 2px;
+        width: parent.width - 18px;
+        height: 2px;
+        border-radius: 1px;
+        background: @linear-gradient(90deg,
+            Theme.accent-color.with-alpha(0.35) 0%,
+            Theme.accent-color 55%,
+            Theme.accent-color.with-alpha(0.9) 100%);
+        drop-shadow-blur: 6px;
+        drop-shadow-color: Theme.accent-color.with-alpha(0.5);
+    }
 }
 
 // --- New-tab launch menu item (#427) ----------------------------------------

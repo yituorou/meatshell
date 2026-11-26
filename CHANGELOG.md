@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **可切换外观皮肤：信号舱 / 极光墨 / 液态铬。** 壁纸与主题 › 主题 中新增三套皮肤，选中即同时切换材质与配色，默认主题逐像素不变。**信号舱**：深墨底 + 钠橙强调色，标题栏下一条 18px 的吞吐信号带（画当前会话的网络采样，带一条缓慢扫过的光带），资源面板的 CPU 改画成环形表，标签页去掉方框、改为文字下 2px 光条。**极光墨**：琥珀 / 苔绿 / 品红三层光晕，面板 68% 半透明让光透进来，而不是把壁纸糊成白雾。**液态铬**：浅色铝材，对角高光加一道窄反射，卡片包边做成上亮下暗的 1px 金属边。
+- **Switchable appearance skins: Signal Room / Aurora Ink / Liquid Chrome.** Three skins in Wallpaper & theme › Theme; picking one changes the material and the palette together, and the default theme stays pixel-identical. **Signal Room**: deep ink with a sodium accent, an 18px throughput strip under the title bar (it plots the active connection's network samples and carries a slow sweep of light), the resource panel's CPU drawn as a ring gauge, and tabs that drop the box for a 2px light under the label. **Aurora Ink**: amber, moss and rose washes with the panels at 68% so the light comes through instead of a white haze. **Liquid Chrome**: light aluminium with a diagonal specular band and cards edged in 1px metal, bright on top, shadowed below.
+
 ## [0.8.5] - 2026-11-25
 
 - **设置搜索。** 设置侧栏顶部新增搜索框，可搜索所有页面的设置项：名称、说明、分组标题、页面名称以及下拉选项 / 按钮文字，中英文均可搜索，与界面语言无关；多个词同时匹配。输入时右侧显示结果列表，每条标注所在页面；点击结果或按回车打开第一条，会跳转到对应页面、滚动到该设置并短暂高亮。

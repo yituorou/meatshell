@@ -15,6 +15,7 @@ import "fonts/MeatshellMono-Bold.ttf";
 import "fonts/MaterialIcons-Regular.ttf";
 
 import { Theme, ThemePalette, TermColors } from "theme.slint";
+import { SignalBand } from "signal_band.slint";
 import { JumpSearch } from "jump_combo.slint";
 export { JumpSearch }
 import { Sidebar, DiskInfo } from "sidebar.slint";
@@ -620,12 +621,12 @@ export component AppWindow inherits Window {
     property <length> toolbar-y:
         (root.custom-titlebar
             ? 6px
-            : root.central-inset-top + 5px + root.titlebar-inset) + root.toolbar-y-off;
+            : root.central-inset-top + 5px + root.titlebar-inset + Theme.signal-band-h) + root.toolbar-y-off;
     // Top edge of the Settings / Transfers popups anchored under the icons.
     property <length> toolbar-popup-y:
         (root.custom-titlebar
             ? 40px
-            : root.central-inset-top + 40px + root.titlebar-inset) + root.toolbar-y-off;
+            : root.central-inset-top + 40px + root.titlebar-inset + Theme.signal-band-h) + root.toolbar-y-off;
     in-out property <bool> about-open: false;     // centered About dialog
     callback open-repo();                          // open the project's GitHub page
     in-out property <bool> shortcuts-open: false; // centered keyboard-shortcuts dialog (#103)
@@ -1648,57 +1649,101 @@ export component AppWindow inherits Window {
     // renderer drop frames, so movement stays in the small signal strip and in
     // hover/state transitions.
     if Theme.skin-signal : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
         background: Theme.dark
-            ? @linear-gradient(180deg, #1b212b 0%, #0d1015 38%, #0a0c0f 100%)
+            ? @linear-gradient(180deg, #1b212b 0%, #0d1015 38%, #080a0d 100%)
             : @linear-gradient(180deg, #fffdf8 0%, #f4f0e8 62%, #ece5d9 100%);
         // Sodium haze off the top edge, so the skin glows without any chrome.
         Rectangle {
             x: 0; y: 0;
             width: parent.width;
-            height: parent.height * 0.30;
+            height: parent.height * 0.45;
             background: Theme.dark
-                ? @radial-gradient(circle, #ff6b3526 0%, #ff6b3500 70%)
-                : @radial-gradient(circle, #e85d2a1f 0%, #e85d2a00 70%);
+                ? @radial-gradient(circle, #ff6b3540 0%, #ff6b351c 42%, #ff6b3500 74%)
+                : @radial-gradient(circle, #e85d2a2e 0%, #e85d2a12 42%, #e85d2a00 74%);
         }
     }
     if Theme.skin-aurora : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
         background: Theme.dark
-            ? @linear-gradient(165deg, #101a15 0%, #080d0b 52%, #0d0a10 100%)
-            : @linear-gradient(165deg, #f7f9f5 0%, #eef0ec 55%, #f6eef0 100%);
+            ? @linear-gradient(165deg, #0c1511 0%, #050807 52%, #0a080d 100%)
+            : @linear-gradient(165deg, #f7f9f5 0%, #e9ece7 55%, #f6eef0 100%);
+        // Base wash across the whole window, then three blobs for local
+        // variation. They have to be strong: the panels sit at 68% opacity, so
+        // only a third of this reaches the eye — a 30% wash would vanish.
+        // Slint has no runtime blur, so the softness is baked into the stops.
         Rectangle {
-            x: -parent.width * 0.15; y: -parent.height * 0.25;
-            width: parent.width * 0.9; height: parent.height * 0.9;
+            x: 0; y: 0;
+            width: parent.width; height: parent.height;
             background: Theme.dark
-                ? @radial-gradient(circle, #f0b26b2e 0%, #f0b26b00 62%)
-                : @radial-gradient(circle, #c98a3f22 0%, #c98a3f00 62%);
+                ? @linear-gradient(150deg, #f0b26b4a 0%, #79c9a440 46%, #d96a9445 100%)
+                : @linear-gradient(150deg, #e0a8655c 0%, #7fae934a 46%, #c47a9752 100%);
         }
         Rectangle {
-            x: parent.width * 0.45; y: -parent.height * 0.10;
-            width: parent.width * 0.8; height: parent.height * 0.85;
+            x: -parent.width * 0.16; y: -parent.height * 0.30;
+            width: parent.width * 0.78; height: parent.height * 0.95;
             background: Theme.dark
-                ? @radial-gradient(circle, #79c9a42a 0%, #79c9a400 60%)
-                : @radial-gradient(circle, #4f8f6f1f 0%, #4f8f6f00 60%);
+                ? @radial-gradient(circle, #f0b26bb8 0%, #f0b26b78 30%, #f0b26b2e 55%, #f0b26b00 78%)
+                : @radial-gradient(circle, #d99a4a8a 0%, #d99a4a52 30%, #d99a4a1e 55%, #d99a4a00 78%);
         }
         Rectangle {
-            x: parent.width * 0.10; y: parent.height * 0.45;
-            width: parent.width * 0.85; height: parent.height * 0.75;
+            x: parent.width * 0.46; y: -parent.height * 0.18;
+            width: parent.width * 0.72; height: parent.height * 0.86;
             background: Theme.dark
-                ? @radial-gradient(circle, #d96a9424 0%, #d96a9400 62%)
-                : @radial-gradient(circle, #b25a7c1c 0%, #b25a7c00 62%);
+                ? @radial-gradient(circle, #79c9a4a0 0%, #79c9a466 32%, #79c9a426 58%, #79c9a400 80%)
+                : @radial-gradient(circle, #4f8f6f70 0%, #4f8f6f42 32%, #4f8f6f16 58%, #4f8f6f00 80%);
+        }
+        Rectangle {
+            x: parent.width * 0.06; y: parent.height * 0.44;
+            width: parent.width * 0.80; height: parent.height * 0.78;
+            background: Theme.dark
+                ? @radial-gradient(circle, #d96a948c 0%, #d96a9456 34%, #d96a941e 60%, #d96a9400 82%)
+                : @radial-gradient(circle, #b25a7c66 0%, #b25a7c38 34%, #b25a7c12 60%, #b25a7c00 82%);
+        }
+        // Light leaking off the top edge, so the window frame still reads as an
+        // edge instead of a hard cut into the darkest corner.
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width; height: parent.height * 0.16;
+            background: Theme.dark
+                ? @linear-gradient(180deg, #ffffff12 0%, #ffffff00 100%)
+                : @linear-gradient(180deg, #ffffffb8 0%, #ffffff00 100%);
         }
     }
     if Theme.skin-chrome : Rectangle {
+        x: 0; y: 0;
+        width: parent.width;
+        height: parent.height;
         background: Theme.dark
-            ? @linear-gradient(180deg, #1b1e22 0%, #14171a 60%, #101214 100%)
-            : @linear-gradient(180deg, #f8f7f3 0%, #ecebe4 58%, #e3e1d9 100%);
-        // One fixed reflection band: the material reads as brushed metal even
-        // when nothing is hovered.
+            ? @linear-gradient(180deg, #1d2126 0%, #14171a 54%, #0e1012 100%)
+            : @linear-gradient(180deg, #fbfaf7 0%, #eeece5 56%, #e1dfd6 100%);
+        // Two reflections: a broad soft one off the left shoulder and a narrow
+        // hard one down the middle. Together they read as brushed metal — a
+        // single band looked like a smudge.
         Rectangle {
-            x: -parent.width * 0.1; y: 0;
-            width: parent.width * 0.6; height: parent.height;
+            x: -parent.width * 0.12; y: 0;
+            width: parent.width * 0.72; height: parent.height;
             background: Theme.dark
-                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff12 46%, #00000026 54%, #ffffff00 82%)
-                : @linear-gradient(104deg, #ffffff00 0%, #ffffff9e 46%, #0000000a 54%, #ffffff00 82%);
+                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff0e 34%, #ffffff00 70%)
+                : @linear-gradient(104deg, #ffffff00 0%, #ffffffb0 34%, #ffffff00 72%);
+        }
+        Rectangle {
+            x: parent.width * 0.30; y: 0;
+            width: parent.width * 0.30; height: parent.height;
+            background: Theme.dark
+                ? @linear-gradient(104deg, #ffffff00 0%, #ffffff20 42%, #00000033 56%, #ffffff00 100%)
+                : @linear-gradient(104deg, #ffffff00 0%, #ffffff 42%, #00000012 58%, #ffffff00 100%);
+        }
+        // Milled top edge — the highlight that makes aluminium look milled
+        // rather than painted.
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width; height: 1px;
+            background: Theme.dark ? #ffffff26 : #ffffff;
         }
     }
 
@@ -1837,6 +1882,16 @@ export component AppWindow inherits Window {
                     }
                     WinBtn { icon: "\u{E5CD}"; danger: true; clicked => { root.win-close(); } }
                 }
+            }
+
+            // Signal Room signature strip (skin 1 only). It sits in the layout
+            // flow between the title bar and the dock area, so the dock engine —
+            // which measures `dock-area` itself — shifts everything down with no
+            // Rust-side change. Height is 0 for every other skin, so their
+            // layout is untouched to the pixel.
+            if Theme.skin-signal && !root.term-fullscreen : SignalBand {
+                height: Theme.signal-band-h;
+                values: root.net-top-history;
             }
 
             // Dock area — fills below the title bar. The resource sidebar and the
@@ -2876,7 +2931,8 @@ export component AppWindow inherits Window {
                 if !root.hide-panels && !Theme.flat-panels : Rectangle {
                     border-radius: Theme.card-radius;
                     border-width: 1px;
-                    border-color: Theme.border-subtle;
+                    border-color: Theme.skin-styled
+                        ? Theme.skin-card-border : Theme.border-subtle;
                     // Styled skins get a 1px light along the top edge: the card
                     // then reads as a pane of glass instead of a flat block.
                     // Faded at both ends so it never turns into a hard line.
