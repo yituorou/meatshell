@@ -7,6 +7,7 @@
 //!   * Route Slint callbacks to the right domain module.
 mod agents;
 mod auth_dialogs;
+mod auth_prompt;
 mod aux_windows;
 mod color_theme;
 mod completion;

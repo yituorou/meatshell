@@ -61,6 +61,7 @@ fn terminal(
         hint_items: ModelRc::from(Rc::new(VecModel::default())),
         hint_row: -1,
         hint_col: 0,
+        auth_prompt: false,
         find_matches: ModelRc::from(Rc::new(VecModel::default())),
         find_current: Default::default(),
         selection: ModelRc::from(Rc::new(VecModel::default())),

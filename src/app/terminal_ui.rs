@@ -236,9 +236,16 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         } else {
             None
         };
-        (b, matches, sel, current, hint)
+        // The shell stops echoing at a password prompt, so the line survives on
+        // the grid and can be read back (see `auth_prompt`). Scrollback and
+        // full-screen apps are excluded for the same reasons as the hint.
+        let auth = buf.view_offset == 0
+            && !b.is_alt
+            && !b.mouse_tracked
+            && super::auth_prompt::prompt_for_cached(tab_id, buf.parser.screen()).is_some();
+        (b, matches, sel, current, hint, auth)
     });
-    let Some((b, matches, sel, current, hint)) = data else {
+    let Some((b, matches, sel, current, hint, auth)) = data else {
         return;
     };
     let spans = std::cell::Cell::new(Some(b.spans));
@@ -289,6 +296,9 @@ pub(super) fn rebuild_tab_display(win: &AppWindow, bufs: &TermBuffers, tab_id: &
         }
         if row.hint_col != want_col {
             row.hint_col = want_col;
+        }
+        if row.auth_prompt != auth {
+            row.auth_prompt = auth;
         }
     });
     win.window().request_redraw();
