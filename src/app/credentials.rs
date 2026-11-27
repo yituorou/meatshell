@@ -24,6 +24,28 @@ pub(super) fn refresh_settings(w: &super::AppWindow, store: &ConfigStore) {
         })
         .collect();
     w.set_credentials(slint::ModelRc::new(slint::VecModel::from(rows)));
+    // The terminal's password picker offers only logins that actually carry a
+    // password: a key or agent credential has nothing to type at `sudo`'s
+    // prompt, and an entry with a blank secret would fill nothing.
+    // Keyboard-interactive logins keep their password in the same field, so
+    // they are offered too — that is what a server asks for on a plain
+    // `Password:` line.
+    let choices: Vec<super::CredChoice> = store
+        .credentials()
+        .iter()
+        .filter(|credential| {
+            matches!(
+                credential.auth,
+                AuthMethod::Password | AuthMethod::KeyboardInteractive
+            ) && !credential.password.is_empty()
+        })
+        .map(|credential| super::CredChoice {
+            id: credential.id.clone().into(),
+            name: credential.name.clone().into(),
+            summary: credential.summary().into(),
+        })
+        .collect();
+    w.set_cred_choices(slint::ModelRc::new(slint::VecModel::from(choices)));
     // The credential being edited may have been deleted in another window.
     let editing = w.get_cred_edit_id();
     if !editing.is_empty() && store.credential(&editing).is_none() {
@@ -185,6 +207,67 @@ pub(super) fn wire(ctx: &super::WinCtx) {
                 }
             }
         });
+    }
+    // Terminal password picker: the shell asked for a password and the user
+    // clicked one of the saved logins. Fill and submit in one go — the prompt
+    // is already waiting for exactly that — then close the picker until the
+    // next prompt. Nothing is written to the log, and the secret never passes
+    // through the UI thread's model.
+    {
+        let weak = window.as_weak();
+        let store = ctx.store.clone();
+        let handles = ctx.handles.clone();
+        let bufs = ctx.bufs.clone();
+        window.on_use_credential(move |tab_id, credential_id| {
+            let tid = tab_id.to_string();
+            let secret = store
+                .borrow()
+                .credential(&credential_id)
+                .map(|credential| credential.password.as_str().to_string())
+                .unwrap_or_default();
+            // A rejected password re-prompts with the same text, so this hold
+            // expires: the next credential stays one click away.
+            close_picker(&tid, &bufs, Some(std::time::Duration::from_secs(3)));
+            if let Some(w) = weak.upgrade() {
+                super::set_terminal_row(&w, &tid, |row| row.auth_prompt = false);
+            }
+            if secret.is_empty() {
+                return;
+            }
+            let mut bytes = secret.into_bytes();
+            bytes.push(b'\r');
+            if let Some(handle) = handles.borrow().get(tid.as_str()) {
+                handle.send_raw(bytes);
+            }
+        });
+    }
+    {
+        let bufs = ctx.bufs.clone();
+        let weak = window.as_weak();
+        window.on_dismiss_auth(move |tab_id| {
+            let tid = tab_id.to_string();
+            // Esc: stay shut for this prompt, however long it remains.
+            close_picker(&tid, &bufs, None);
+            if let Some(w) = weak.upgrade() {
+                super::set_terminal_row(&w, &tid, |row| row.auth_prompt = false);
+            }
+        });
+    }
+}
+
+/// Hide the password picker for one tab and remember the dismissal, so the
+/// next repaint of the same prompt does not bring it straight back.
+///
+/// `hold_for` is `None` for Esc (shut until the prompt changes) and `Some(..)`
+/// after a fill, which lets a rejected password re-offer the list.
+fn close_picker(
+    tab_id: &str,
+    bufs: &super::TermBuffers,
+    hold_for: Option<std::time::Duration>,
+) {
+    if let Some(handle) = super::term_buf(bufs, tab_id) {
+        let buf = handle.lock().unwrap();
+        super::auth_prompt::dismiss_current(tab_id, buf.parser.screen(), hold_for);
     }
 }
 

@@ -26,7 +26,7 @@ import { SessionDialog, SessionDraft, PortFwd, TriggerDraft, JumpHop } from "ses
 import { ConfirmDialog } from "confirm_dialog.slint";
 import { ModalLayer, ModalKind } from "modal.slint";
 import { LabeledInput, PrimaryButton, GhostButton, DockExpandButton, IconButton, ToolStrip } from "widgets.slint";
-import { TerminalView, TermSpan, TermMatch, FindStatus, QuickCmd, QuickDockPanel } from "terminal_view.slint";
+import { TerminalView, TermSpan, TermMatch, FindStatus, QuickCmd, QuickDockPanel, CredChoice } from "terminal_view.slint";
 import { SftpEntry, SftpTreeNode, TunnelInfo } from "sftp_panel.slint";
 import { TerminalView, TermSpan, TermMatch, QuickCmd, QuickDockPanel } from "terminal_view.slint";
 import { SftpEntry, SftpTreeNode, SftpLocalPlace, TunnelInfo, SftpPathSuggestion, SftpPathSuggestions } from "sftp_panel.slint";
@@ -84,6 +84,9 @@ export struct TerminalState {
     hint-items: [string],
     hint-row: int,
     hint-col: int,
+    // A password prompt is on the cursor line, so the credential picker may
+    // open there (sudo / ssh / git ask, then stop echoing).
+    auth-prompt: bool,
     find-matches: [TermMatch], // search-highlight rectangles
     find-current: TermMatch,   // the current find match on screen; len 0 = none (#535)
     selection: [TermMatch],    // drag-selection highlight rectangles
@@ -725,6 +728,9 @@ export component AppWindow inherits Window {
     // this tab's candidate list, or hide it for the word on screen.
     callback accept-hint(string /* tab-id */, int /* index */);
     callback dismiss-hint(string /* tab-id */);
+    // Password picker on the terminal line: fill from Settings › Credentials.
+    callback use-credential(string /* tab-id */, string /* credential id */);
+    callback dismiss-auth(string /* tab-id */);
     in-out property <bool> quick-cmd-manage-open: false;  // manage dialog
     in-out property <length> qcm-dialog-width: 560px;
     in-out property <length> qcm-dialog-height: 560px;
@@ -755,6 +761,10 @@ export component AppWindow inherits Window {
     in property <[TransferInfo]> transfers; // download/upload records (newest first)
     in property <[string]> about-libs;      // open-source libraries used
     in-out property <bool> lang-en: false;  // current UI language (false = 中文)
+    // Credentials the terminal's password picker can offer. Rust fills this
+    // from Settings › Credentials (password entries only); the secrets stay in
+    // Rust and never appear here.
+    in property <[CredChoice]> cred-choices;
     // Two-way binding to Theme.dark — Rust reads/writes this property and
     // Slint propagates it to every widget that references Theme colours.
     in-out property <bool> dark-mode <=> Theme.dark;
@@ -2602,6 +2612,15 @@ export component AppWindow inherits Window {
                         dismiss-hint() => { root.dismiss-hint(term.id); }
                         hint-row: term.hint-row;
                         hint-col: term.hint-col;
+                        auth-prompt: term.auth-prompt;
+                        cred-choices: root.cred-choices;
+                        lang-en: root.lang-en;
+                        use-credential(id) => { root.use-credential(term.id, id); }
+                        dismiss-auth() => { root.dismiss-auth(term.id); }
+                        open-credentials() => {
+                            root.interface-start-page = "credentials";
+                            root.interface-open = true;
+                        }
                         find-matches: term.find-matches;
                         find-current: term.find-current;
                         selection: term.selection;

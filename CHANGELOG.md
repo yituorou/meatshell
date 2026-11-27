@@ -5,6 +5,9 @@ All notable changes are documented here. 本文件记录所有重要变更。
 
 ## [Unreleased]
 
+- **终端提示输入密码时可直接选用「认证管理」里的密码。** 当 `sudo`、`ssh`、`git`、`passwd` 等命令停在密码提示（行尾冒号、且前面写着 password / passphrase / 密码 / 口令）时，光标下方会浮出一个「认证管理」小面板，列出设置里保存的密码条目；点一下就填入该密码并回车，不必再手打。面板只认光标所在那一行，注释行、密码文件内容、正在输入的命令行、以及 vim/htop 这类全屏界面都不会误弹；Esc 关闭，且只接受鼠标点击填入——按键仍然全部交给 shell，所以手动输密码、直接回车都不会被打断。密钥与 SSH Agent 类型的条目不会出现在列表里（它们没有可填的密码）。
+- **Pick a saved credential when the terminal asks for a password.** When `sudo`, `ssh`, `git` or `passwd` stops at a password prompt (the line ends in a colon and names a password / passphrase / 密码 / 口令), a small Credentials panel opens under the cursor listing the logins saved in Settings; one click types that password and presses Return. Recognition only looks at the cursor's own line, so log lines, `passwd` file rows, a command being typed and full-screen programs such as vim or htop never trigger it. Esc closes it, and only a click fills — every keystroke still goes to the shell, so typing a password by hand or pressing Enter is never intercepted. Key and SSH-agent entries are left out: they have no password to fill.
+
 - **命令栏输入时给出 OneKey 式补全（#583）。** 在命令栏敲命令时，下拉提示除了历史记录，还会列出本机 `$PATH` 里以所输内容开头的已安装命令（输入 `cle` 会补到 `clear`），这些行左侧带一个终端图标以便区分；匹配大小写不敏感，只补全命令名本身（输入空格后不再混入命令），`$PATH` 索引在启动时后台建立一次，Tab 补全到高亮项。
 - **OneKey-style completion while typing in the command bar (#583).** The suggestion popup now lists installed `$PATH` commands that start with what you typed (`cle` → `clear`) next to matching history, marked with a terminal glyph on their row. Matching is case-insensitive, only the command word is completed (typing a space stops the command suggestions), the `$PATH` index is built once in the background at startup, and Tab completes the highlighted row.
 

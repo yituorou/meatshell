@@ -1438,6 +1438,7 @@ pub(super) fn wire_session_callbacks(
                 hint_items: ModelRc::from(std::rc::Rc::new(VecModel::<SharedString>::default())),
                 hint_row: -1,
                 hint_col: 0,
+                auth_prompt: false,
                 find_matches: ModelRc::from(std::rc::Rc::new(VecModel::<TermMatch>::default())),
                 find_current: TermMatch::default(),
                 selection: ModelRc::from(std::rc::Rc::new(VecModel::<TermMatch>::default())),

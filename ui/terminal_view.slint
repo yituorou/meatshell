@@ -39,6 +39,15 @@ export struct TermMatch {
     len: int,
 }
 
+// One row of the password picker: a saved credential from Settings ›
+// Credentials, offered when the shell asks for a password. Only the id and the
+// labels reach the UI — the secret itself never leaves Rust.
+export struct CredChoice {
+    id: string,
+    name: string,
+    summary: string,
+}
+
 // Find-bar position across the whole buffer (#535): `current` is 1-based,
 // 0 when there is no match.
 export struct FindStatus {
@@ -310,6 +319,16 @@ export component TerminalView inherits Rectangle {
     in-out property <int> hint-selected: 0;
     callback accept-hint(int /* index */);
     callback dismiss-hint();
+    // Password picker: the shell stopped echoing on this line, so offer the
+    // saved credentials at the cursor. Clicking a row is the only way to fill
+    // — nothing is typed on a keystroke, so a stray Enter still goes to the
+    // shell as usual.
+    in property <bool> auth-prompt;
+    in property <[CredChoice]> cred-choices;
+    in property <bool> lang-en: false;
+    callback use-credential(string /* credential id */);
+    callback dismiss-auth();
+    callback open-credentials();
     in property <[TermMatch]> find-matches; // search-highlight rectangles
     in property <TermMatch> find-current;   // the match Enter/▲/▼ is on; len 0 = none visible (#535)
     in property <[TermMatch]> selection;    // drag-selection highlight rectangles
@@ -1154,6 +1173,98 @@ export component TerminalView inherits Rectangle {
                             }
                         }
 
+                        // Password picker (Settings › Credentials) for the line
+                        // the shell just asked a password on. Same anchoring as
+                        // the completion popup, but the rows carry real secrets,
+                        // so a click is the only way one is sent: Enter still
+                        // goes to the shell untouched.
+                        if root.auth-prompt : Rectangle {
+                            x: max(0px, min(root.cursor-col * root.cell-w,
+                                parent.width - self.width));
+                            y: (root.cursor-row + 1) * root.cell-h + self.height
+                                    <= scroll-clip.height - 8px - scroll-clip.view-y
+                                ? (root.cursor-row + 1) * root.cell-h
+                                : max(0px, root.cursor-row * root.cell-h - self.height);
+                            width: 252px;
+                            height: auth-list.preferred-height;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 14px;
+                            drop-shadow-color: #00000066;
+
+                            auth-list := VerticalLayout {
+                                padding: 4px;
+                                spacing: 2px;
+                                Rectangle {
+                                    height: 20px;
+                                    Text {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        text: root.lang-en ? "Credentials" : "认证管理";
+                                        color: Theme.text-muted;
+                                        font-size: Theme.fs-xs;
+                                        vertical-alignment: center;
+                                        height: 20px;
+                                    }
+                                }
+                                if root.cred-choices.length > 0 : VerticalLayout {
+                                    spacing: 2px;
+                                    for choice in root.cred-choices : Rectangle {
+                                        height: 34px;
+                                        border-radius: Theme.radius-sm;
+                                        background: choice-ta.has-hover ? Theme.bg-hover : transparent;
+                                        choice-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.use-credential(choice.id); }
+                                        }
+                                        Text {
+                                            x: 6px;
+                                            y: 5px;
+                                            width: parent.width - 12px;
+                                            text: choice.name;
+                                            color: Theme.text-primary;
+                                            font-size: Theme.fs-sm;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            x: 6px;
+                                            y: 18px;
+                                            width: parent.width - 12px;
+                                            text: choice.summary;
+                                            color: Theme.text-muted;
+                                            font-size: Theme.fs-xs;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                                // Nothing saved yet: the only useful action is
+                                // the page where credentials are added.
+                                if root.cred-choices.length == 0 : Rectangle {
+                                    height: 30px;
+                                    border-radius: Theme.radius-sm;
+                                    background: empty-ta.has-hover ? Theme.bg-hover : transparent;
+                                    empty-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.open-credentials(); }
+                                    }
+                                    Text {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        text: root.lang-en
+                                            ? "No saved passwords — open Credentials"
+                                            : "还没有保存的密码，点此打开认证管理";
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.fs-xs;
+                                        vertical-alignment: center;
+                                        height: 30px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+
                         // Top-most transparent interaction layer. On macOS,
                         // scroll events over rendered terminal text may not reach
                         // the older body TouchArea below the spans, so keep the
@@ -1394,7 +1505,14 @@ export component TerminalView inherits Rectangle {
                     // The completion popup owns ↑/↓/Tab/Esc while it is open, the
                     // way an IDEA popup does. Everything else — including Enter,
                     // which still runs the command as typed — goes to the shell.
-                    if (root.hint-items.length > 0
+                    // The password picker only takes Esc: every other key still
+                    // belongs to the shell, so typing a password by hand is
+                    // never intercepted (and Enter never fills a saved one).
+                    if (root.auth-prompt && !event.modifiers.control && !event.modifiers.meta
+                            && !event.modifiers.alt && event.text == Key.Escape) {
+                        root.dismiss-auth();
+                        accept
+                    } else if (root.hint-items.length > 0
                             && !event.modifiers.control && !event.modifiers.meta
                             && !event.modifiers.alt
                             && (event.text == Key.UpArrow || event.text == Key.DownArrow
