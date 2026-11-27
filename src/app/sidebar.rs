@@ -67,7 +67,9 @@ pub(super) fn refresh_sidebar(
     let set_top_local = |win: &AppWindow| {
         win.set_net_top_up(format_bytes_per_sec(snap.net_tx_per_sec).into());
         win.set_net_top_down(format_bytes_per_sec(snap.net_rx_per_sec).into());
-        win.set_net_top_history(normalized_model(&local_net_hist.lock().unwrap()));
+        let hist = local_net_hist.lock().unwrap();
+        win.set_net_top_history(normalized_model(&hist));
+        win.set_net_top_path(super::resource_ui::trace_path(&hist).into());
         win.set_net_show_selector(false);
         win.set_net_selected("".into());
         win.set_net_ifaces(ModelRc::from(Rc::new(VecModel::<SharedString>::default())));
@@ -266,6 +268,7 @@ pub(super) fn refresh_sidebar(
             win.set_net_top_up(format_bytes_per_sec(tx).into());
             win.set_net_top_down(format_bytes_per_sec(rx).into());
             win.set_net_top_history(normalized_model(&st.net_hist));
+            win.set_net_top_path(super::resource_ui::trace_path(&st.net_hist).into());
             win.set_net_show_selector(!st.net.is_empty());
             win.set_net_selected(name.into());
             let ifaces: Vec<SharedString> = st.net.iter().map(|e| e.0.clone().into()).collect();

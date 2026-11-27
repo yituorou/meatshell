@@ -440,7 +440,11 @@ pub(super) fn refresh_dock_inner(
     w.set_dock_central_w(geom.central.w);
     w.set_dock_central_h(geom.central.h);
     let edges: Vec<&str> = geom.panels.iter().map(|p| p.edge).collect();
-    set_central_insets(&w, central_insets(&edges, w.get_flat_panels()));
+    // The three appearance skins are flush layouts (see Theme.card-gap), so the
+    // central card has to sit flush too — otherwise Rust and Slint disagree by
+    // 10px on every edge and the terminal hit-test drifts off the painted card.
+    let flat = w.get_flat_panels() || w.get_skin() != 0;
+    set_central_insets(&w, central_insets(&edges, flat));
 }
 
 /// Gap around every floating card: the docked panels draw their card this far

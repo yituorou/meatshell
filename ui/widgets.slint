@@ -217,18 +217,90 @@ export component LabeledInput inherits VerticalLayout {
 export component Sparkline inherits Rectangle {
     in property <[float]> values;
     in property <brush> line-color: Theme.accent;
+    // Styled skins fill each bar with a vertical fade (bright at the top,
+    // nearly gone at the baseline) so the chart reads as light rather than as
+    // a row of solid blocks. Classic keeps the original flat bars.
+    in property <bool> faded: Theme.skin-styled;
+    in property <length> bar-gap: 1px;
 
     background: Theme.bg-root;
     border-radius: Theme.radius-sm;
     clip: true;
 
     for v[i] in values : Rectangle {
-        x: i * (parent.width / max(1, values.length));
+        property <length> slot: parent.width / max(1, values.length);
+        x: i * self.slot;
         y: parent.height - (parent.height * clamp(v, 0.0, 1.0));
-        width: (parent.width / max(1, values.length)) - 1px;
-        height: parent.height * clamp(v, 0.0, 1.0);
-        background: line-color.with-alpha(0.85);
+        width: max(1px, self.slot - root.bar-gap);
+        height: max(1px, parent.height * clamp(v, 0.0, 1.0));
         border-radius: 1px;
+        background: root.faded
+            ? @linear-gradient(180deg, root.line-color 0%, root.line-color.with-alpha(0.10) 100%)
+            : root.line-color.with-alpha(0.85);
+    }
+}
+
+// --- Dial ------------------------------------------------------------------
+// Ring gauge for the Signal Room's telemetry. Built from discrete segments
+// rather than a conic gradient: this Slint version has no `rotation-angle` on
+// Rectangle, and a segmented ring reads more like an instrument anyway. The
+// value is also printed in the middle, so the ring never carries meaning by
+// colour alone.
+export component Dial inherits Rectangle {
+    in property <float> percent;          // 0..1
+    in property <length> thickness: 4px;
+    in property <brush> ring: Theme.accent;
+    in property <color> track: Theme.dark ? #ffffff12 : #00000010;
+    in property <string> caption;
+    in property <brush> caption-color: Theme.text-muted;
+    // The board draws this as a conic sweep, which Slint can't start at 12
+    // o'clock (Rectangle has no rotation and conic gradients begin at 3).
+    // 72 ticks of 5° with 45% overlap is indistinguishable from a continuous
+    // arc at 38–52px, and it lets the unlit track be a different brush.
+    property <[int]> ticks: [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+        18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+        36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71
+    ];
+
+    background: transparent;
+    property <length> dia: min(self.width, self.height);
+    property <length> radius: root.dia / 2 - root.thickness / 2;
+    property <float> filled: clamp(root.percent, 0.0, 1.0) * root.ticks.length;
+    // 1.45× the arc length per tick: adjacent ticks overlap, so the seam never
+    // shows as a dotted ring.
+    property <length> tick-w: max(1.2px, 6.2832 * self.radius / root.ticks.length * 1.45);
+
+    for v[i] in root.ticks : Rectangle {
+        property <angle> a: i * 5deg;
+        width: root.tick-w;
+        height: root.thickness;
+        x: parent.width / 2 + Math.sin(self.a) * root.radius - self.width / 2;
+        y: parent.height / 2 - Math.cos(self.a) * root.radius - self.height / 2;
+        border-radius: root.thickness / 2;
+        background: i < root.filled ? root.ring : root.track;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 0;
+        Text {
+            text: Math.round(root.percent * 100);
+            color: Theme.text-primary;
+            font-family: Theme.font-mono;
+            // The board sets the numeral at 9px inside a 38px dial; this keeps
+            // that ratio when the caller scales the gauge up.
+            font-size: max(9px * Theme.ui-scale, root.dia * 0.24);
+            font-weight: 600;
+            horizontal-alignment: center;
+        }
+        if root.caption != "" : Text {
+            text: root.caption;
+            color: root.caption-color;
+            font-size: 9px * Theme.ui-scale;
+            horizontal-alignment: center;
+        }
     }
 }
 

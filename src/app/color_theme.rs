@@ -344,7 +344,48 @@ const PRESETS: &[Preset] = &[
         dark: seeds(0x262624, 0x30302e, 0xe8e6dc, 0xc2613f, 0x1f1e1d),
         light: seeds(0xf5f4ed, 0xfaf9f5, 0x3d3929, 0xb5552f, 0xfdfcf8),
     },
+    // Appearance skins. These carry a material as well as a palette: picking
+    // one drops the wallpaper frost and paints the skin's own backdrop and
+    // surfaces (see `skin_for` and `theme.slint`). Their seeds match those
+    // surfaces exactly, so switching feels like one change, not two.
+    Preset {
+        id: "signal-room",
+        name_en: "Signal Room",
+        name_zh: "信号舱",
+        swatch: hex(0xe8562a),
+        dark: seeds(0x0a0c0f, 0x0c0f13, 0xe9e7e2, 0xe8562a, 0x0a0c0f),
+        light: seeds(0xefe9dd, 0xf6f0e5, 0x1b1a17, 0xd2542a, 0xf6f0e5),
+    },
+    Preset {
+        id: "aurora-ink",
+        name_en: "Aurora Ink",
+        name_zh: "极光墨",
+        swatch: hex(0xbd7f3d),
+        dark: seeds(0x070b0a, 0x070b09, 0xf2efe7, 0xbd7f3d, 0x060a08),
+        light: seeds(0xe4e8e1, 0xf4f6f1, 0x1a1f1c, 0x8f6224, 0xf4f6f1),
+    },
+    Preset {
+        id: "liquid-chrome",
+        name_en: "Liquid Chrome",
+        name_zh: "液态铬",
+        swatch: hex(0x1f4fd8),
+        dark: seeds(0x16181b, 0x1d2025, 0xe8e9ec, 0x5b8bff, 0x101214),
+        light: seeds(0xf2f1ee, 0xfffefc, 0x191b1f, 0x1f4fd8, 0xfffefc),
+    },
 ];
+
+/// Material a preset brings with it. 0 is the classic frosted-wallpaper look;
+/// the three skins replace the frost with their own surface and backdrop.
+/// Kept as a lookup instead of a `Preset` field so the plain presets stay
+/// untouched by a concern that only applies to three of them.
+pub(crate) fn skin_for(id: &str) -> i32 {
+    match id {
+        "signal-room" => 1,
+        "aurora-ink" => 2,
+        "liquid-chrome" => 3,
+        _ => 0,
+    }
+}
 
 /// The custom theme: the default palette tinted toward `color`, which also
 /// becomes the accent in both modes.
@@ -427,6 +468,7 @@ pub(super) fn apply_color_theme(window: &AppWindow, store: &ConfigStore) {
     window.set_theme_palette_dark(dark.to_slint());
     window.set_theme_palette_light(light.to_slint());
     window.set_color_theme(id.into());
+    window.set_skin(skin_for(id));
     // Leave the field alone while it already holds this colour, so a hex being
     // typed is not rewritten under the caret.
     if Rgb::parse(window.get_color_theme_custom().as_str()) != Some(custom) {
@@ -509,6 +551,12 @@ pub(super) fn wire(ctx: &WinCtx) {
             if let Some(w) = weak.upgrade() {
                 disable_immersive_for_preset(id, &w, &store, &bufs);
                 apply_color_theme(&w, &store.borrow());
+                // The skins are flush layouts (Theme.card-gap → 0), so the
+                // central card's insets have to be recomputed now — Rust owns
+                // the geometry and the terminal hit-test reads the same numbers.
+                // Not `changed skin` in Slint: that fires during window init and
+                // re-enters the dock engine before the window is shown.
+                w.invoke_dock_layout_changed();
                 sync_detached(&w, &proc, &sys, &editor);
             }
             registry.broadcast_config_changed();
@@ -792,5 +840,43 @@ mod tests {
         assert_eq!(light.accent, pink);
         assert_ne!(dark.bg_panel, default_dark().bg_panel);
         assert!(dark.bg_panel.0 > default_dark().bg_panel.0);
+    }
+
+    #[test]
+    fn skin_presets_map_to_their_material() {
+        assert_eq!(skin_for("signal-room"), 1);
+        assert_eq!(skin_for("aurora-ink"), 2);
+        assert_eq!(skin_for("liquid-chrome"), 3);
+        // Everything else keeps the classic frosted-wallpaper material, so a
+        // preset can be added without thinking about skins at all.
+        assert_eq!(skin_for(DEFAULT_ID), 0);
+        assert_eq!(skin_for("vscode"), 0);
+        assert_eq!(skin_for(CUSTOM_ID), 0);
+    }
+
+    #[test]
+    fn skin_presets_survive_a_saved_config() {
+        // A saved theme id that is not recognised silently falls back to
+        // `default`, which would look like the skin was never applied.
+        for id in ["signal-room", "aurora-ink", "liquid-chrome"] {
+            assert_eq!(normalized_id(id), id);
+        }
+    }
+
+    #[test]
+    fn skin_accents_keep_white_button_text_readable() {
+        // Buttons paint white text on the accent, so a skin's accent cannot be
+        // as light as its glow. 3:1 is the floor for large text and icons.
+        for id in ["signal-room", "aurora-ink", "liquid-chrome"] {
+            let (dark, light) = palettes(id, DEFAULT_CUSTOM);
+            for palette in [dark, light] {
+                let ratio = contrast(palette.accent, Rgb(0xff, 0xff, 0xff));
+                assert!(
+                    ratio >= 3.0,
+                    "{id}: accent {:?} only reaches {ratio:.2}:1 against white",
+                    palette.accent
+                );
+            }
+        }
     }
 }

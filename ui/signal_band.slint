@@ -1,0 +1,83 @@
+import { Theme } from "theme.slint";
+
+// --- SignalBand -------------------------------------------------------------
+// The Signal Room's signature: an 18px strip between the window chrome and the
+// dock area, transcribed from the design board.
+//
+// Board spec (`.sig .band`): #0b0e12 channel, one hairline underneath, a
+// 1.35px polyline stroked with a left-fading sodium gradient, and a sweep
+// crossing it every 4.6s. The polyline is the active connection's 2s network
+// history — the same series the resource panel plots — so the strip never
+// invents data.
+export component SignalBand inherits Rectangle {
+    in property <string> commands;     // 1000×18 polyline built by Rust
+    in property <bool> live: true;      // false pauses the sweep (unfocused)
+
+    background: Theme.signal-band-bg;
+    clip: true;
+
+    // The trace. A polyline, not bars: at 39px per sample a bar chart reads as
+    // a barcode, while a line reads as a signal. Slint 1.18 refuses `for` inside
+    // a Path, so Rust hands over the `M … L …` chain already built (1000 × 18
+    // viewbox); the element only scales it.
+    Path {
+        width: parent.width;
+        height: parent.height;
+        commands: root.commands;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 1000;
+        viewbox-height: 18;
+        // `fill` stretches the viewbox to the element, which is what a strip
+        // wants; the stroke is compensated so it stays 1.35px on screen at any
+        // window width.
+        fit: ImageFit.fill;
+        stroke: @linear-gradient(90deg,
+            Theme.signal-trace.with-alpha(0.0) 0%,
+            Theme.signal-trace.with-alpha(0.85) 18%,
+            Theme.signal-trace-hi.with-alpha(0.62) 70%,
+            Theme.signal-trace.with-alpha(0.0) 100%);
+        stroke-width: 1.35px * (1000 / max(1, root.width / 1px));
+        stroke-line-cap: round;
+        stroke-line-join: round;
+    }
+
+    // Sweep: a soft band, 4.6s per crossing, linear — the board's own timing.
+    // Driven by a timer because Slint has no infinite iteration; 60ms steps at
+    // this speed are under a pixel, and `animate x` removes the rest.
+    property <float> phase: 0.0;
+    Rectangle {
+        x: -140px + root.phase * (parent.width + 140px);
+        width: 140px;
+        height: parent.height;
+        background: @linear-gradient(90deg,
+            transparent 0%,
+            Theme.signal-trace.with-alpha(Theme.dark ? 0.22 : 0.14) 50%,
+            transparent 100%);
+        animate x { duration: 60ms; easing: linear; }
+    }
+    Timer {
+        interval: 60ms;
+        running: root.live && Theme.window-focused;
+        triggered => {
+            root.phase += 0.013;
+            if (root.phase > 1.0) {
+                root.phase = 0.0;
+            }
+        }
+    }
+
+    // Hairline under the band (.sig .band border-bottom).
+    Rectangle {
+        x: 0; y: parent.height - self.height;
+        width: parent.width; height: 1px;
+        background: Theme.dark ? #ffffff0d : #00000012;
+    }
+    // Right fade so the newest sample dissolves into the chrome rather than
+    // ending on a hard tick.
+    Rectangle {
+        x: parent.width - self.width; y: 0;
+        width: 40px; height: parent.height;
+        background: @linear-gradient(90deg, transparent 0%, Theme.signal-band-bg 100%);
+    }
+}
