@@ -120,11 +120,48 @@ fn portable_data_dir() -> Option<PathBuf> {
 /// executable's own folder, except inside a macOS `.app` bundle, which must
 /// stay read-only (#587).
 fn portable_base_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
+    let exe = installed_exe()?;
     if app_bundle_of(&exe).is_some() {
         return None;
     }
     Some(exe.parent()?.to_path_buf())
+}
+
+/// The executable's real location, with symlinks resolved (#588). Started
+/// through a link such as `/usr/local/bin/meatshell` (a common way to put
+/// `meatshell mcp serve` on PATH), `current_exe` can report the link itself;
+/// every path derived from it would then point at a second, stale profile
+/// beside the link instead of the installation's own one.
+fn installed_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(resolve_exe_link(&exe).unwrap_or(exe))
+}
+
+#[cfg(not(windows))]
+fn resolve_exe_link(exe: &Path) -> Option<PathBuf> {
+    exe.canonicalize().ok()
+}
+
+/// Windows canonical paths come back in `\\?\` form; keep the plain
+/// drive-letter form the rest of the app prints and compares. Anything else
+/// (a UNC share) keeps the path as launched.
+#[cfg(windows)]
+fn resolve_exe_link(exe: &Path) -> Option<PathBuf> {
+    let real = exe.canonicalize().ok()?;
+    let plain = real.to_str()?.strip_prefix(r"\\?\")?;
+    let bytes = plain.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return None;
+    }
+    Some(PathBuf::from(plain))
+}
+
+/// The data dir when it was chosen implicitly (no `--data-dir`,
+/// `MEATSHELL_DATA_DIR` or sidecar). Automation reports it so an MCP client
+/// can tell which profile it is reading (#588); an explicitly selected
+/// profile, which the HTTP transport always uses, is not echoed back.
+pub fn implicit_data_dir() -> Option<PathBuf> {
+    PINNED_DATA_DIR.get().is_none().then(data_dir)
 }
 
 /// The `.app` bundle an executable at `<bundle>.app/Contents/MacOS/<exe>`
@@ -200,7 +237,32 @@ fn warn_if_unsuitable(dir: &Path) {
         );
     } else if !dir_is_writable(dir) {
         tracing::warn!("data dir {} is not writable; settings and sessions cannot be saved", dir.display());
+    } else if PINNED_DATA_DIR.get().is_none() && is_on_search_path(dir) {
+        tracing::warn!(
+            "data dir {} sits in a folder on PATH: package managers may clean it up, and an app installed elsewhere keeps a separate profile",
+            dir.display()
+        );
     }
+}
+
+/// True when the folder holding `dir` (the portable install folder) is one of
+/// the `PATH` entries, like `/usr/local/bin` (#588).
+fn is_on_search_path(dir: &Path) -> bool {
+    let Some(parent) = dir.parent() else {
+        return false;
+    };
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    path_list_contains(&path, parent)
+}
+
+fn path_list_contains(path_var: &std::ffi::OsStr, folder: &Path) -> bool {
+    let same = |a: &Path, b: &Path| {
+        a == b
+            || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+    };
+    std::env::split_paths(path_var).any(|entry| !entry.as_os_str().is_empty() && same(&entry, folder))
 }
 
 /// True only if we can actually create and write a file in `dir` — Program Files
@@ -231,7 +293,7 @@ fn resolve_data_dir_inner() -> PathBuf {
 
     // A bundled macOS build skips the portable dir entirely (see
     // `portable_base_dir`); pick up what an older build left in the bundle.
-    if let (Ok(exe), Some(user_dir)) = (std::env::current_exe(), legacy.as_ref()) {
+    if let (Some(exe), Some(user_dir)) = (installed_exe(), legacy.as_ref()) {
         if let Some(exe_dir) = app_bundle_of(&exe).and(exe.parent()) {
             migrate_from_app_bundle(&exe_dir.join("config"), user_dir);
         }
@@ -3432,6 +3494,59 @@ mod log_path_tests {
 }
 
 #[cfg(test)]
+mod exe_link_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ms-link-{tag}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_executable_resolves_to_its_installation() {
+        let install = temp_dir("install");
+        let bin = temp_dir("bin");
+        let exe = install.join("meatshell");
+        fs::write(&exe, b"").unwrap();
+        let link = bin.join("meatshell");
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+
+        let real = resolve_exe_link(&link).unwrap();
+        assert_eq!(real, exe.canonicalize().unwrap());
+        assert_eq!(real.parent().unwrap().join("config"), install.canonicalize().unwrap().join("config"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_resolution_keeps_the_plain_drive_form() {
+        let dir = temp_dir("plain");
+        let exe = dir.join("meatshell.exe");
+        fs::write(&exe, b"").unwrap();
+        let real = resolve_exe_link(&exe).unwrap();
+        assert!(!real.to_string_lossy().starts_with(r"\\?\"), "{}", real.display());
+        assert!(real.ends_with("meatshell.exe"));
+    }
+
+    #[test]
+    fn a_missing_executable_is_not_resolved() {
+        assert!(resolve_exe_link(&temp_dir("gone").join("no-such-exe")).is_none());
+    }
+
+    #[test]
+    fn detects_a_profile_folder_on_path() {
+        let bin = temp_dir("onpath");
+        let other = temp_dir("offpath");
+        let path = std::env::join_paths([other.clone(), bin.clone()]).unwrap();
+        assert!(path_list_contains(&path, &bin));
+        let only_other = std::env::join_paths([other.clone()]).unwrap();
+        assert!(!path_list_contains(&only_other, &bin));
+        assert!(!path_list_contains(std::ffi::OsStr::new(""), &bin));
+    }
+}
+
+#[cfg(test)]
 mod app_bundle_tests {
     use super::*;
 
@@ -3542,7 +3657,8 @@ pub fn configure_profile(args: &mut Vec<String>) -> Result<()> {
         selected = std::env::var_os("MEATSHELL_DATA_DIR").map(PathBuf::from);
     }
     if selected.is_none() {
-        let exe = std::env::current_exe()?;
+        // Beside the real installation, not beside a symlink to it (#588).
+        let exe = installed_exe().context("cannot locate the executable")?;
         let marker = exe.parent().context("executable has no parent")?.join("data-dir.txt");
         match fs::read_to_string(&marker) {
             Ok(path) => selected = Some(PathBuf::from(path.trim())),

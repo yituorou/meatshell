@@ -368,13 +368,27 @@ fn list_sessions(arguments: &Value, frontend: Frontend) -> Result<Value> {
         .filter(|session| args.group.map_or(true, |group| session.group == group))
         .map(safe_session)
         .collect();
-    Ok(json!({ "sessions": sessions }))
+    let mut result = json!({ "sessions": sessions });
+    with_data_dir(&mut result, crate::config::implicit_data_dir());
+    Ok(result)
 }
 
 fn get_session(arguments: &Value, frontend: Frontend) -> Result<Value> {
     let id = session_id_arg(arguments)?;
     let store = load_store(frontend)?;
-    Ok(safe_session(visible_session(&store, id, frontend)?))
+    let mut result = safe_session(visible_session(&store, id, frontend)?);
+    with_data_dir(&mut result, crate::config::implicit_data_dir());
+    Ok(result)
+}
+
+/// Report the profile folder the sessions came from (#588), so a client
+/// started through another path can notice it reads a different profile
+/// than the desktop app. Only an implicitly chosen folder is reported; an
+/// explicit `--data-dir` is already known to whoever passed it.
+fn with_data_dir(result: &mut Value, data_dir: Option<std::path::PathBuf>) {
+    if let (Some(object), Some(dir)) = (result.as_object_mut(), data_dir) {
+        object.insert("data_dir".into(), json!(dir.to_string_lossy()));
+    }
 }
 
 async fn run_command(arguments: &Value, frontend: Frontend) -> Result<Value> {
@@ -597,6 +611,16 @@ mod tests {
         assert_eq!(optional_u64(&json!({ "n": 12 }), "n").unwrap(), Some(12));
         assert!(optional_u64(&json!({ "n": -1 }), "n").is_err());
         assert!(optional_u64(&json!({ "n": "12" }), "n").is_err());
+    }
+
+    #[test]
+    fn data_dir_is_added_only_when_known() {
+        let mut listed = json!({ "sessions": [] });
+        with_data_dir(&mut listed, Some(std::path::PathBuf::from("/profile")));
+        assert_eq!(listed["data_dir"], "/profile");
+        let mut explicit = json!({ "sessions": [] });
+        with_data_dir(&mut explicit, None);
+        assert!(explicit.get("data_dir").is_none());
     }
 
     #[test]

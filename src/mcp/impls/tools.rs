@@ -46,7 +46,7 @@ fn base_definitions() -> Value {
         },
         {
             "name": "list_sessions",
-            "description": "List saved MeatShell sessions without exposing passwords, private keys, or other secrets. Sessions the user has not allowed for MCP access are omitted.",
+            "description": "List saved MeatShell sessions without exposing passwords, private keys, or other secrets. Sessions the user has not allowed for MCP access are omitted. When the profile folder was chosen automatically, data_dir names the folder the sessions were read from.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -57,7 +57,7 @@ fn base_definitions() -> Value {
         },
         {
             "name": "get_session",
-            "description": "Get non-secret connection metadata for one saved MeatShell session.",
+            "description": "Get non-secret connection metadata for one saved MeatShell session. When the profile folder was chosen automatically, data_dir names the folder it was read from.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
