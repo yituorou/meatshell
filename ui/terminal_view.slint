@@ -1119,157 +1119,17 @@ export component TerminalView inherits Rectangle {
                                 && (key-capture.cursor-blink || !Theme.window-focused);
                         }
 
-                        // IDEA-style completion popup for the command being
-                        // typed (#583 follow-up). Anchored on the cursor cell,
-                        // opened below it when the grid has room and above it
-                        // otherwise. Purely an overlay: the grid underneath is
-                        // untouched and the shell never learns about it.
-                        if root.hint-items.length > 0 && root.hint-row >= 0 : Rectangle {
-                            // Stay inside the grid horizontally: at the right
-                            // edge the list slides left instead of being clipped.
-                            x: max(0px, min(root.hint-col * root.cell-w,
-                                parent.width - self.width));
-                            // The grid is clipped by `scroll-clip`, so "is there
-                            // room below" is measured against the visible
-                            // viewport, not the whole view: a prompt on the last
-                            // row has no room and the list flips above the cursor.
-                            y: (root.hint-row + 1) * root.cell-h + self.height
-                                    <= scroll-clip.height - 8px - scroll-clip.view-y
-                                ? (root.hint-row + 1) * root.cell-h
-                                : max(0px, root.hint-row * root.cell-h - self.height);
-                            width: max(140px, hint-list.preferred-width + 20px);
-                            height: root.hint-items.length * 22px + 8px;
-                            background: Theme.popup-bg;
-                            border-radius: Theme.radius-sm;
-                            border-width: 1px;
-                            border-color: Theme.border-strong;
-                            drop-shadow-blur: 12px;
-                            drop-shadow-color: #00000060;
-
-                            hint-list := VerticalLayout {
-                                padding: 4px;
-                                spacing: 0;
-                                for item[i] in root.hint-items : Rectangle {
-                                    height: 22px;
-                                    border-radius: 3px;
-                                    background: i == root.hint-selected ? Theme.accent : transparent;
-                                    hint-ta := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => {
-                                            root.hint-selected = i;
-                                            root.accept-hint(i);
-                                        }
-                                    }
-                                    Text {
-                                        x: 6px;
-                                        text: item;
-                                        color: i == root.hint-selected ? white : Theme.text-primary;
-                                        font-family: Theme.term-font-family;
-                                        font-size: Theme.fs-sm;
-                                        vertical-alignment: center;
-                                        height: 22px;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Password picker (Settings › Credentials) for the line
-                        // the shell just asked a password on. Same anchoring as
-                        // the completion popup, but the rows carry real secrets,
-                        // so a click is the only way one is sent: Enter still
-                        // goes to the shell untouched.
-                        if root.auth-prompt : Rectangle {
-                            x: max(0px, min(root.cursor-col * root.cell-w,
-                                parent.width - self.width));
-                            y: (root.cursor-row + 1) * root.cell-h + self.height
-                                    <= scroll-clip.height - 8px - scroll-clip.view-y
-                                ? (root.cursor-row + 1) * root.cell-h
-                                : max(0px, root.cursor-row * root.cell-h - self.height);
-                            width: 252px;
-                            height: auth-list.preferred-height;
-                            background: Theme.popup-bg;
-                            border-radius: Theme.radius-md;
-                            border-width: 1px;
-                            border-color: Theme.border-strong;
-                            drop-shadow-blur: 14px;
-                            drop-shadow-color: #00000066;
-
-                            auth-list := VerticalLayout {
-                                padding: 4px;
-                                spacing: 2px;
-                                Rectangle {
-                                    height: 20px;
-                                    Text {
-                                        x: 6px;
-                                        width: parent.width - 12px;
-                                        text: root.lang-en ? "Credentials" : "认证管理";
-                                        color: Theme.text-muted;
-                                        font-size: Theme.fs-xs;
-                                        vertical-alignment: center;
-                                        height: 20px;
-                                    }
-                                }
-                                if root.cred-choices.length > 0 : VerticalLayout {
-                                    spacing: 2px;
-                                    for choice in root.cred-choices : Rectangle {
-                                        height: 34px;
-                                        border-radius: Theme.radius-sm;
-                                        background: choice-ta.has-hover ? Theme.bg-hover : transparent;
-                                        choice-ta := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { root.use-credential(choice.id); }
-                                        }
-                                        Text {
-                                            x: 6px;
-                                            y: 5px;
-                                            width: parent.width - 12px;
-                                            text: choice.name;
-                                            color: Theme.text-primary;
-                                            font-size: Theme.fs-sm;
-                                            overflow: elide;
-                                        }
-                                        Text {
-                                            x: 6px;
-                                            y: 18px;
-                                            width: parent.width - 12px;
-                                            text: choice.summary;
-                                            color: Theme.text-muted;
-                                            font-size: Theme.fs-xs;
-                                            overflow: elide;
-                                        }
-                                    }
-                                }
-                                // Nothing saved yet: the only useful action is
-                                // the page where credentials are added.
-                                if root.cred-choices.length == 0 : Rectangle {
-                                    height: 30px;
-                                    border-radius: Theme.radius-sm;
-                                    background: empty-ta.has-hover ? Theme.bg-hover : transparent;
-                                    empty-ta := TouchArea {
-                                        mouse-cursor: pointer;
-                                        clicked => { root.open-credentials(); }
-                                    }
-                                    Text {
-                                        x: 6px;
-                                        width: parent.width - 12px;
-                                        text: root.lang-en
-                                            ? "No saved passwords — open Credentials"
-                                            : "还没有保存的密码，点此打开认证管理";
-                                        color: Theme.text-secondary;
-                                        font-size: Theme.fs-xs;
-                                        vertical-alignment: center;
-                                        height: 30px;
-                                        overflow: elide;
-                                    }
-                                }
-                            }
-                        }
-
                         // Top-most transparent interaction layer. On macOS,
                         // scroll events over rendered terminal text may not reach
                         // the older body TouchArea below the spans, so keep the
                         // terminal's click/select/wheel handling above all text
                         // while leaving the visual output untouched (#198).
+                        //
+                        // It must stay declared BEFORE the two popups below.
+                        // Binding order is z-order here, and a full-size layer
+                        // swallows every press from whatever is declared after
+                        // it — which is exactly how the completion list and the
+                        // password picker ended up visible but unclickable (#600).
                         body-touch-overlay := TouchArea {
                             x: 0px;
                             y: 0px;
@@ -1393,6 +1253,166 @@ export component TerminalView inherits Rectangle {
                                     root.terminal-scroll(ev.delta-y / root.cell-h);
                                 }
                                 accept
+                            }
+                        }
+
+                        // IDEA-style completion popup for the command being
+                        // typed (#583 follow-up). Anchored on the cursor cell,
+                        // opened below it when the grid has room and above it
+                        // otherwise. Purely an overlay: the grid underneath is
+                        // untouched and the shell never learns about it.
+                        //
+                        // Everything below `body-touch-overlay` is unclickable
+                        // (#600), so both popups sit after it and take focus
+                        // back themselves instead of relying on its press path.
+                        if root.hint-items.length > 0 && root.hint-row >= 0 : Rectangle {
+                            // Stay inside the grid horizontally: at the right
+                            // edge the list slides left instead of being clipped.
+                            x: max(0px, min(root.hint-col * root.cell-w,
+                                parent.width - self.width));
+                            // The grid is clipped by `scroll-clip`, so "is there
+                            // room below" is measured against the visible
+                            // viewport, not the whole view: a prompt on the last
+                            // row has no room and the list flips above the cursor.
+                            y: (root.hint-row + 1) * root.cell-h + self.height
+                                    <= scroll-clip.height - 8px - scroll-clip.view-y
+                                ? (root.hint-row + 1) * root.cell-h
+                                : max(0px, root.hint-row * root.cell-h - self.height);
+                            width: max(140px, hint-list.preferred-width + 20px);
+                            height: root.hint-items.length * 22px + 8px;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-sm;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 12px;
+                            drop-shadow-color: #00000060;
+
+                            hint-list := VerticalLayout {
+                                padding: 4px;
+                                spacing: 0;
+                                for item[i] in root.hint-items : Rectangle {
+                                    height: 22px;
+                                    border-radius: 3px;
+                                    background: i == root.hint-selected ? Theme.accent : transparent;
+                                    hint-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            root.hint-selected = i;
+                                            root.accept-hint(i);
+                                            // Sits above the interaction layer that
+                                            // focuses the input on a press.
+                                            ime-input.focus();
+                                        }
+                                    }
+                                    Text {
+                                        x: 6px;
+                                        text: item;
+                                        color: i == root.hint-selected ? white : Theme.text-primary;
+                                        font-family: Theme.term-font-family;
+                                        font-size: Theme.fs-sm;
+                                        vertical-alignment: center;
+                                        height: 22px;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Password picker (Settings › Credentials) for the line
+                        // the shell just asked a password on. Same anchoring as
+                        // the completion popup, but the rows carry real secrets,
+                        // so a click is the only way one is sent: Enter still
+                        // goes to the shell untouched.
+                        if root.auth-prompt : Rectangle {
+                            x: max(0px, min(root.cursor-col * root.cell-w,
+                                parent.width - self.width));
+                            y: (root.cursor-row + 1) * root.cell-h + self.height
+                                    <= scroll-clip.height - 8px - scroll-clip.view-y
+                                ? (root.cursor-row + 1) * root.cell-h
+                                : max(0px, root.cursor-row * root.cell-h - self.height);
+                            width: 252px;
+                            height: auth-list.preferred-height;
+                            background: Theme.popup-bg;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            drop-shadow-blur: 14px;
+                            drop-shadow-color: #00000066;
+
+                            auth-list := VerticalLayout {
+                                padding: 4px;
+                                spacing: 2px;
+                                Rectangle {
+                                    height: 20px;
+                                    Text {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        text: root.lang-en ? "Credentials" : "认证管理";
+                                        color: Theme.text-muted;
+                                        font-size: Theme.fs-xs;
+                                        vertical-alignment: center;
+                                        height: 20px;
+                                    }
+                                }
+                                if root.cred-choices.length > 0 : VerticalLayout {
+                                    spacing: 2px;
+                                    for choice in root.cred-choices : Rectangle {
+                                        height: 34px;
+                                        border-radius: Theme.radius-sm;
+                                        background: choice-ta.has-hover ? Theme.bg-hover : transparent;
+                                        choice-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => {
+                                                root.use-credential(choice.id);
+                                                // The picker sits above the interaction
+                                                // layer that normally takes focus on a
+                                                // press, so hand the keyboard back by hand
+                                                // or typing would stop working afterwards.
+                                                ime-input.focus();
+                                            }
+                                        }
+                                        Text {
+                                            x: 6px;
+                                            y: 5px;
+                                            width: parent.width - 12px;
+                                            text: choice.name;
+                                            color: Theme.text-primary;
+                                            font-size: Theme.fs-sm;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            x: 6px;
+                                            y: 18px;
+                                            width: parent.width - 12px;
+                                            text: choice.summary;
+                                            color: Theme.text-muted;
+                                            font-size: Theme.fs-xs;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                                // Nothing saved yet: the only useful action is
+                                // the page where credentials are added.
+                                if root.cred-choices.length == 0 : Rectangle {
+                                    height: 30px;
+                                    border-radius: Theme.radius-sm;
+                                    background: empty-ta.has-hover ? Theme.bg-hover : transparent;
+                                    empty-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.open-credentials(); }
+                                    }
+                                    Text {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        text: root.lang-en
+                                            ? "No saved passwords — open Credentials"
+                                            : "还没有保存的密码，点此打开认证管理";
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.fs-xs;
+                                        vertical-alignment: center;
+                                        height: 30px;
+                                        overflow: elide;
+                                    }
+                                }
                             }
                         }
 

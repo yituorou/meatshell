@@ -6,6 +6,7 @@
 //! rendered head-lessly and the pixels are measured, with the frames also saved
 //! as PNG when `MEATSHELL_AUTH_QA_DIR` is set.
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{ModelRc, Rgb8Pixel, SharedString, VecModel};
 use std::rc::Rc;
 
@@ -22,6 +23,7 @@ slint::slint! {
         in property <bool> auth-prompt;
         in property <[CredChoice]> cred-choices;
         in property <int> rows: 6;
+        in-out property <string> used-id;
         TerminalView {
             spans: root.spans;
             rows-used: root.rows;
@@ -33,6 +35,7 @@ slint::slint! {
             cursor-color: #ff00ff;
             auth-prompt: root.auth-prompt;
             cred-choices: root.cred-choices;
+            use-credential(id) => { root.used-id = id; }
         }
     }
 }
@@ -106,6 +109,21 @@ fn diff_bbox(a: &[Rgb8Pixel], b: &[Rgb8Pixel]) -> Option<Rect> {
         }
     }
     found
+}
+
+/// Synthetic left click at a physical pixel, the way a real pointer arrives.
+fn click(window: &MinimalSoftwareWindow, x: usize, y: usize) {
+    let position = slint::LogicalPosition::new(x as f32, y as f32);
+    let target = window.window();
+    target.dispatch_event(WindowEvent::PointerMoved { position });
+    target.dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    target.dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
 }
 
 fn render(window: &MinimalSoftwareWindow) -> Vec<Rgb8Pixel> {
@@ -207,6 +225,28 @@ fn picker_paints_under_the_prompt_and_lists_the_credentials() {
     assert!(
         leftover.map(|(w, h)| w < 20 && h < 20).unwrap_or(true),
         "closing the picker must leave no rectangle behind: {leftover:?}"
+    );
+}
+
+#[test]
+fn a_click_on_a_row_hands_its_id_to_the_picker() {
+    let (window, ui) = fixture();
+    let quiet = render(&window);
+    ui.set_cred_choices(ModelRc::from(Rc::new(VecModel::from(vec![
+        choice("c1", "核心交换机", "admin · 密码"),
+        choice("c2", "GitHub", "a-noble · 密码"),
+    ]))));
+    ui.set_auth_prompt(true);
+    let open = render(&window);
+    let (l, t, _r, _b) = diff_bbox(&quiet, &open).expect("the picker paints");
+    // Header row (20px + 4px padding) then the first credential row (34px).
+    let (x, y) = (l + 30, t + 30);
+    println!("clicking first row at ({x},{y}), picker at ({l},{t})");
+    click(&window, x, y);
+    assert_eq!(
+        ui.get_used_id().as_str(),
+        "c1",
+        "a click on the first row must select that credential (x={x}, y={y})"
     );
 }
 
