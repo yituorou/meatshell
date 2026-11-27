@@ -334,15 +334,17 @@ pub(super) fn open_window(
             // Slint reports divider drags in dock-area coordinates, so the
             // axis must be the dock-area extent, not the window's.
             let (w, h) = da2.get();
-            let axis = match edge.as_str() {
-                "left" | "right" => h,
-                _ => w,
-            };
-            let ratio = if axis > 0.0 {
-                (pos / axis).clamp(0.02, 0.98)
-            } else {
-                0.5
-            };
+            let side = matches!(edge.as_str(), "left" | "right");
+            // A stack only divides its own span of the edge (#582): the side
+            // stacks run between the end strips, the top/bottom stacks between
+            // the side stacks. Its panels' rects cover exactly that span.
+            let span = (0..pm2.row_count())
+                .filter_map(|i| pm2.row_data(i))
+                .filter(|p| p.edge.as_str() == edge)
+                .map(|p| if side { (p.y, p.y + p.h) } else { (p.x, p.x + p.w) })
+                .reduce(|(a0, a1), (b0, b1)| (a0.min(b0), a1.max(b1)))
+                .map(|(start, end)| (start, end - start));
+            let ratio = crate::app::dock_stacks::split_ratio_at(pos, span, if side { h } else { w });
             {
                 let mut lay = ds2.borrow_mut();
                 lay.set_ratio(&edge, index as usize, ratio);
