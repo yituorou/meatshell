@@ -285,6 +285,7 @@ const PROMPT_SHELL_PROBE: &[u8] = b"if [ -n \"$BASH_VERSION\" ]; then printf '__
 enum AuxiliaryChannelKind {
     Resources,
     Processes,
+    Gpu,
     SystemInfo,
 }
 
@@ -293,14 +294,18 @@ impl AuxiliaryChannelKind {
         match self {
             Self::Resources => std::time::Duration::from_millis(750),
             Self::Processes => std::time::Duration::from_millis(1500),
-            Self::SystemInfo => std::time::Duration::from_millis(2500),
+            // GPU before the one-shot system-info probe: live data is more
+            // useful than lspci, and the probe stays last as before.
+            Self::Gpu => std::time::Duration::from_millis(2300),
+            Self::SystemInfo => std::time::Duration::from_millis(3100),
         }
     }
 
     fn next(self) -> Option<Self> {
         match self {
             Self::Resources => Some(Self::Processes),
-            Self::Processes => Some(Self::SystemInfo),
+            Self::Processes => Some(Self::Gpu),
+            Self::Gpu => Some(Self::SystemInfo),
             Self::SystemInfo => None,
         }
     }
@@ -2607,9 +2612,32 @@ async fn run_session(
     // includes probes such as `df` which can block indefinitely on a stale NFS
     // mount; that must not leave dead PIDs frozen in the process window.
     const PROC_CMD: &[u8] = b"PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH; while :; do echo __ME__; id -un 2>/dev/null; echo __PS__; ps -eo pid,user:32,pcpu,pmem,args --sort=-pcpu 2>/dev/null | head -n 41 | cut -c -200; echo __PSTICK__; sleep 2; done\n";
+    // GPU sampling is its own channel: `nvidia-smi` can block for seconds while
+    // the driver initialises, and that must never delay CPU/memory/network
+    // samples. If the host has no NVIDIA tooling the channel exits immediately
+    // and the UI simply hides the GPU row.
+    //
+    // Path: distro packages land in `/usr/bin`, but NVIDIA container images also
+    // ship the tool in `/usr/local/nvidia/bin`, and some hosts expose it through
+    // `/usr/local/bin`; search all of them before giving up. `timeout` is only a
+    // guard against a wedged driver, so a slim image without coreutils still
+    // gets samples (the query just runs uncapped).
+    const GPU_CMD: &[u8] = b"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/nvidia/bin; export PATH; command -v nvidia-smi >/dev/null 2>&1 || exit 0; while :; do echo __GPU__; if command -v timeout >/dev/null 2>&1; then timeout 2 nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true; else nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null || true; fi; echo __GSTICK__; sleep 3; done\n";
     let mut proc_channel: Option<Channel<Msg>> = None;
     let mut sys_channel: Option<Channel<Msg>> = None;
+    let mut gpu_channel: Option<Channel<Msg>> = None;
     let mut proc_buf = String::new();
+    let mut gpu_buf = String::new();
+    // `nvidia-smi` can be installed while the driver is unusable (VM, dual
+    // boot). It is far heavier than `ps`, so after this many empty frames in a
+    // row the GPU channel is closed instead of being spawned every tick.
+    const GPU_EMPTY_FRAME_LIMIT: u32 = 3;
+    let mut gpu_empty_frames: u32 = 0;
+    // A driver that is mid-upgrade or just rebound (NVML version mismatch,
+    // module reload) starts returning samples again without any user action, so
+    // a closed GPU channel is retried instead of staying dead until reconnect.
+    const GPU_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+    let mut gpu_retry_deadline: Option<tokio::time::Instant> = None;
 
     // --- Port forwarding / tunnels (#56) --------------------------------
     // The handle is shared between the shell and listener tasks. A short async
@@ -2727,6 +2755,9 @@ async fn run_session(
                         AuxiliaryChannelKind::Processes if resource_monitoring => {
                             open_auxiliary_channel(&handle, PROC_CMD, "process monitor").await
                         }
+                        AuxiliaryChannelKind::Gpu if resource_monitoring => {
+                            open_auxiliary_channel(&handle, GPU_CMD, "gpu monitor").await
+                        }
                         AuxiliaryChannelKind::SystemInfo => {
                             open_auxiliary_channel(&handle, SYS_CMD, "system-info").await
                         }
@@ -2737,6 +2768,7 @@ async fn run_session(
                     match kind {
                         AuxiliaryChannelKind::Resources => mon_channel = auxiliary_channel,
                         AuxiliaryChannelKind::Processes => proc_channel = auxiliary_channel,
+                        AuxiliaryChannelKind::Gpu => gpu_channel = auxiliary_channel,
                         AuxiliaryChannelKind::SystemInfo => sys_channel = auxiliary_channel,
                     }
                     auxiliary_startup.complete();
@@ -2795,8 +2827,17 @@ async fn run_session(
                             if let Some(processes) = proc_channel.take() {
                                 let _ = processes.close().await;
                             }
+                            if let Some(gpu) = gpu_channel.take() {
+                                let _ = gpu.close().await;
+                            }
                             mon_buf.clear();
                             proc_buf.clear();
+                            gpu_buf.clear();
+                            gpu_empty_frames = 0;
+                            gpu_retry_deadline = None;
+                            // Hide the row immediately instead of leaving the
+                            // last sample on screen.
+                            let _ = events.send(SessionEvent::GpuStats { gpus: Vec::new() });
                         } else {
                             match handle.lock().await.channel_open_session().await {
                                 Ok(monitor) => {
@@ -2814,6 +2855,10 @@ async fn run_session(
                                 }
                                 Err(error) => tracing::warn!("process monitor resume failed: {error}"),
                             }
+                            gpu_channel =
+                                open_auxiliary_channel(&handle, GPU_CMD, "gpu monitor").await;
+                            gpu_empty_frames = 0;
+                            gpu_retry_deadline = None;
                             prev_cpu = None;
                             prev_net.clear();
                             prev_net_at = std::time::Instant::now();
@@ -3204,6 +3249,75 @@ async fn run_session(
                     _ => {}
                 }
             }
+            gpu_msg = async {
+                match gpu_channel.as_mut() {
+                    Some(ch) => ch.wait().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match gpu_msg {
+                    Some(ChannelMsg::Data { data }) => {
+                        gpu_buf.push_str(&String::from_utf8_lossy(&data));
+                        while let Some(idx) = gpu_buf.find("__GSTICK__") {
+                            let block = gpu_buf[..idx].to_string();
+                            gpu_buf = gpu_buf[idx + "__GSTICK__".len()..]
+                                .trim_start_matches(['\r', '\n'])
+                                .to_string();
+                            let gpus = parse_gpu_block(&block);
+                            if gpus.is_empty() {
+                                gpu_empty_frames = gpu_empty_frames.saturating_add(1);
+                            } else {
+                                gpu_empty_frames = 0;
+                            }
+                            let _ = events.send(SessionEvent::GpuStats { gpus });
+                        }
+                        if gpu_empty_frames >= GPU_EMPTY_FRAME_LIMIT {
+                            // nvidia-smi present but no usable driver (NVML
+                            // version mismatch, driver upgrade, module reload):
+                            // stop spawning it every frame, but schedule a retry
+                            // so a recovering driver reappears on its own.
+                            if let Some(gpu) = gpu_channel.take() {
+                                let _ = gpu.close().await;
+                            }
+                            gpu_empty_frames = 0;
+                            gpu_retry_deadline =
+                                Some(tokio::time::Instant::now() + GPU_RETRY_DELAY);
+                            tracing::debug!(
+                                "[GPU] no usable sample; retrying in {:?}",
+                                GPU_RETRY_DELAY
+                            );
+                        }
+                        // A GPU frame is a few hundred bytes; 64 KiB is a
+                        // generous ceiling for a server that never terminates
+                        // a sample.
+                        const GPU_BUF_CAP: usize = 1 << 16;
+                        if gpu_buf.len() > GPU_BUF_CAP {
+                            gpu_buf.clear();
+                        }
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        gpu_channel = None;
+                        // No nvidia-smi on the host, or the channel died:
+                        // clear the row rather than showing a stale sample.
+                        let _ = events.send(SessionEvent::GpuStats { gpus: Vec::new() });
+                    }
+                    _ => {}
+                }
+            }
+            _ = async {
+                match gpu_retry_deadline {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                gpu_retry_deadline = None;
+                if resource_monitoring {
+                    gpu_channel =
+                        open_auxiliary_channel(&handle, GPU_CMD, "gpu monitor").await;
+                    gpu_empty_frames = 0;
+                    tracing::debug!("[GPU] retrying nvidia-smi channel");
+                }
+            }
         }
     }
 
@@ -3251,6 +3365,79 @@ fn parse_process_block(block: &str) -> (String, Vec<ProcInfo>) {
         }
     }
     (current_user, procs)
+}
+
+/// Parse one GPU sample block (one `nvidia-smi --query-gpu` run per frame).
+/// Empty when the host has no NVIDIA tooling or the query failed.
+fn parse_gpu_block(block: &str) -> Vec<GpuSample> {
+    // A real machine has at most a few dozen GPUs; a hostile server must not be
+    // able to flood the sidebar with fabricated rows (#27).
+    const MAX_GPU_ENTRIES: usize = 32;
+    let mut gpus = Vec::new();
+    for line in block.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if gpus.len() >= MAX_GPU_ENTRIES {
+            break;
+        }
+        // `--format=csv,noheader` should not emit a header, but tolerate one.
+        if line.starts_with('#') || line.starts_with("index,") {
+            continue;
+        }
+        if let Some(gpu) = parse_gpu_line(line) {
+            gpus.push(gpu);
+        }
+    }
+    gpus
+}
+
+/// Parse one `nvidia-smi --format=csv,noheader,nounits` row:
+/// `index, name, utilization.gpu, memory.used, memory.total`.
+/// Unsupported fields (`[N/A]`, `N/A`, `[Not Supported]`) become `None` so a
+/// vGPU that only reports memory still gets a row.
+fn parse_gpu_line(line: &str) -> Option<GpuSample> {
+    let mut fields = line.split(',');
+    let index: u32 = fields.next()?.trim().parse().ok()?;
+    let name = fields.next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let utilization = fields.next().and_then(parse_gpu_percent);
+    let mem_used_mib = fields.next().and_then(parse_gpu_mib);
+    let mem_total_mib = fields.next().and_then(parse_gpu_mib);
+    if utilization.is_none() && mem_used_mib.is_none() && mem_total_mib.is_none() {
+        return None;
+    }
+    Some(GpuSample {
+        index,
+        name: name.to_string(),
+        utilization,
+        mem_used_mib,
+        mem_total_mib,
+    })
+}
+
+fn gpu_field_missing(raw: &str) -> bool {
+    let value = raw.trim();
+    value.is_empty()
+        || value.eq_ignore_ascii_case("n/a")
+        || value.eq_ignore_ascii_case("[n/a]")
+        || value.eq_ignore_ascii_case("[not supported]")
+}
+
+fn parse_gpu_percent(raw: &str) -> Option<f32> {
+    if gpu_field_missing(raw) {
+        return None;
+    }
+    raw.trim()
+        .parse::<f32>()
+        .ok()
+        .map(|percent| (percent / 100.0).clamp(0.0, 1.0))
+}
+
+fn parse_gpu_mib(raw: &str) -> Option<u64> {
+    if gpu_field_missing(raw) {
+        return None;
+    }
+    raw.trim().parse().ok()
 }
 
 /// Parse one monitor sample (a block of `/proc/stat` cpu line + `/proc/meminfo`
@@ -5113,6 +5300,10 @@ mod auxiliary_startup_tests {
         assert_eq!(startup.begin(), None);
         startup.complete();
 
+        assert_eq!(startup.begin(), Some(AuxiliaryChannelKind::Gpu));
+        assert_eq!(startup.begin(), None);
+        startup.complete();
+
         assert_eq!(startup.begin(), Some(AuxiliaryChannelKind::SystemInfo));
         startup.complete();
         assert_eq!(startup.begin(), None);
@@ -5171,7 +5362,9 @@ mod osc_command_tests {
 
 #[cfg(test)]
 mod monitor_hardening_tests {
-    use super::{parse_df_line, parse_monitor_block, parse_process_block};
+    use super::{
+        parse_df_line, parse_gpu_block, parse_gpu_line, parse_monitor_block, parse_process_block,
+    };
     use std::collections::HashMap;
     use std::time::Instant;
 
@@ -5182,6 +5375,44 @@ mod monitor_hardening_tests {
         let (_, avail, total) = parse_df_line(line).expect("parses");
         assert_eq!(avail, u64::MAX);
         assert_eq!(total, u64::MAX);
+    }
+
+    #[test]
+    fn gpu_line_parses_utilization_and_memory() {
+        let gpu = parse_gpu_line("0, NVIDIA GeForce RTX 4090, 87, 2048, 24576").expect("parses");
+        assert_eq!(gpu.index, 0);
+        assert_eq!(gpu.name, "NVIDIA GeForce RTX 4090");
+        assert_eq!(gpu.utilization, Some(0.87));
+        assert_eq!(gpu.mem_used_mib, Some(2048));
+        assert_eq!(gpu.mem_total_mib, Some(24576));
+    }
+
+    #[test]
+    fn gpu_line_keeps_memory_when_utilization_is_na() {
+        // vGPU/MIG drivers often report [N/A] for utilization but real memory.
+        let gpu = parse_gpu_line("1, NVIDIA A100, [N/A], 4096, 81920").expect("parses");
+        assert_eq!(gpu.utilization, None);
+        assert_eq!(gpu.mem_used_mib, Some(4096));
+        assert_eq!(gpu.mem_total_mib, Some(81920));
+    }
+
+    #[test]
+    fn gpu_block_caps_entries_and_skips_garbage() {
+        let mut block = String::from("index, name, utilization.gpu, memory.used, memory.total\n");
+        block.push_str("not a gpu row\n");
+        for i in 0..100 {
+            block.push_str(&format!("{i}, GPU {i}, 50, 1024, 2048\n"));
+        }
+        let gpus = parse_gpu_block(&block);
+        assert_eq!(gpus.len(), 32);
+        assert_eq!(gpus[0].index, 0);
+        assert_eq!(gpus[31].index, 31);
+    }
+
+    #[test]
+    fn gpu_block_is_empty_without_output() {
+        assert!(parse_gpu_block("").is_empty());
+        assert!(parse_gpu_block("__GPU__\n__GSTICK__").is_empty());
     }
 
     #[test]

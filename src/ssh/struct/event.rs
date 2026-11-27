@@ -4,8 +4,8 @@ use tokio::task::JoinHandle;
 use crate::config::PortForward;
 
 use super::{
-    CredentialResponder, HostKeyResponder, MfaResponder, ProcInfo, ProcessKillResult, RemoteEntry,
-    RemoteTreeNode, RuntimeTunnelInfo, SessionCommand, SystemDetails,
+    CredentialResponder, GpuSample, HostKeyResponder, MfaResponder, ProcInfo, ProcessKillResult,
+    RemoteEntry, RemoteTreeNode, RuntimeTunnelInfo, SessionCommand, SystemDetails,
 };
 
 /// Events emitted back to the UI thread.
@@ -85,6 +85,11 @@ pub enum SessionEvent {
         current_user: String,
         procs: Vec<ProcInfo>,
     },
+
+    /// Per-GPU utilization/VRAM from the dedicated `nvidia-smi` channel.
+    /// Empty means the host has no usable NVIDIA tooling or the channel closed;
+    /// the sidebar hides the GPU row in that case.
+    GpuStats { gpus: Vec<GpuSample> },
 
     /// A command the user ran in the terminal, captured via the shell hook
     /// (OSC 697) so it can join the command-box history (#113).

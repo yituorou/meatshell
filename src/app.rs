@@ -134,8 +134,8 @@ use crate::sftp::{
     download_target_path, spawn_sftp, DownloadConflict, SftpHandles, SftpLastCwd, UploadConflict,
 };
 use crate::ssh::{
-    format_mtime, format_size, spawn_session, test_session_auth, ProcInfo, SessionCommand,
-    SessionEvent, SessionHandle, SystemDetails,
+    format_mtime, format_size, spawn_session, test_session_auth, GpuSample, ProcInfo,
+    SessionCommand, SessionEvent, SessionHandle, SystemDetails,
 };
 #[cfg(windows)]
 use crate::terminal::c0_letter_key_down;

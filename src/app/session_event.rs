@@ -192,6 +192,16 @@ pub(super) fn apply_session_event_to_window(
                 refresh_process_model(win, statuses);
             }
         }
+        SessionEvent::GpuStats { gpus } => {
+            if let Some(st) = statuses.lock().unwrap().get_mut(tab_id) {
+                st.gpus = gpus;
+            }
+            if win.get_active_tab_id().as_str() == tab_id
+                && (sidebar_updates_visible(win) || win.get_system_info_window_open())
+            {
+                refresh_sidebar(win, statuses, local, local_net_hist);
+            }
+        }
         SessionEvent::TunnelUpdate(rows) => {
             let items = rows
                 .into_iter()

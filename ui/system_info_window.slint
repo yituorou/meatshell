@@ -194,6 +194,7 @@ export component SystemInfoWindow inherits Window {
     in property <[SysInfoRow]> overview-rows;
     in property <[SysInfoRow]> cpu-info-rows;
     in property <[SysInfoRow]> gpu-info-rows;
+    in property <[SysInfoRow]> gpu-live-rows;
     in property <[SysInfoRow]> cpu-usage-rows;
     in property <[SysInfoRow]> memory-rows;
     in property <[SysInfoRow]> swap-rows;
@@ -315,6 +316,13 @@ export component SystemInfoWindow inherits Window {
                     rows: root.gpu-info-rows;
                     h1: @tr("Name"); h2: @tr("Vendor"); h3: @tr("Driver"); h4: @tr("Memory"); h5: "";
                     c1w: 0.32; c2w: 0.30; c3w: 0.20; c4w: 0.18; c5w: 0.0;
+                }
+
+                if root.gpu-live-rows.length > 0 : TableCard {
+                    title: @tr("GPU status");
+                    rows: root.gpu-live-rows;
+                    h1: @tr("Name"); h2: @tr("Utilization"); h3: @tr("VRAM"); h4: @tr("VRAM used"); h5: "";
+                    c1w: 0.40; c2w: 0.16; c3w: 0.20; c4w: 0.16; c5w: 0.0;
                 }
 
                 TableCard {

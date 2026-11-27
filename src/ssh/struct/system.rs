@@ -9,6 +9,19 @@ pub struct ProcInfo {
     pub command: String,
 }
 
+/// One GPU sample from the dedicated `nvidia-smi` channel.
+///
+/// `utilization` is a 0.0..1.0 fraction; `None` means the driver reported
+/// `[N/A]` (common on vGPU / MIG setups) rather than 0%. Memory is MiB.
+#[derive(Debug, Clone, Default)]
+pub struct GpuSample {
+    pub index: u32,
+    pub name: String,
+    pub utilization: Option<f32>,
+    pub mem_used_mib: Option<u64>,
+    pub mem_total_mib: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SystemDetails {
     pub overview: Vec<(String, String)>,

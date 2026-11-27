@@ -16,6 +16,76 @@ pub(super) fn normalized_model(buf: &[f32]) -> ModelRc<f32> {
     ModelRc::from(Rc::new(VecModel::from(scaled)))
 }
 
+/// One collapsed sidebar row for all GPUs.
+pub(super) struct GpuSummary {
+    /// Busiest card's utilization; `None` when every card reports `[N/A]`.
+    pub(super) percent: Option<f32>,
+    pub(super) detail: String,
+}
+
+/// Collapse per-GPU samples into one sidebar row: the busiest GPU's utilization
+/// (averaging hides a single saturated card) and total VRAM across cards.
+/// `None` means the host has no usable GPU data, so the row is hidden.
+pub(super) fn gpu_summary(gpus: &[GpuSample]) -> Option<GpuSummary> {
+    if gpus.is_empty() {
+        return None;
+    }
+    let percent = gpus
+        .iter()
+        .filter_map(|gpu| gpu.utilization)
+        .fold(None::<f32>, |acc, value| {
+            Some(acc.map_or(value, |max| max.max(value)))
+        });
+
+    let mut used_mib = 0u64;
+    let mut total_mib = 0u64;
+    let mut have_memory = false;
+    for gpu in gpus {
+        if let (Some(used), Some(total)) = (gpu.mem_used_mib, gpu.mem_total_mib) {
+            used_mib = used_mib.saturating_add(used);
+            total_mib = total_mib.saturating_add(total);
+            have_memory = true;
+        }
+    }
+
+    let mut detail = if have_memory && total_mib > 0 {
+        format_mem(used_mib, total_mib)
+    } else {
+        "—".to_string()
+    };
+    if gpus.len() > 1 {
+        detail.push_str(&format!(" ×{}", gpus.len()));
+    }
+    Some(GpuSummary { percent, detail })
+}
+
+/// Per-card rows for the detached system-info window:
+/// Name / Utilization / VRAM / Memory %.
+pub(super) fn gpu_detail_rows(gpus: &[GpuSample]) -> Vec<SysInfoRow> {
+    gpus.iter()
+        .map(|gpu| {
+            let utilization = gpu
+                .utilization
+                .map(|value| format!("{:.0}%", value * 100.0))
+                .unwrap_or_else(|| "—".to_string());
+            let (vram, memory_percent) = match (gpu.mem_used_mib, gpu.mem_total_mib) {
+                (Some(used), Some(total)) if total > 0 => (
+                    format_mem(used, total),
+                    format!("{:.0}%", used as f32 / total as f32 * 100.0),
+                ),
+                _ => ("—".to_string(), "—".to_string()),
+            };
+            SysInfoRow {
+                c1: format!("GPU{}  {}", gpu.index, gpu.name).into(),
+                c2: utilization.into(),
+                c3: vram.into(),
+                c4: memory_percent.into(),
+                c5: "".into(),
+            }
+        })
+        .collect()
+}
+
 /// SVG polyline for the Signal Room's 18px strip.
 ///
 /// Slint 1.18 refuses `for` inside a `Path`, so the trace is built here, where
@@ -350,4 +420,61 @@ pub(super) fn place_process_window(main: &AppWindow, process: &ProcWindow) {
     process
         .window()
         .set_position(slint::PhysicalPosition::new(x, y));
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::{gpu_detail_rows, gpu_summary};
+    use crate::ssh::GpuSample;
+
+    fn sample(
+        index: u32,
+        utilization: Option<f32>,
+        mem_used_mib: Option<u64>,
+        mem_total_mib: Option<u64>,
+    ) -> GpuSample {
+        GpuSample {
+            index,
+            name: format!("GPU {index}"),
+            utilization,
+            mem_used_mib,
+            mem_total_mib,
+        }
+    }
+
+    #[test]
+    fn summary_uses_max_utilization_and_sums_vram() {
+        let gpus = vec![
+            sample(0, Some(0.2), Some(1024), Some(8192)),
+            sample(1, Some(0.9), Some(2048), Some(8192)),
+        ];
+        let summary = gpu_summary(&gpus).expect("has gpu data");
+        assert!((summary.percent.expect("has utilization") - 0.9).abs() < f32::EPSILON);
+        assert_eq!(summary.detail, "3G/16G ×2");
+    }
+
+    #[test]
+    fn summary_marks_utilization_na_when_every_card_is_na() {
+        // A 0% bar would read as "idle"; vGPU/MIG cards must not claim that.
+        let gpus = vec![
+            sample(0, None, Some(1024), Some(8192)),
+            sample(1, None, Some(2048), Some(8192)),
+        ];
+        let summary = gpu_summary(&gpus).expect("has gpu data");
+        assert!(summary.percent.is_none());
+        assert_eq!(summary.detail, "3G/16G ×2");
+    }
+
+    #[test]
+    fn summary_is_hidden_without_gpus() {
+        assert!(gpu_summary(&[]).is_none());
+    }
+
+    #[test]
+    fn detail_rows_keep_vram_when_utilization_is_na() {
+        let rows = gpu_detail_rows(&[sample(1, None, Some(4096), Some(81920))]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].c2.as_str(), "—");
+        assert_eq!(rows[0].c3.as_str(), "4G/80G");
+    }
 }

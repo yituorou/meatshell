@@ -13,6 +13,8 @@ export struct DiskInfo {
 component StatRow inherits HorizontalLayout {
     in property <string> label;
     in property <float> percent; // 0.0 .. 1.0
+    // Show "—" instead of a 0% bar when the driver reports no value (GPU [N/A]).
+    in property <bool> percent-na: false;
     in property <string> detail;
     in property <brush> bar-color: Theme.accent;
 
@@ -41,7 +43,7 @@ component StatRow inherits HorizontalLayout {
             x: 0;
             y: 0;
             height: parent.height;
-            width: parent.width * clamp(percent, 0.0, 1.0);
+            width: parent.width * (root.percent-na ? 0.0 : clamp(percent, 0.0, 1.0));
             background: bar-color;
             border-radius: 2px;
             animate width { duration: 500ms; easing: ease-out; }
@@ -49,7 +51,7 @@ component StatRow inherits HorizontalLayout {
 
         Text {
             x: 6px;
-            text: Math.round(percent * 100) + "%";
+            text: root.percent-na ? "—" : Math.round(percent * 100) + "%";
             color: Theme.text-primary;
             font-size: Theme.fs-xs;
             vertical-alignment: center;
@@ -301,6 +303,10 @@ component StatsBlock inherits VerticalLayout {
     in property <float> swap-percent;
     in property <string> mem-detail;
     in property <string> swap-detail;
+    in property <bool> gpu-available;
+    in property <float> gpu-percent;
+    in property <string> gpu-detail;
+    in property <bool> gpu-percent-na;
     callback show-system-info();
     callback show-processes();
     spacing: 6px;
@@ -385,6 +391,13 @@ component StatsBlock inherits VerticalLayout {
     StatRow {
         label: @tr("Swap"); percent: root.swap-percent; detail: root.swap-detail;
         bar-color: Theme.skin-signal ? #c98a5a : Theme.warning;
+    }
+    if root.gpu-available : StatRow {
+        label: "GPU";
+        percent: root.gpu-percent;
+        percent-na: root.gpu-percent-na;
+        detail: root.gpu-detail;
+        bar-color: Theme.accent;
     }
 }
 
@@ -484,6 +497,10 @@ export component Sidebar inherits Rectangle {
     in property <float> swap-percent;
     in property <string> mem-detail;
     in property <string> swap-detail;
+    in property <bool> gpu-available;
+    in property <float> gpu-percent;
+    in property <string> gpu-detail;
+    in property <bool> gpu-percent-na;
     in property <string> net-top-up;
     in property <string> net-top-down;
     in property <[float]> net-top-history;
@@ -578,6 +595,7 @@ export component Sidebar inherits Rectangle {
                 proc-available: root.proc-available;
                 cpu-percent: root.cpu-percent; mem-percent: root.mem-percent; swap-percent: root.swap-percent;
                 mem-detail: root.mem-detail; swap-detail: root.swap-detail;
+                gpu-available: root.gpu-available; gpu-percent: root.gpu-percent; gpu-detail: root.gpu-detail; gpu-percent-na: root.gpu-percent-na;
                 show-system-info() => { root.show-system-info(); }
                 show-processes() => { root.show-processes(); }
             }
@@ -634,6 +652,7 @@ export component Sidebar inherits Rectangle {
                     proc-available: root.proc-available;
                     cpu-percent: root.cpu-percent; mem-percent: root.mem-percent; swap-percent: root.swap-percent;
                     mem-detail: root.mem-detail; swap-detail: root.swap-detail;
+                    gpu-available: root.gpu-available; gpu-percent: root.gpu-percent; gpu-detail: root.gpu-detail; gpu-percent-na: root.gpu-percent-na;
                     show-system-info() => { root.show-system-info(); }
                     show-processes() => { root.show-processes(); }
                 }
