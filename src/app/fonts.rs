@@ -121,7 +121,10 @@ pub(super) fn system_monospace_fonts() -> Vec<slint::SharedString> {
 
 /// System families tried, in order, for glyphs the terminal font lacks (#461).
 /// Symbol-heavy fonts first; a Nerd Font symbols-only face wins when present
-/// so Powerline/devicon glyphs in prompts render too.
+/// so Powerline/devicon glyphs in prompts render too. Each list ends with a
+/// Korean (KS X 1001) face for the enclosed CJK symbols the others lack, such
+/// as `㉿` (U+327F) in Kali's default `┌──(user㉿host)` prompt, which otherwise
+/// showed as a blank two-cell gap (#559).
 #[cfg(target_os = "windows")]
 const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
     "Symbols Nerd Font Mono",
@@ -129,6 +132,7 @@ const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
     "Cambria Math",
     "Segoe UI",
     "Microsoft YaHei",
+    "Malgun Gothic",
 ];
 #[cfg(target_os = "macos")]
 const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
@@ -137,6 +141,7 @@ const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
     "Apple Symbols",
     "Zapf Dingbats",
     "STIX Two Math",
+    "Apple SD Gothic Neo",
 ];
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
@@ -148,6 +153,9 @@ const GLYPH_FALLBACK_FAMILIES: &[&str] = &[
     "Noto Sans Symbols",
     "Noto Sans Math",
     "Symbola",
+    "Noto Sans CJK KR",
+    "Noto Sans CJK SC",
+    "NanumGothic",
 ];
 
 fn face_coverage(db: &fontdb::Database, family: &str) -> Option<crate::terminal::Coverage> {
@@ -234,5 +242,37 @@ pub(super) fn refresh_glyph_fallback(term_family: &str, window: &AppWindow, bufs
         });
     if let Err(error) = spawned {
         tracing::warn!(%error, "failed to start glyph-fallback thread");
+    }
+}
+
+#[cfg(test)]
+mod glyph_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn the_bundled_font_lacks_the_kali_prompt_symbol() {
+        // #559: the gap in `(root㉿host)` is this glyph, not a space.
+        assert!(!crate::terminal::Coverage::bundled().contains('\u{327F}'));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_fallback_draws_the_kali_prompt_symbol() {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        // Malgun Gothic ships with Windows; skip on a stripped-down system.
+        if face_coverage(&db, "Malgun Gothic").is_none() {
+            return;
+        }
+        let fallback = build_glyph_fallback(crate::terminal::BUNDLED_TERM_FONT).unwrap();
+        assert_eq!(
+            fallback.font_for("\u{327F}").map(|family| family.as_str()),
+            Some("Malgun Gothic")
+        );
+        // Characters an earlier fallback already draws keep that font.
+        assert_ne!(
+            fallback.font_for("\u{279C}").map(|family| family.as_str()),
+            Some("Malgun Gothic")
+        );
     }
 }
