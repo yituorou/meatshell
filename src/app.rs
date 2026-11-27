@@ -426,3 +426,7 @@ mod text_editor_tests;
 #[cfg(test)]
 #[path = "../tests/app/modal_layers.rs"]
 mod modal_layers_tests;
+
+#[cfg(test)]
+#[path = "../tests/app/window_focus/mod.rs"]
+mod window_focus_tests;

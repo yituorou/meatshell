@@ -656,3 +656,57 @@ fn erasing_scrollback_keeps_a_selection_on_the_live_screen() {
     let _ = buf.ingest(b"\x1b[2J\x1b[3J\x1b[H");
     assert!(buf.sel_anchor.is_none() && buf.sel_focus.is_none());
 }
+
+#[test]
+fn plain_clear_without_erase_saved_lines_drops_preclear_scrollback() {
+    // bash `clear` (terminfo without E3) and readline's Ctrl+L send
+    // `CSI H CSI 2J` with no `CSI 3J`; wheeling up afterwards must not show
+    // the pre-clear output again.
+    let mut buf = make_buf(4, 30, &["old 1", "old 2"], &["live"], 0);
+    let _ = buf.ingest(b"\r\nprime\r\n");
+    assert!(!buf.history.is_empty());
+    buf.view_offset = buf.history.len();
+
+    let _ = buf.ingest(b"\x1b[H\x1b[2Jfresh prompt");
+    assert!(buf.history.is_empty(), "CSI 2J erases the scrollback too");
+    assert_eq!(buf.view_offset, 0);
+    let built = buf.render();
+    assert!(
+        !built.spans.iter().any(|s| s.text.contains("old 1")),
+        "no pre-clear row may render"
+    );
+    // The raw replay stream lost the pre-clear bytes as well, so a resize
+    // cannot resurrect them through a reflow.
+    let raw: String = String::from_utf8_lossy(&buf.raw.iter().copied().collect::<Vec<_>>()).into();
+    assert!(!raw.contains("prime") && !raw.contains("old 1"));
+}
+
+#[test]
+fn alt_screen_erases_do_not_wipe_normal_scrollback() {
+    // tmux/vim enter with `?1049h` and then repaint with `CSI 2J` every frame;
+    // the normal screen's scrollback must survive all of that.
+    let mut buf = make_buf(4, 30, &["old 1", "old 2"], &["live"], 0);
+    let _ = buf.ingest(b"\r\nprime\r\n");
+    let hist_len = buf.history.len();
+
+    let _ = buf.ingest(b"\x1b[?1049h\x1b[H\x1b[2Jvim screen");
+    assert!(buf.parser.screen().alternate_screen());
+    assert_eq!(buf.history.len(), hist_len, "entering keeps the scrollback");
+
+    let _ = buf.ingest(b"\x1b[H\x1b[2Jvim repaint");
+    assert_eq!(buf.history.len(), hist_len, "alt-screen frames keep it too");
+    // And they must not truncate the replay stream: pre-feed the screen is
+    // already the alt screen, so those frames may not drain `raw` the way a
+    // normal-screen `clear` does (matching the pre-fix behaviour for tmux).
+    let len_after_first_frame = buf.raw.len();
+    let _ = buf.ingest(b"\x1b[H\x1b[2Jvim repaint again");
+    assert!(
+        buf.raw.len() > len_after_first_frame,
+        "alt-screen frames keep the replay stream instead of truncating it"
+    );
+
+    // Leaving the alt screen restores the pre-tmux screen and its history.
+    let _ = buf.ingest(b"\x1b[?1049l");
+    assert!(!buf.parser.screen().alternate_screen());
+    assert_eq!(buf.history.len(), hist_len);
+}
