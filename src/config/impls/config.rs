@@ -9,6 +9,12 @@
 //! which is also where every pre-0.4.15 version stored its data — so existing
 //! installs keep working untouched. See [`data_dir`].
 //!
+//! A macOS `.app` bundle is never treated as portable (#587): writing into
+//! `Contents/MacOS/` breaks the bundle's code signature (`ipc.sock` is a
+//! resource type the seal rejects) and every upgrade replaces the bundle, so
+//! data there would be lost. A bundled build always uses
+//! `~/Library/Application Support/dev.meatshell.meatshell`.
+//!
 //! ## Password encryption
 //!
 //! Passwords are **not** stored in plaintext.  On first launch a random
@@ -73,12 +79,10 @@ pub fn log_dir() -> PathBuf {
         return log;
     }
     // Portable: <exe_dir>/log, sibling of the portable config/ folder.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let log = parent.join("log");
-            if fs::create_dir_all(&log).is_ok() && dir_is_writable(&log) {
-                return log;
-            }
+    if let Some(parent) = portable_base_dir() {
+        let log = parent.join("log");
+        if fs::create_dir_all(&log).is_ok() && dir_is_writable(&log) {
+            return log;
         }
     }
     // Resolve independently from portable configuration storage.
@@ -109,8 +113,94 @@ fn legacy_data_dir() -> Option<PathBuf> {
 
 /// Portable location: a `config/` folder beside the executable.
 fn portable_data_dir() -> Option<PathBuf> {
+    Some(portable_base_dir()?.join("config"))
+}
+
+/// The folder a portable install keeps `config/` and `log/` in: the
+/// executable's own folder, except inside a macOS `.app` bundle, which must
+/// stay read-only (#587).
+fn portable_base_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    Some(exe.parent()?.join("config"))
+    if app_bundle_of(&exe).is_some() {
+        return None;
+    }
+    Some(exe.parent()?.to_path_buf())
+}
+
+/// The `.app` bundle an executable at `<bundle>.app/Contents/MacOS/<exe>`
+/// belongs to.
+fn app_bundle_of(exe: &Path) -> Option<&Path> {
+    exe.parent()
+        .filter(|dir| dir.file_name().is_some_and(|n| n == "MacOS"))
+        .and_then(Path::parent)
+        .filter(|dir| dir.file_name().is_some_and(|n| n == "Contents"))
+        .and_then(Path::parent)
+        .filter(|dir| dir.extension().is_some_and(|ext| ext == "app"))
+}
+
+/// True when `path` is inside some `<name>.app/Contents/` tree.
+fn is_inside_app_bundle(path: &Path) -> bool {
+    path.ancestors().any(|dir| {
+        dir.extension().is_some_and(|ext| ext == "app") && path.starts_with(dir.join("Contents"))
+    })
+}
+
+/// Builds before #587 kept their data in `<bundle>.app/Contents/MacOS/config`.
+/// If that folder still exists, carry its data over to the per-user dir: the
+/// whole profile when the per-user dir has no `sessions.json` yet, and any
+/// `known_hosts` entries it lacks (the old mirror only copied `known_hosts`
+/// when sessions were saved). The bundle copy is left in place, untouched.
+fn migrate_from_app_bundle(bundle_config: &Path, user_dir: &Path) {
+    if !bundle_config.is_dir() || bundle_config == user_dir {
+        return;
+    }
+    let _ = fs::create_dir_all(user_dir);
+    restore_user_backup_if_needed(user_dir, bundle_config);
+    merge_known_hosts(&bundle_config.join("known_hosts"), &user_dir.join("known_hosts"));
+}
+
+/// Append to `dst` every line of `src` it does not already contain.
+fn merge_known_hosts(src: &Path, dst: &Path) {
+    let Ok(incoming) = fs::read_to_string(src) else {
+        return;
+    };
+    let existing = fs::read_to_string(dst).unwrap_or_default();
+    let known: std::collections::HashSet<&str> = existing.lines().map(str::trim).collect();
+    let missing: Vec<&str> = incoming
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !known.contains(line.trim()))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let mut merged = existing;
+    if !merged.is_empty() && !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    for line in &missing {
+        merged.push_str(line);
+        merged.push('\n');
+    }
+    match fs::write(dst, merged) {
+        Ok(()) => tracing::info!(
+            "merged {} known_hosts entries from {}",
+            missing.len(),
+            src.display()
+        ),
+        Err(e) => tracing::warn!("failed to merge {} into {}: {e}", src.display(), dst.display()),
+    }
+}
+
+/// Startup diagnostics for a data dir that cannot work well (#587).
+fn warn_if_unsuitable(dir: &Path) {
+    if is_inside_app_bundle(dir) {
+        tracing::warn!(
+            "data dir {} is inside an .app bundle: writing there breaks code signing and an upgrade replaces it",
+            dir.display()
+        );
+    } else if !dir_is_writable(dir) {
+        tracing::warn!("data dir {} is not writable; settings and sessions cannot be saved", dir.display());
+    }
 }
 
 /// True only if we can actually create and write a file in `dir` — Program Files
@@ -128,10 +218,24 @@ fn dir_is_writable(dir: &Path) -> bool {
 }
 
 fn resolve_data_dir() -> PathBuf {
+    let dir = resolve_data_dir_inner();
+    warn_if_unsuitable(&dir);
+    dir
+}
+
+fn resolve_data_dir_inner() -> PathBuf {
     if let Some(dir) = PINNED_DATA_DIR.get() {
         return dir.clone();
     }
     let legacy = legacy_data_dir();
+
+    // A bundled macOS build skips the portable dir entirely (see
+    // `portable_base_dir`); pick up what an older build left in the bundle.
+    if let (Ok(exe), Some(user_dir)) = (std::env::current_exe(), legacy.as_ref()) {
+        if let Some(exe_dir) = app_bundle_of(&exe).and(exe.parent()) {
+            migrate_from_app_bundle(&exe_dir.join("config"), user_dir);
+        }
+    }
 
     if let Some(portable) = portable_data_dir() {
         // Already a portable install → keep using it (nothing to migrate).
@@ -3324,6 +3428,101 @@ mod log_path_tests {
     fn unix_user_log_path_is_unchanged() {
         let config = Path::new("home/.config/meatshell");
         assert_eq!(user_log_dir_from_config(config, false), config.join("log"));
+    }
+}
+
+#[cfg(test)]
+mod app_bundle_tests {
+    use super::*;
+
+    #[test]
+    fn recognises_the_executable_of_a_macos_bundle() {
+        let exe = Path::new("/Applications/meatshell.app/Contents/MacOS/meatshell");
+        assert_eq!(app_bundle_of(exe), Some(Path::new("/Applications/meatshell.app")));
+    }
+
+    #[test]
+    fn plain_and_lookalike_folders_are_not_bundles() {
+        for exe in [
+            "/opt/meatshell/meatshell",
+            "/Users/me/meatshell/MacOS/meatshell",
+            "/Users/me/Contents/MacOS/meatshell",
+            "/Users/me/meatshell.app/meatshell",
+            "/Users/me/meatshell.app/Contents/meatshell",
+        ] {
+            assert_eq!(app_bundle_of(Path::new(exe)), None, "{exe}");
+        }
+    }
+
+    #[test]
+    fn detects_paths_inside_a_bundle() {
+        assert!(is_inside_app_bundle(Path::new("/Applications/meatshell.app/Contents/MacOS/config")));
+        assert!(!is_inside_app_bundle(Path::new(
+            "/Users/me/Library/Application Support/dev.meatshell.meatshell"
+        )));
+        assert!(!is_inside_app_bundle(Path::new("/Users/me/notes.app.d/config")));
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ms-bundle-{tag}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_profile(dir: &Path, session: &str) {
+        let cfg = ConfigFile {
+            sessions: vec![Session {
+                name: session.into(),
+                host: "192.168.100.2".into(),
+                port: 22,
+                user: "root".into(),
+                ..Session::new_empty()
+            }],
+            ..ConfigFile::default()
+        };
+        fs::write(dir.join("sessions.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+        fs::write(dir.join("secret.key"), [7u8; 32]).unwrap();
+    }
+
+    #[test]
+    fn moves_a_bundle_profile_into_an_empty_user_dir() {
+        let bundle = temp_dir("src");
+        let user = temp_dir("dst").join("dev.meatshell.meatshell");
+        write_profile(&bundle, "from bundle");
+        fs::write(bundle.join("known_hosts"), "a ssh-ed25519 AAA\n").unwrap();
+
+        migrate_from_app_bundle(&bundle, &user);
+
+        assert!(sessions_file_has_connections(&user.join("sessions.json")));
+        assert_eq!(fs::read(user.join("secret.key")).unwrap(), [7u8; 32]);
+        assert_eq!(fs::read_to_string(user.join("known_hosts")).unwrap(), "a ssh-ed25519 AAA\n");
+        assert!(bundle.join("sessions.json").exists(), "the bundle copy is left alone");
+    }
+
+    #[test]
+    fn keeps_existing_user_sessions_and_merges_missing_known_hosts() {
+        let bundle = temp_dir("src");
+        let user = temp_dir("dst");
+        write_profile(&bundle, "from bundle");
+        write_profile(&user, "already here");
+        fs::write(user.join("known_hosts"), "a ssh-ed25519 AAA").unwrap();
+        fs::write(bundle.join("known_hosts"), "a ssh-ed25519 AAA\nb ssh-ed25519 BBB\n\n").unwrap();
+
+        migrate_from_app_bundle(&bundle, &user);
+
+        let raw = fs::read_to_string(user.join("sessions.json")).unwrap();
+        assert!(raw.contains("already here") && !raw.contains("from bundle"));
+        assert_eq!(
+            fs::read_to_string(user.join("known_hosts")).unwrap(),
+            "a ssh-ed25519 AAA\nb ssh-ed25519 BBB\n"
+        );
+    }
+
+    #[test]
+    fn a_missing_bundle_config_changes_nothing() {
+        let user = temp_dir("dst").join("profile");
+        migrate_from_app_bundle(&user.with_file_name("no-such-config"), &user);
+        assert!(!user.exists());
     }
 }
 

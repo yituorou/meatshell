@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { Sparkline } from "widgets.slint";
+import { Sparkline, Dial } from "widgets.slint";
 
 // One filesystem row for the disk-usage panel.
 export struct DiskInfo {
@@ -355,9 +355,43 @@ component StatsBlock inherits VerticalLayout {
                    horizontal-alignment: center; vertical-alignment: center; }
         }
     }
-    StatRow { label: "CPU"; percent: root.cpu-percent; detail: ""; bar-color: Theme.accent; }
-    StatRow { label: @tr("Memory"); percent: root.mem-percent; detail: root.mem-detail; bar-color: Theme.success; }
-    StatRow { label: @tr("Swap"); percent: root.swap-percent; detail: root.swap-detail; bar-color: Theme.warning; }
+    // CPU row: the Signal Room draws load as a ring gauge (its signature
+    // telemetry element) and keeps Memory / Swap as bars; every other skin
+    // keeps the three-bar stack it has always had.
+    if Theme.skin-signal : VerticalLayout {
+        spacing: 1px;
+        // Fixed height: a nested layout otherwise takes a stretch share of the
+        // panel and leaves a hole between the gauge and the memory rows.
+        height: 68px;
+        vertical-stretch: 0;
+        HorizontalLayout {
+            alignment: center;
+            vertical-stretch: 0;
+            Dial {
+                width: 52px;
+                height: 52px;
+                percent: root.cpu-percent;
+                thickness: 5px;
+            }
+        }
+        Text {
+            text: "CPU";
+            color: Theme.text-muted;
+            font-size: 9px * Theme.ui-scale;
+            horizontal-alignment: center;
+        }
+    }
+    if !Theme.skin-signal : StatRow {
+        label: "CPU"; percent: root.cpu-percent; detail: ""; bar-color: Theme.accent;
+    }
+    StatRow {
+        label: @tr("Memory"); percent: root.mem-percent; detail: root.mem-detail;
+        bar-color: Theme.skin-signal ? #79c9a4 : Theme.success;
+    }
+    StatRow {
+        label: @tr("Swap"); percent: root.swap-percent; detail: root.swap-detail;
+        bar-color: Theme.skin-signal ? #c98a5a : Theme.warning;
+    }
     if root.gpu-available : StatRow {
         label: "GPU";
         percent: root.gpu-percent;

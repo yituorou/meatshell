@@ -51,7 +51,9 @@ component SingleTab inherits Rectangle {
     height: 30px;
     width: self.preferred-width;
     border-radius: Theme.radius-sm;
-    border-width: active ? 2px : 0px;
+    // Styled skins drop the 2px outline: a boxed tab reads as a button, while
+    // the design wants a surface with a light line under the label.
+    border-width: Theme.skin-styled ? 0px : (active ? 2px : 0px);
     border-color: active ? Theme.accent : transparent;
     background: lifted ? Theme.bg-active
         : (active ? Theme.tab-active-bg
@@ -162,6 +164,30 @@ component SingleTab inherits Rectangle {
         }
     }
 
+    // .sig .tab.on: inset 0 1px 0 rgba(255,255,255,.1) — the top edge that
+    // makes the active tab read as a raised surface on the strip.
+    if active && Theme.skin-styled : Rectangle {
+        x: 0; y: 0;
+        width: parent.width; height: 1px;
+        background: Theme.dark ? #ffffff1a : #ffffff;
+    }
+
+    // Active-tab light. The board's indicator is a fixed 42×2 bar, centred
+    // under the label, running sodium → #ffb08a with a 12px glow. Narrow tabs
+    // fall back to the label width minus its padding so the bar never
+    // overhangs.
+    if active && Theme.skin-styled : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 2px;
+        width: min(42px, parent.width - 18px);
+        height: 2px;
+        border-radius: 1px;
+        background: @linear-gradient(90deg,
+            Theme.signal-trace 0%,
+            Theme.signal-trace-hi 100%);
+        drop-shadow-blur: 6px;
+        drop-shadow-color: Theme.signal-trace.with-alpha(0.55);
+    }
 }
 
 // --- New-tab launch menu item (#427) ----------------------------------------
@@ -311,7 +337,10 @@ export component TabBar inherits Rectangle {
     property <bool> menu-target-logging;
 
     height: 36px;
-    background: Theme.bg-panel-alt;
+    // The board's strip is the rail's own surface (#0c0f13); only the active
+    // tab steps up to #14181e. Using bg-panel-alt here made the strip and the
+    // active tab the same colour, which erased the step.
+    background: Theme.skin-styled ? Theme.bg-panel : Theme.bg-panel-alt;
 
     // --- Drag-to-reorder state (#408) --------------------------------------
     // Nothing here touches the model: the slots stay exactly where they are for

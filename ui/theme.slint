@@ -110,6 +110,61 @@ export global Theme {
     // separated by gaps (default), or square panels flush against each other and
     // divided by 1px lines. Rust persists the choice.
     in-out property <bool> flat-panels: false;
+
+    // --- Appearance skin ---------------------------------------------------
+    // 0 classic (frosted wallpaper, the original look), 1 signal room,
+    // 2 aurora ink, 3 liquid chrome. A skin owns the material — surface fills,
+    // backdrop and edge light — while the palette preset still owns the
+    // colours, so the two can never contradict each other: each skin ships
+    // with a matching preset in `color_theme.rs`.
+    //
+    // Classic falls through to every existing expression, so choosing it keeps
+    // the app pixel-identical to before this property existed.
+    in-out property <int> skin: 0;
+    out property <bool> skin-classic: root.skin == 0;
+    out property <bool> skin-signal:  root.skin == 1;
+    out property <bool> skin-aurora:  root.skin == 2;
+    out property <bool> skin-chrome:  root.skin == 3;
+    out property <bool> skin-styled:  root.skin != 0;
+    // 1px light on the top edge of a card. In the design board every region
+    // carries an inset top highlight, and that single line is what makes a
+    // flush surface read as a machined plate instead of a flat rectangle.
+    out property <brush> skin-edge: root.skin-signal ? #ffffff1a
+        : root.skin-aurora ? #ffffff21
+        : root.skin-chrome ? (root.dark ? #ffffff2e : #ffffff)
+        : transparent;
+    // Card hairline. Signal Room and Aurora Ink are divided by a single light
+    // rule, exactly as in the board (rgba(255,255,255,.05) / .06). Chrome is
+    // machined metal: white on top falling into shadow at the bottom, so the
+    // 1px outline reads as thickness rather than as a stroke.
+    out property <brush> skin-card-border: root.skin-signal ? #ffffff0d
+        : root.skin-aurora ? #ffffff14
+        : root.skin-chrome
+        ? (root.dark
+            ? @linear-gradient(180deg, #ffffff33 0%, #ffffff14 10%, #ffffff00 100%)
+            : @linear-gradient(180deg, #ffffff 0%, #0000000f 42%, #0000002e 100%))
+        : root.border-subtle;
+
+    // --- Signature colours (taken verbatim from the design board) ----------
+    // Sodium is the Signal Room's one accent; steel and moss appear only in
+    // terminal output and telemetry, never in chrome.
+    out property <color> signal-trace:    #ff6b35;
+    out property <color> signal-trace-hi: #ffb08a;
+    out property <color> signal-band-bg:  root.dark ? #0b0e12 : #f7f1e7;
+    out property <color> signal-ok:       #79c9a4;
+    out property <color> signal-steel:    #7c8fa6;
+    // Aurora's three washes. Kept as tokens so the backdrop layer and any
+    // card glow use the same three hues.
+    out property <color> aurora-amber: #f0b26b;
+    out property <color> aurora-moss:  #79c9a4;
+    out property <color> aurora-rose:  #d96a94;
+    // Aurora is glass over light: panels stay translucent so the washes read
+    // through them. .74 is the board's rgba(7,11,9,.74).
+    property <float> aurora-glass: 0.74;
+    // Height of the Signal Room's live-throughput strip. app.slint reserves it
+    // above the dock area (and shifts the floating toolbar down by the same
+    // amount); 0 for every other skin, so their layout is untouched.
+    out property <length> signal-band-h: root.skin-signal ? 18px : 0px;
     property <float> tint-amt: 0.10;              // how far surfaces pull to wp-tint
 
     // Frost a base surface: pull it slightly toward the wallpaper tint and make
@@ -133,20 +188,93 @@ export global Theme {
     property <color> base-bg-hover:     root.p.bg-hover;
     property <color> base-bg-active:    root.p.bg-active;
 
+    // Surface ladders per skin. The Signal Room and Liquid Chrome values are
+    // lifted verbatim from the design board (rail / tab strip / cards / main),
+    // so a screenshot of the app and the mockup share the same pixel values.
+    // Aurora has no fixed surface colour of its own — it is glass, so its
+    // values are the board's rgba(7,11,9,x) over the washes.
+    property <color> skin-root: root.skin-signal ? (root.dark ? #0a0c0f : #efe9dd)
+        : root.skin-aurora ? (root.dark ? #070b0a : #e4e8e1)
+        : root.skin-chrome ? (root.dark ? #16181b : #f2f1ee)
+        : root.p.bg-root;
+    property <color> skin-root-top: root.skin-signal ? (root.dark ? #0d1014 : #f6f0e5)
+        : root.skin-aurora ? (root.dark ? #090e0c : #ecefe9)
+        : root.skin-chrome ? (root.dark ? #1c1f24 : #f5f4f0)
+        : root.p.bg-root;
+    property <color> skin-panel-top: root.skin-signal ? (root.dark ? #111419 : #fbf7ef)
+        : root.skin-aurora ? (root.dark ? #0a100d : #f9faf6)
+        : root.skin-chrome ? (root.dark ? #23272d : #f9f8f5)
+        : root.p.bg-panel;
+    property <color> skin-panel: root.skin-signal ? (root.dark ? #0c0f13 : #f6f0e5)
+        : root.skin-aurora ? (root.dark ? #070b09 : #f4f6f1)
+        : root.skin-chrome ? (root.dark ? #1d2025 : #e4e2db)
+        : root.p.bg-panel;
+    property <color> skin-panel-alt: root.skin-signal ? (root.dark ? #14181e : #f2ebdf)
+        : root.skin-aurora ? (root.dark ? #0d1310 : #eef1ea)
+        : root.skin-chrome ? (root.dark ? #2a2f36 : #fffefc)
+        : root.p.bg-panel-alt;
+    property <color> skin-elevated: root.skin-signal ? (root.dark ? #161b22 : #fffdf8)
+        : root.skin-aurora ? (root.dark ? #0d1310 : #fdfefb)
+        : root.skin-chrome ? (root.dark ? #2f353d : #ffffff)
+        : root.p.bg-elevated;
+    property <color> skin-hover: root.skin-signal ? (root.dark ? #171b21 : #f2ebdf)
+        : root.skin-aurora ? (root.dark ? #121a16 : #e7ebe3)
+        : root.skin-chrome ? (root.dark ? #262b31 : #eae8e1)
+        : root.p.bg-hover;
+    property <color> skin-active: root.skin-signal ? (root.dark ? #1c2129 : #e9e0d2)
+        : root.skin-aurora ? (root.dark ? #18221d : #dde2d8)
+        : root.skin-chrome ? (root.dark ? #333a42 : #e2e0d9)
+        : root.p.bg-active;
+
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
     // empty / inset areas; panels stay mostly opaque for legible text.
-    out property <brush> bg-root:      frost(base-bg-root, max(0.0, root.panel-alpha - 0.44));
-    out property <brush> bg-panel:     frost(base-bg-panel, root.panel-alpha);
-    out property <brush> bg-panel-alt: frost(base-bg-panel-alt, root.panel-alpha);
-    out property <brush> bg-elevated:  frost(base-bg-elevated, root.panel-alpha);
-    out property <brush> bg-hover:     frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04));
-    out property <brush> bg-active:    frost(base-bg-active, min(1.0, root.panel-alpha + 0.08));
+    // A styled skin replaces the frost with its own surface: the point of
+    // signal / aurora / chrome is that the app keeps its identity whatever
+    // image is behind it, so the wallpaper is covered (see the backdrop layers
+    // in app.slint) rather than showing through.
+    //
+    // Signal Room is deliberately flat: #0a0c0f everywhere, one step lighter
+    // for the rail/tab strip, one more for the active tab. Aurora is the only
+    // one that stays translucent, because the washes have to read through it.
+    out property <brush> bg-root: root.skin-classic
+        ? frost(base-bg-root, max(0.0, root.panel-alpha - 0.44))
+        : root.skin-signal
+        ? root.skin-root
+        : root.skin-aurora
+        ? #060a08.with-alpha(0.62)
+        : @linear-gradient(180deg, #fffefc 0%, #f6f4ef 100%);
+    out property <brush> bg-panel: root.skin-classic
+        ? frost(base-bg-panel, root.panel-alpha)
+        : root.skin-signal
+        ? root.skin-panel
+        : root.skin-aurora
+        ? @linear-gradient(180deg,
+            skin-panel-top.with-alpha(root.aurora-glass) 0%,
+            skin-panel.with-alpha(root.aurora-glass) 100%)
+        : @linear-gradient(180deg, #f9f8f5 0%, #e4e2db 100%);
+    out property <brush> bg-panel-alt: root.skin-classic
+        ? frost(base-bg-panel-alt, root.panel-alpha)
+        : root.skin-aurora
+        ? #ffffff0e
+        : skin-panel-alt;
+    out property <brush> bg-elevated: root.skin-classic
+        ? frost(base-bg-elevated, root.panel-alpha)
+        : root.skin-aurora
+        ? skin-elevated.with-alpha(0.82)
+        : skin-elevated;
+    out property <brush> bg-hover: root.skin-classic
+        ? frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04))
+        : skin-hover;
+    out property <brush> bg-active: root.skin-classic
+        ? frost(base-bg-active, min(1.0, root.panel-alpha + 0.08))
+        : skin-active;
     // Floating cards (resource panel, Quick connect, quick commands, recent
     // connections). In dark mode the plain panel colour sits too close to the
     // window behind it to show the card's edge, so cards get a lighter slate
     // there; light mode already has the contrast and keeps bg-panel.
     in-out property <color> card-dark: #2D3440;
-    out property <brush> card-bg: root.dark ? frost(root.card-dark, root.panel-alpha) : root.bg-panel;
+    out property <brush> card-bg: root.skin-styled ? root.bg-panel
+        : (root.dark ? frost(root.card-dark, root.panel-alpha) : root.bg-panel);
     // Settings dialog: 20% less transparent than the other panels so its dense
     // grey labels stay legible even at a low wallpaper overlay (user request).
     out property <brush> bg-panel-strong: frost(base-bg-panel, min(1.0, root.panel-alpha + 0.20));
@@ -158,27 +286,66 @@ export global Theme {
     // Active terminal tab: with wallpaper, pull from the image's average colour
     // so the strip feels immersed; without wallpaper, make the active tab one
     // clear step darker/lighter than the surrounding tab bar (#200).
-    out property <brush> tab-active-bg: root.immersive-active
-        ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
-        : (root.wallpaper-active
-            ? root.p.tab-active-bg.with-alpha(min(1.0, root.panel-alpha + 0.10))
-            : root.p.tab-active-bg);
-    out property <brush> tab-active-border: root.immersive-active
-        ? root.wp-accent.with-alpha(0.72)
-        : root.p.tab-active-border;
+    // Styled skins drop the boxed look for a surface + a 2px light beneath the
+    // label (see tabs.slint), so the fill here only sets the tint.
+    out property <brush> tab-active-bg: root.skin-signal ? skin-panel-alt
+        : root.skin-aurora ? #ffffff12
+        : root.skin-chrome ? (root.dark ? #2b3138 : #ffffff)
+        : (root.immersive-active
+            ? root.wp-tint.mix(root.wp-accent, 0.68).with-alpha(min(1.0, root.panel-alpha + 0.10))
+            : (root.wallpaper-active
+                ? root.p.tab-active-bg.with-alpha(min(1.0, root.panel-alpha + 0.10))
+                : root.p.tab-active-bg));
+    out property <brush> tab-active-border: root.skin-styled ? root.accent
+        : (root.immersive-active
+            ? root.wp-accent.with-alpha(0.72)
+            : root.p.tab-active-border);
 
-    out property <brush> border-subtle: root.p.border-subtle;
-    out property <brush> border-strong: root.p.border-strong;
+    // Division lines. The board divides the rail, tab strip and telemetry with
+    // rgba(255,255,255,.05..1) on dark and rgba(0,0,0,.09) on chrome — thin
+    // enough to disappear, present enough to give each region an edge.
+    out property <brush> border-subtle: root.skin-signal
+        ? (root.dark ? #ffffff0d : #00000012)
+        : root.skin-aurora
+        ? (root.dark ? #ffffff14 : #00000012)
+        : root.skin-chrome
+        ? (root.dark ? #ffffff14 : #00000017)
+        : root.p.border-subtle;
+    out property <brush> border-strong: root.skin-signal
+        ? (root.dark ? #ffffff1f : #00000026)
+        : root.skin-aurora
+        ? (root.dark ? #ffffff26 : #00000026)
+        : root.skin-chrome
+        ? (root.dark ? #ffffff26 : #0000002b)
+        : root.p.border-strong;
 
-    out property <brush> text-primary:   root.p.text-primary;
+    out property <brush> text-primary: root.skin-signal ? (root.dark ? #e9e7e2 : #1b1a17)
+        : root.skin-aurora ? (root.dark ? #f2efe7 : #1a1f1c)
+        : root.skin-chrome ? (root.dark ? #e8e9ec : #191b1f)
+        : root.p.text-primary;
     // Light-mode secondary/muted are dark enough to read over a see-through
     // frosted-wallpaper panel.
-    out property <brush> text-secondary: root.p.text-secondary;
-    out property <brush> text-muted:     root.p.text-muted;
+    out property <brush> text-secondary: root.skin-signal ? (root.dark ? #c3c8d0 : #3f3b33)
+        : root.skin-aurora ? (root.dark ? #d3d9d4 : #414a44)
+        : root.skin-chrome ? (root.dark ? #b4b8bf : #3b3e44)
+        : root.p.text-secondary;
+    out property <brush> text-muted: root.skin-signal ? (root.dark ? #9aa1ab : #6b6459)
+        : root.skin-aurora ? (root.dark ? #a9b2ac : #6b746d)
+        : root.skin-chrome ? (root.dark ? #8e939b : #5a5d63)
+        : root.p.text-muted;
 
-    out property <brush> accent:         root.immersive-active ? root.wp-accent                 : root.p.accent;
-    out property <brush> accent-hover:   root.immersive-active ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
-    out property <brush> accent-pressed: root.immersive-active ? root.wp-accent.darker(0.12)   : root.p.accent-pressed;
+    // A styled skin keeps its preset's accent: immersive colours come from the
+    // wallpaper, and the whole point of a skin is to not depend on the image.
+    out property <brush> accent:         root.immersive-active && !root.skin-styled
+        ? root.wp-accent : root.p.accent;
+    out property <brush> accent-hover:   root.immersive-active && !root.skin-styled
+        ? root.wp-accent.brighter(0.12) : root.p.accent-hover;
+    out property <brush> accent-pressed: root.immersive-active && !root.skin-styled
+        ? root.wp-accent.darker(0.12) : root.p.accent-pressed;
+    // The same accent as a plain colour: several properties (drop-shadow,
+    // border colours) are typed <color> and can't take a <brush>.
+    out property <color> accent-color: root.immersive-active && !root.skin-styled
+        ? root.wp-accent : root.p.accent;
 
     out property <brush> success: dark ? #4ec9b0 : #34c759;
     out property <brush> warning: dark ? #e2a84a : #ff9f0a;
@@ -197,7 +364,8 @@ export global Theme {
     };
     property <TermColors> tc: root.dark ? root.term-colors-dark : root.term-colors-light;
     property <color> base-term-bg: root.tc.custom ? root.tc.bg : root.p.term-bg;
-    out property <brush> term-bg: root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg;
+    out property <brush> term-bg: root.skin-styled ? base-term-bg
+        : (root.wallpaper-active ? base-term-bg.with-alpha(max(0.0, root.panel-alpha - 0.14)) : base-term-bg);
     out property <brush> term-fg: root.tc.fg;
     out property <color> term-cursor: root.tc.cursor;
     out property <brush> term-selection: root.tc.custom ? root.tc.selection : root.accent.with-alpha(0.40);
@@ -251,8 +419,12 @@ export global Theme {
     // distance from the window edges (Rust mirrors this in `central_insets`).
     // Flat mode removes both the gap and the rounding so panels touch; their
     // 1px hairlines then read as divider lines.
-    out property <length> card-gap: root.flat-panels ? 0px : 10px;
-    out property <length> card-radius: root.flat-panels ? 0px : root.radius-md;
+    // Every direction in the board is a flush layout: the rail, tab strip,
+    // terminal and telemetry share their edges and are divided by a 1px rule,
+    // with no gap and no rounding inside the window. Only classic keeps the
+    // floating-card geometry (and flat-panels still zeroes it on demand).
+    out property <length> card-gap: (root.flat-panels || root.skin-styled) ? 0px : 10px;
+    out property <length> card-radius: (root.flat-panels || root.skin-styled) ? 0px : root.radius-md;
 
     out property <length> gap-xs: 4px * root.ui-scale;
     out property <length> gap-sm: 8px * root.ui-scale;
